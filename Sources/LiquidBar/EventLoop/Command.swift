@@ -1,0 +1,33 @@
+enum MouseButton: Sendable {
+    case left
+    case middle
+    case right
+}
+
+enum ContextAction: Int, Sendable {
+    case close = 0
+    case pin = 1
+    case unpin = 2
+    case blacklist = 3
+
+    // Window tab groups (payload = groupId when needed)
+    case createTabGroup = 10
+    case addToTabGroup = 11
+    case removeFromTabGroup = 12
+    case renameTabGroup = 13
+    case deleteTabGroup = 14
+
+    // Custom items (payload = customItemId)
+    case openCustomItem = 20
+    case editCustomItem = 21
+    case deleteCustomItem = 22
+}
+
+enum Command: Sendable {
+    case shutdown
+    case refresh
+    case click(screenId: UInt32, index: Int, button: MouseButton)
+    case reorder(screenId: UInt32, from: Int, to: Int)
+    case contextAction(screenId: UInt32, index: Int, action: ContextAction)
+    case reloadConfig
+}

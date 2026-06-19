@@ -1,0 +1,97 @@
+import Testing
+@testable import LiquidBar
+
+@Suite
+struct WindowStateStoreTests {
+    @Test @MainActor func testChangeDetection() {
+        let store = WindowStateStore()
+        let config = Config()
+
+        let windows1 = [makeTestWindow(id: 1, bundle: "com.test.app", title: "Window 1")]
+        #expect(store.update(windows: windows1, config: config) == true)
+
+        // Different windows = changed
+        let windows2 = [makeTestWindow(id: 2, bundle: "com.test.app", title: "Window 2")]
+        #expect(store.update(windows: windows2, config: config) == true)
+    }
+
+    @Test @MainActor func testSameWindows() {
+        let store = WindowStateStore()
+        let config = Config()
+
+        let windows = [makeTestWindow(id: 1, bundle: "com.test.app", title: "Window 1")]
+        _ = store.update(windows: windows, config: config)
+
+        // Same windows again = no change
+        let same = [makeTestWindow(id: 1, bundle: "com.test.app", title: "Window 1")]
+        #expect(store.update(windows: same, config: config) == false)
+    }
+
+    @Test @MainActor func testBlacklist() {
+        let store = WindowStateStore()
+        let config = Config(blacklistedApps: ["com.blocked.app"])
+
+        let windows = [
+            makeTestWindow(id: 1, bundle: "com.test.app", title: "Allowed"),
+            makeTestWindow(id: 2, bundle: "com.blocked.app", title: "Blocked"),
+        ]
+        _ = store.update(windows: windows, config: config)
+
+        let result = store.getWindows()
+        #expect(result.count == 1)
+        #expect(result[0].bundleId.raw == "com.test.app")
+    }
+
+    @Test @MainActor func testReorder() {
+        let store = WindowStateStore()
+        let config = Config()
+
+        let windows = [
+            makeTestWindow(id: 1, bundle: "com.a", title: "A"),
+            makeTestWindow(id: 2, bundle: "com.b", title: "B"),
+            makeTestWindow(id: 3, bundle: "com.c", title: "C"),
+        ]
+        _ = store.update(windows: windows, config: config)
+
+        store.reorder(from: 0, to: 2)
+        let order = store.windowOrder
+        #expect(order.count == 3)
+        // `to` is an insertion marker in the original order, so moving 0 -> 2
+        // places the first item before the original item at index 2.
+        #expect(order.map(\.raw) == [2, 1, 3])
+    }
+
+    @Test @MainActor func testApplyPreferredWindowOrder() {
+        let store = WindowStateStore()
+        let config = Config()
+
+        let windows = [
+            makeTestWindow(id: 1, bundle: "com.a", title: "A"),
+            makeTestWindow(id: 2, bundle: "com.b", title: "B"),
+            makeTestWindow(id: 3, bundle: "com.c", title: "C"),
+            makeTestWindow(id: 4, bundle: "com.d", title: "D"),
+        ]
+        _ = store.update(windows: windows, config: config)
+
+        let changed = store.applyPreferredWindowOrder([3, 1, 999, 3])
+        #expect(changed == true)
+        #expect(store.windowOrder.map(\.raw) == [3, 1, 2, 4])
+    }
+
+    @Test @MainActor func testReorderSubset() {
+        let store = WindowStateStore()
+        let config = Config()
+
+        let windows = [
+            makeTestWindow(id: 1, bundle: "com.a", title: "A"),
+            makeTestWindow(id: 2, bundle: "com.a", title: "B"),
+            makeTestWindow(id: 3, bundle: "com.a", title: "C"),
+            makeTestWindow(id: 4, bundle: "com.b", title: "D"),
+        ]
+        _ = store.update(windows: windows, config: config)
+
+        let changed = store.reorderSubset(orderedWindowIds: [3, 1, 2])
+        #expect(changed == true)
+        #expect(store.windowOrder.map(\.raw) == [3, 1, 2, 4])
+    }
+}
