@@ -48,6 +48,14 @@ open -a "$HOME/Applications/LiquidBar Test.app"
 
 The production surface is retained AppKit/Core Animation. It does not use a permanent full-surface GPU render loop.
 
+## Documentation
+
+- `CONTRIBUTING.md`: contribution workflow
+- `docs/ARCHITECTURE.md`: source map and runtime flow
+- `docs/DEVELOPMENT.md`: local setup and common development commands
+- `docs/TESTING.md`: SwiftPM, UI, visual regression, and performance test flows
+- `docs/MAINTAINER_NOTES.md`: repository hygiene and documentation policy
+
 ## License
 
 LiquidBar is released under the MIT License. See `LICENSE`.

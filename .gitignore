@@ -1,8 +1,60 @@
+# SwiftPM
 .build/
 .swiftpm/
+
+# Xcode and generated projects
 build/
 *.xcodeproj/
+*.xcworkspace/
 xcuserdata/
+*.xcuserstate
 DerivedData/
+*.xcresult/
+*.dSYM/
+
+# Local build and distribution outputs
+dist/
+artifacts/
+*.app/
+*.pkg
+*.dmg
+
+# Logs and crash reports
+*.log
+*.logarchive/
+*.ips
+
+# macOS filesystem metadata
 .DS_Store
-.worktrees
+.AppleDouble
+.LSOverride
+Icon?
+
+# Editor state
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Local config and secrets
+.env
+.env.*
+!.env.example
+.local/
+secrets/
+
+# Private worktree, handoff, and tool-state folders
+.worktrees/
+.handoff-fresh/
+.desloppify/
+.[Aa][Gg][Ee][Nn][Tt][Ss]/
+.[Cc][Ll][Aa][Uu][Dd][Ee]/
+[Aa][Gg][Ee][Nn][Tt][Ss].md
+[Cc][Ll][Aa][Uu][Dd][Ee].md
+[Hh][Aa][Nn][Dd][Oo][Ff][Ff]*.md
+[Ff][Oo][Rr][Gg][Ee]-*.md
+[Mm][Ii][Ss][Ss][Ii][Oo][Nn]-[Cc][Oo][Nn][Tt][Rr][Oo][Ll].md
+[Hh][Uu][Mm][Aa][Nn]-[Ii][Nn][Pp][Uu][Tt].md
+[Ss][Uu][Gg][Gg][Ee][Ss][Tt][Ii][Oo][Nn][Ss].md
+architect/
+todos/
