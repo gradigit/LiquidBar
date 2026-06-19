@@ -47,3 +47,7 @@ open -a "$HOME/Applications/LiquidBar Test.app"
 - `Sources/LiquidBar/Window`: window inventory, state, and ordering
 
 The production surface is retained AppKit/Core Animation. It does not use a permanent full-surface GPU render loop.
+
+## License
+
+LiquidBar is released under the MIT License. See `LICENSE`.
