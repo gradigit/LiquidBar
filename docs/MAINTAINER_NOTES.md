@@ -29,6 +29,7 @@ When older notes contain useful conclusions:
 - `README.md`: project overview and quick commands.
 - `CONTRIBUTING.md`: contribution workflow.
 - `SECURITY.md`: security reporting and permission-sensitive change guidance.
+- `docs/START_HERE.md`: public-safe fresh-session onboarding packet.
 - `docs/ARCHITECTURE.md`: source map and runtime flow.
 - `docs/DEVELOPMENT.md`: local setup and common commands.
 - `docs/TESTING.md`: test commands, UI testing, visual regression, artifacts.

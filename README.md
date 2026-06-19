@@ -51,6 +51,7 @@ The production surface is retained AppKit/Core Animation. It does not use a perm
 ## Documentation
 
 - `CONTRIBUTING.md`: contribution workflow
+- `docs/START_HERE.md`: fresh-session onboarding packet
 - `docs/ARCHITECTURE.md`: source map and runtime flow
 - `docs/DEVELOPMENT.md`: local setup and common development commands
 - `docs/TESTING.md`: SwiftPM, UI, visual regression, and performance test flows
