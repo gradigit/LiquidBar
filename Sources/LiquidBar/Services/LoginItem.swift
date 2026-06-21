@@ -9,29 +9,11 @@ enum LoginItem {
     }
 
     static func enable() throws {
-        let exe = ProcessInfo.processInfo.arguments[0]
-        let plist = """
-        <?xml version="1.0" encoding="UTF-8"?>
-        <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" \
-        "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-        <plist version="1.0">
-        <dict>
-            <key>Label</key>
-            <string>\(label)</string>
-            <key>ProgramArguments</key>
-            <array>
-                <string>\(exe)</string>
-            </array>
-            <key>RunAtLoad</key>
-            <true/>
-            <key>KeepAlive</key>
-            <false/>
-        </dict>
-        </plist>
-        """
+        let exe = currentExecutablePath()
         let dir = (plistPath as NSString).deletingLastPathComponent
         try FileManager.default.createDirectory(atPath: dir, withIntermediateDirectories: true)
-        try plist.write(toFile: plistPath, atomically: true, encoding: .utf8)
+        let data = try launchAgentPlistData(executablePath: exe)
+        try data.write(to: URL(fileURLWithPath: plistPath), options: .atomic)
         Process.launchedProcess(launchPath: "/bin/launchctl", arguments: ["load", plistPath])
     }
 
@@ -43,5 +25,19 @@ enum LoginItem {
 
     static func isEnabled() -> Bool {
         FileManager.default.fileExists(atPath: plistPath)
+    }
+
+    static func currentExecutablePath() -> String {
+        Bundle.main.executableURL?.path ?? ProcessInfo.processInfo.arguments[0]
+    }
+
+    static func launchAgentPlistData(executablePath: String) throws -> Data {
+        let plist: [String: Any] = [
+            "Label": label,
+            "ProgramArguments": [executablePath],
+            "RunAtLoad": true,
+            "KeepAlive": false,
+        ]
+        return try PropertyListSerialization.data(fromPropertyList: plist, format: .xml, options: 0)
     }
 }

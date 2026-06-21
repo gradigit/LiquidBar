@@ -33,6 +33,79 @@ struct ProviderPanelState: Codable, Sendable, Equatable {
     }
 }
 
+enum ProviderPayloadLimits {
+    static let maxTitleCharacters = 80
+    static let maxSubtitleCharacters = 160
+    static let maxActions = 6
+    static let maxActionIdCharacters = 80
+    static let maxActionTitleCharacters = 48
+    static let maxSymbolCharacters = 64
+
+    static func bounded(_ value: String, maxCharacters: Int, fallback: String = "") -> String {
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        let source = trimmed.isEmpty ? fallback : trimmed
+        return String(source.prefix(maxCharacters))
+    }
+}
+
+extension ProviderActionDescriptor {
+    func normalizedForDisplay() -> ProviderActionDescriptor? {
+        let normalizedId = ProviderPayloadLimits.bounded(id, maxCharacters: ProviderPayloadLimits.maxActionIdCharacters)
+        guard !normalizedId.isEmpty else { return nil }
+
+        let normalizedTitle = ProviderPayloadLimits.bounded(
+            title,
+            maxCharacters: ProviderPayloadLimits.maxActionTitleCharacters,
+            fallback: normalizedId
+        )
+        let normalizedSymbol = symbol.map {
+            ProviderPayloadLimits.bounded($0, maxCharacters: ProviderPayloadLimits.maxSymbolCharacters)
+        }.flatMap { $0.isEmpty ? nil : $0 }
+
+        return ProviderActionDescriptor(
+            id: normalizedId,
+            title: normalizedTitle,
+            symbol: normalizedSymbol,
+            isEnabled: isEnabled
+        )
+    }
+}
+
+extension ProviderPanelState {
+    func normalizedForDisplay(fallbackTitle: String) -> ProviderPanelState {
+        var seenActionIds: Set<String> = []
+        let normalizedActions = actions.compactMap { action -> ProviderActionDescriptor? in
+            guard seenActionIds.count < ProviderPayloadLimits.maxActions,
+                  let normalized = action.normalizedForDisplay(),
+                  seenActionIds.insert(normalized.id).inserted else {
+                return nil
+            }
+            return normalized
+        }
+
+        let normalizedTotal: Double? = progressTotal.flatMap { value in
+            value.isFinite && value > 0 ? value : nil
+        }
+        let normalizedCurrent: Double? = progressCurrent.flatMap { value in
+            guard value.isFinite, let normalizedTotal else { return nil }
+            return min(max(0, value), normalizedTotal)
+        }
+
+        return ProviderPanelState(
+            title: ProviderPayloadLimits.bounded(
+                title,
+                maxCharacters: ProviderPayloadLimits.maxTitleCharacters,
+                fallback: fallbackTitle
+            ),
+            subtitle: ProviderPayloadLimits.bounded(subtitle, maxCharacters: ProviderPayloadLimits.maxSubtitleCharacters),
+            progressCurrent: normalizedCurrent,
+            progressTotal: normalizedTotal,
+            health: health,
+            actions: Array(normalizedActions)
+        )
+    }
+}
+
 protocol PluginProvider: Sendable {
     var id: String { get }
     func fetchState() async throws -> ProviderPanelState
@@ -115,7 +188,7 @@ actor ProviderRuntime {
                 return first
             }
             failureCounts[providerId] = 0
-            return state
+            return state.normalizedForDisplay(fallbackTitle: fallbackTitle)
         } catch {
             failureCounts[providerId, default: 0] += 1
             Log.plugins.warning("Provider fetch failed id=\(providerId, privacy: .public): \(error.localizedDescription, privacy: .public)")

@@ -187,8 +187,8 @@ final class AccessibilityService {
         ) {
             var closeButton: CFTypeRef?
             AXUIElementCopyAttributeValue(axWin, kAXCloseButtonAttribute as CFString, &closeButton)
-            if let btn = closeButton {
-                AXUIElementPerformAction(btn as! AXUIElement, kAXPressAction as CFString)
+            if let btn = axElement(from: closeButton) {
+                AXUIElementPerformAction(btn, kAXPressAction as CFString)
             } else {
                 // No close button (e.g. dialog) — fall back to Cmd+W
                 _ = sendCmdW(to: pid)
@@ -503,7 +503,7 @@ final class AccessibilityService {
 
             // Fallback: match by geometry when the target window cannot be matched exactly.
             for j in 0..<CFArrayGetCount(axWindows) {
-                let axWin = unsafeBitCast(CFArrayGetValueAtIndex(axWindows, j), to: AXUIElement.self)
+                guard let axWin = axElement(at: j, in: axWindows) else { continue }
                 guard let axPos = getAXPosition(axWin) else { continue }
 
                 if abs(axPos.x - wr.origin.x) < 5 && abs(axPos.y - wr.origin.y) < 5 {
@@ -571,7 +571,7 @@ final class AccessibilityService {
 
         // Fallback: unminimize the first minimized AX window.
         for i in 0..<CFArrayGetCount(axWindows) {
-            let axWin = unsafeBitCast(CFArrayGetValueAtIndex(axWindows, i), to: AXUIElement.self)
+            guard let axWin = axElement(at: i, in: axWindows) else { continue }
             if getAXBool(axWin, attribute: kAXMinimizedAttribute as CFString) == true {
                 AXUIElementSetAttributeValue(axWin, kAXMinimizedAttribute as CFString, false as CFTypeRef)
                 focusAXWindow(
@@ -605,8 +605,9 @@ final class AccessibilityService {
 
         // Fallback: minimize the first AX window.
         if CFArrayGetCount(axWindows) > 0 {
-            let axWin = unsafeBitCast(CFArrayGetValueAtIndex(axWindows, 0), to: AXUIElement.self)
-            AXUIElementSetAttributeValue(axWin, kAXMinimizedAttribute as CFString, true as CFTypeRef)
+            if let axWin = axElement(at: 0, in: axWindows) {
+                AXUIElementSetAttributeValue(axWin, kAXMinimizedAttribute as CFString, true as CFTypeRef)
+            }
         }
     }
 
@@ -919,12 +920,12 @@ final class AccessibilityService {
 
         var focused: AnyObject?
         guard AXUIElementCopyAttributeValue(appEl, kAXFocusedWindowAttribute as CFString, &focused) == .success,
-              let focused else {
+              let focused,
+              let focusedWindow = axElement(from: focused as CFTypeRef) else {
             return false
         }
-        let focusedWindow = unsafeDowncast(focused, to: AXUIElement.self)
 
-        if CFEqual(focused as CFTypeRef, axWindow) {
+        if CFEqual(focusedWindow, axWindow) {
             return true
         }
 
@@ -1004,7 +1005,7 @@ final class AccessibilityService {
         relaxedGeometryCandidates.reserveCapacity(4)
 
         for i in 0..<CFArrayGetCount(axWindows) {
-            let axWin = unsafeBitCast(CFArrayGetValueAtIndex(axWindows, i), to: AXUIElement.self)
+            guard let axWin = axElement(at: i, in: axWindows) else { continue }
 
             if let requireMinimized {
                 let minimized = getAXBool(axWin, attribute: kAXMinimizedAttribute as CFString) ?? false
@@ -1066,28 +1067,70 @@ final class AccessibilityService {
     private static func copyAXWindows(_ app: AXUIElement) -> CFArray? {
         var value: AnyObject?
         AXUIElementCopyAttributeValue(app, kAXWindowsAttribute as CFString, &value)
-        guard let v = value else { return nil }
-        // AXUIElement returns CFArray for kAXWindowsAttribute
-        return unsafeDowncast(v, to: CFArray.self)
+        return cfArray(from: value)
     }
 
     private static func getAXPosition(_ element: AXUIElement) -> CGPoint? {
         var value: CFTypeRef?
         AXUIElementCopyAttributeValue(element, kAXPositionAttribute as CFString, &value)
-        guard let val = value else { return nil }
+        guard let val = axValue(from: value) else { return nil }
         var point = CGPoint.zero
-        AXValueGetValue(val as! AXValue, .cgPoint, &point)
+        guard AXValueGetValue(val, .cgPoint, &point) else { return nil }
         return point
     }
 
     private static func getAXSize(_ element: AXUIElement) -> CGSize? {
         var value: CFTypeRef?
         AXUIElementCopyAttributeValue(element, kAXSizeAttribute as CFString, &value)
-        guard let val = value else { return nil }
+        guard let val = axValue(from: value) else { return nil }
         var size = CGSize.zero
-        AXValueGetValue(val as! AXValue, .cgSize, &size)
+        guard AXValueGetValue(val, .cgSize, &size) else { return nil }
         return size
     }
+
+    private static func cfArray(from value: AnyObject?) -> CFArray? {
+        guard let value,
+              CFGetTypeID(value as CFTypeRef) == CFArrayGetTypeID() else {
+            return nil
+        }
+        return unsafeDowncast(value, to: CFArray.self)
+    }
+
+    private static func axElement(from value: CFTypeRef?) -> AXUIElement? {
+        guard let value,
+              CFGetTypeID(value) == AXUIElementGetTypeID() else {
+            return nil
+        }
+        return unsafeDowncast(value, to: AXUIElement.self)
+    }
+
+    private static func axElement(at index: CFIndex, in array: CFArray) -> AXUIElement? {
+        guard index >= 0, index < CFArrayGetCount(array),
+              let raw = CFArrayGetValueAtIndex(array, index) else {
+            return nil
+        }
+        let element = unsafeBitCast(raw, to: AXUIElement.self)
+        guard CFGetTypeID(element) == AXUIElementGetTypeID() else { return nil }
+        return element
+    }
+
+    private static func axValue(from value: CFTypeRef?) -> AXValue? {
+        guard let value,
+              CFGetTypeID(value) == AXValueGetTypeID() else {
+            return nil
+        }
+        return unsafeDowncast(value, to: AXValue.self)
+    }
+
+    #if DEBUG
+    static func debugIsAXElementValue(_ value: CFTypeRef) -> Bool {
+        axElement(from: value) != nil
+    }
+
+    static func debugIsAXValue(_ value: CFTypeRef) -> Bool {
+        axValue(from: value) != nil
+    }
+    #endif
 
     private static func setAXPosition(_ element: AXUIElement, point: CGPoint) {
         var p = point

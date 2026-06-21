@@ -40,6 +40,32 @@ private struct SlowFixtureProvider: PluginProvider {
     }
 }
 
+private struct OversizedFixtureProvider: PluginProvider {
+    let id: String
+
+    func fetchState() async throws -> ProviderPanelState {
+        ProviderPanelState(
+            title: String(repeating: "T", count: ProviderPayloadLimits.maxTitleCharacters + 20),
+            subtitle: String(repeating: "S", count: ProviderPayloadLimits.maxSubtitleCharacters + 20),
+            progressCurrent: .infinity,
+            progressTotal: .nan,
+            health: .normal,
+            actions: (0..<(ProviderPayloadLimits.maxActions + 6)).map { index in
+                ProviderActionDescriptor(
+                    id: index == 1 ? "action-0" : "action-\(index)",
+                    title: String(repeating: "A", count: ProviderPayloadLimits.maxActionTitleCharacters + 20),
+                    symbol: String(repeating: "square", count: 20),
+                    isEnabled: true
+                )
+            } + [
+                ProviderActionDescriptor(id: "   ", title: "blank", symbol: nil, isEnabled: true)
+            ]
+        )
+    }
+
+    func performAction(_: String, payload _: [String: String]?) async throws {}
+}
+
 @Suite("ProviderRuntime", .serialized)
 struct ProviderRuntimeTests {
     @Test func testFetchPanelStateSuccess() async {
@@ -56,6 +82,28 @@ struct ProviderRuntimeTests {
         #expect(state.title == "Fixture")
         #expect(state.health == .normal)
         #expect(state.actions.count == 1)
+    }
+
+    @Test func testFetchPanelStateBoundsProviderPayloadBeforeDisplay() async {
+        let runtime = ProviderRuntime()
+        await runtime.register(provider: OversizedFixtureProvider(id: "fixture.oversized"))
+
+        let state = await runtime.fetchPanelState(
+            providerId: "fixture.oversized",
+            timeoutMs: 500,
+            circuitBreakerThreshold: 3,
+            fallbackTitle: "Fallback"
+        )
+
+        #expect(state.title.count == ProviderPayloadLimits.maxTitleCharacters)
+        #expect(state.subtitle.count == ProviderPayloadLimits.maxSubtitleCharacters)
+        #expect(state.progressCurrent == nil)
+        #expect(state.progressTotal == nil)
+        #expect(state.actions.count == ProviderPayloadLimits.maxActions)
+        #expect(Set(state.actions.map(\.id)).count == state.actions.count)
+        #expect(state.actions.allSatisfy { $0.title.count <= ProviderPayloadLimits.maxActionTitleCharacters })
+        #expect(state.actions.allSatisfy { ($0.symbol?.count ?? 0) <= ProviderPayloadLimits.maxSymbolCharacters })
+        #expect(!state.actions.contains { $0.id.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty })
     }
 
     @Test func testFetchPanelStateTimeoutAndCircuitBreaker() async {

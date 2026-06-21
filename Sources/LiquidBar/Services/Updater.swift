@@ -19,20 +19,34 @@ struct UpdateInfo: Sendable {
     let url: String
 }
 
+enum UpdaterError: Error {
+    case untrustedReleaseURL(String)
+}
+
 enum Updater {
-    static let githubRepo = "liquidbar/liquidbar"
+    static let githubRepo = "gradigit/LiquidBar"
     static let currentVersion = "0.1.0"
 
+    static var latestReleaseAPIURL: URL {
+        URL(string: "https://api.github.com/repos/\(githubRepo)/releases/latest")!
+    }
+
+    static var repositoryURL: URL {
+        URL(string: "https://github.com/\(githubRepo)")!
+    }
+
     static func checkForUpdate() async throws -> UpdateInfo? {
-        let url = URL(string: "https://api.github.com/repos/\(githubRepo)/releases/latest")!
-        let (data, _) = try await URLSession.shared.data(from: url)
+        let (data, _) = try await URLSession.shared.data(from: latestReleaseAPIURL)
         let release = try JSONDecoder().decode(GitHubRelease.self, from: data)
         guard !release.prerelease else { return nil }
         let remote = release.tagName.hasPrefix("v")
             ? String(release.tagName.dropFirst())
             : release.tagName
         guard versionIsNewer(remote: remote, current: currentVersion) else { return nil }
-        return UpdateInfo(current: currentVersion, latest: remote, url: release.htmlUrl)
+        guard let releaseURL = trustedReleaseURL(from: release.htmlUrl) else {
+            throw UpdaterError.untrustedReleaseURL(release.htmlUrl)
+        }
+        return UpdateInfo(current: currentVersion, latest: remote, url: releaseURL.absoluteString)
     }
 
     static func versionIsNewer(remote: String, current: String) -> Bool {
@@ -49,9 +63,29 @@ enum Updater {
         return (r.0, r.1, r.2) > (c.0, c.1, c.2)
     }
 
+    static func trustedReleaseURL(from rawURL: String) -> URL? {
+        guard let url = URL(string: rawURL),
+              url.scheme == "https",
+              url.host?.caseInsensitiveCompare("github.com") == .orderedSame else {
+            return nil
+        }
+
+        let components = url.pathComponents.filter { $0 != "/" }
+        guard components.count >= 5,
+              !components.contains("."),
+              !components.contains(".."),
+              components[0].caseInsensitiveCompare("gradigit") == .orderedSame,
+              components[1].caseInsensitiveCompare("LiquidBar") == .orderedSame,
+              components[2] == "releases",
+              components[3] == "tag" else {
+            return nil
+        }
+        return url
+    }
+
     @MainActor
     static func openReleasePage(url: String) {
-        guard let u = URL(string: url) else { return }
+        guard let u = trustedReleaseURL(from: url) else { return }
         NSWorkspace.shared.open(u)
     }
 }
