@@ -33,7 +33,22 @@ When older notes contain useful conclusions:
 - `docs/ARCHITECTURE.md`: source map and runtime flow.
 - `docs/DEVELOPMENT.md`: local setup and common commands.
 - `docs/TESTING.md`: test commands, UI testing, visual regression, artifacts.
+- `docs/PERFORMANCE.md`: local benchmark capture, A/B comparison, and perf
+  ledger workflow.
 - `docs/research/`: future public research notes, if needed.
+
+If a document references a script, asset, or source file, keep that referenced
+file in the same commit or remove the reference. Public docs should describe the
+state of the repository, not a private local worktree.
+
+## Release Hygiene
+
+- Keep the canonical release namespace as `gradigit/LiquidBar` unless ownership
+  is intentionally changed.
+- Keep CI actions pinned to reviewed commit SHAs.
+- Do not publish unsigned or unnotarized binaries as official releases.
+- Keep generated scan reports and local build artifacts out of git; summarize
+  durable conclusions in tracked docs instead.
 
 ## Public Research Notes
 

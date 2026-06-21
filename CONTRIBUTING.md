@@ -12,11 +12,13 @@ Required tools:
 - Swift 6.2 or newer
 - Xcode command line tools
 - XcodeGen for UI test project generation
+- `jq` for UI result classification
 
-Install XcodeGen with Homebrew if needed:
+Install helper tools with Homebrew if needed:
 
 ```sh
 brew install xcodegen
+brew install jq
 ```
 
 ## Development Loop
@@ -38,6 +40,14 @@ swift test -c debug
 For changes involving the app bundle, panels, thumbnails, or UI automation, also
 read [docs/TESTING.md](docs/TESTING.md).
 
+For performance-sensitive changes, capture a baseline and candidate run using
+[docs/PERFORMANCE.md](docs/PERFORMANCE.md) before claiming an improvement.
+
+For changes involving Accessibility, ScreenCaptureKit, global hotkeys, update
+checks, login items, plugin/provider loading, or release automation, read
+[SECURITY.md](SECURITY.md) and update it if the permission or trust boundary
+changes.
+
 ## Commit Hygiene
 
 - Keep changes focused.
@@ -51,7 +61,10 @@ read [docs/TESTING.md](docs/TESTING.md).
 ## Pull Request Checklist
 
 - `swift test -c debug` passes locally.
+- Performance-sensitive changes include baseline/candidate evidence or explain
+  why runtime measurement was not applicable.
 - GitHub Actions CI passes.
 - User-facing behavior changes update README or docs.
+- Permission-sensitive behavior changes update `SECURITY.md`.
 - New files are intentional and pass a marker scan for local paths and private
   working notes.

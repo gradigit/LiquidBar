@@ -18,6 +18,7 @@ Install XcodeGen:
 
 ```sh
 brew install xcodegen
+brew install jq
 ```
 
 Generate the project:
@@ -86,6 +87,15 @@ Disable only when isolating tooling issues:
 LIQUIDBAR_CRASH_GATE_WINDOWSERVER=0 ./scripts/run_ui_tests.sh
 ```
 
+If Xcode cannot initialize UI automation, `scripts/classify_ui_results.sh`
+reports `INFRASTRUCTURE_BLOCKED` and exits 87. Treat this as a local automation
+environment blocker, not as product correctness evidence.
+
+`scripts/classify_ui_results.sh` also reports `PASS_WITH_HARDWARE_GATE` for
+known hardware-dependent failures when strict mode is not enabled. Set
+`LIQUIDBAR_UI_GROUND_TRUTH_STRICT=1` to make every UI test failure fail the
+classification step.
+
 ## Full Local Run
 
 Run SwiftPM tests, UI tests, result classification, and log collection:
@@ -112,3 +122,13 @@ build/artifacts/perf/
 
 Use this when changing event processing, thumbnail capture, rendering, or
 multi-display behavior.
+
+For optimization work, use the full baseline/candidate comparison workflow in
+`docs/PERFORMANCE.md`. The performance scripts produce parsed summaries,
+metadata, run notes, and local ledger entries under `build/artifacts/perf/`.
+
+Validate parser/comparator changes with:
+
+```sh
+./scripts/perf_pipeline_selftest.sh
+```

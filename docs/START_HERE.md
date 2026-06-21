@@ -13,16 +13,20 @@ Read this before changing code.
   `LiquidBarTests`
 - Runtime baseline: native AppKit panels with retained AppKit/Core Animation
   rendering, not a permanent full-surface GPU render loop
+- Release trust: official update checks and release links are scoped to
+  `gradigit/LiquidBar`
 
 ## First Read Order
 
 1. `README.md`
 2. `CONTRIBUTING.md`
-3. `docs/ARCHITECTURE.md`
-4. `docs/DEVELOPMENT.md`
-5. `docs/TESTING.md`
-6. `docs/MAINTAINER_NOTES.md`
-7. The source files directly related to the requested change
+3. `SECURITY.md`
+4. `docs/ARCHITECTURE.md`
+5. `docs/DEVELOPMENT.md`
+6. `docs/TESTING.md`
+7. `docs/PERFORMANCE.md` for performance-sensitive work
+8. `docs/MAINTAINER_NOTES.md`
+9. The source files directly related to the requested change
 
 Do not start implementation until you understand the requested scope, current
 git status, and relevant tests.
@@ -37,10 +41,12 @@ Work only in the LiquidBar repository currently open in this session.
 First read:
 - README.md
 - CONTRIBUTING.md
+- SECURITY.md
 - docs/START_HERE.md
 - docs/ARCHITECTURE.md
 - docs/DEVELOPMENT.md
 - docs/TESTING.md
+- docs/PERFORMANCE.md if performance-sensitive work is in scope
 - docs/MAINTAINER_NOTES.md
 
 Treat older local LiquidBar folders as private archives. Do not read, copy, or
@@ -52,6 +58,9 @@ Before editing, run:
 
 For source changes, validate with:
 - swift test -c debug
+
+For release-oriented local validation, use:
+- ./scripts/run_all_tests.sh
 
 Keep changes focused, public-safe, and free of local paths, generated logs, raw
 session transcripts, prompt text, and private workflow state.
@@ -71,6 +80,7 @@ What was brought forward:
 - public-safe architecture, development, testing, contribution, and security
   docs
 - CI, MIT license, Dependabot, and hardened ignore rules
+- release trust hardening for the canonical GitHub namespace
 
 What was intentionally left out:
 
@@ -111,11 +121,16 @@ For release-oriented work, run:
 ./scripts/run_all_tests.sh
 ```
 
+For performance-sensitive work, use the baseline/candidate workflow in
+`docs/PERFORMANCE.md`.
+
 ## Where To Add Future Context
 
 - Stable architecture or subsystem knowledge: `docs/ARCHITECTURE.md`
 - Development workflow changes: `docs/DEVELOPMENT.md`
 - Test/runbook changes: `docs/TESTING.md`
+- Performance benchmark workflow changes: `docs/PERFORMANCE.md`
+- Permission or release trust changes: `SECURITY.md`
 - Maintainer policy or migration rules: `docs/MAINTAINER_NOTES.md`
 - Public research notes: `docs/research/`
 

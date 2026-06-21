@@ -24,6 +24,10 @@ artifacts/
 *.logarchive/
 *.ips
 
+# Python helper caches
+__pycache__/
+*.pyc
+
 # macOS filesystem metadata
 .DS_Store
 .AppleDouble

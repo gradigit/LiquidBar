@@ -13,3 +13,7 @@ Keep notes concise:
 
 Do not store raw transcripts, local machine paths, generated status dumps, or
 private workflow state here.
+
+Research notes should not depend on claims from private worktrees. If a note
+describes current code behavior, cite the current source files or commands used
+to verify it.

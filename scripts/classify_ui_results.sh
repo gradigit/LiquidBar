@@ -47,8 +47,25 @@ declare -a HW_GATE_TESTS=(
 )
 
 declare -a NON_GATE_FAILURES=()
+declare -a INFRA_FAILURES=()
+is_infra_failure() {
+  local test_name="$1"
+  local failure_text="$2"
+  [[ "$test_name" == *"failed to initialize for UI testing"* ]] && return 0
+  [[ "$failure_text" == *"Timed out while enabling automation mode"* ]] && return 0
+  [[ "$failure_text" == *"failed to initialize for UI testing"* ]] && return 0
+  return 1
+}
+
 if [[ ${#FAILED_TESTS[@]} -gt 0 ]]; then
   for test_name in "${FAILED_TESTS[@]}"; do
+    failure_text="$(jq -r --arg name "$test_name" '
+      [ .testFailures[]? | select(.testName == $name) | .failureText ] | first // ""
+    ' <<<"$SUMMARY_JSON")"
+    if is_infra_failure "$test_name" "$failure_text"; then
+      INFRA_FAILURES+=("$test_name")
+    fi
+
     is_gate=0
     for gate_test in "${HW_GATE_TESTS[@]}"; do
       if [[ "$test_name" == "$gate_test" ]]; then
@@ -64,7 +81,9 @@ fi
 
 CLASSIFICATION="PASS"
 if [[ "$FAILED_COUNT" -gt 0 ]]; then
-  if [[ ${#NON_GATE_FAILURES[@]} -eq 0 ]]; then
+  if [[ ${#FAILED_TESTS[@]} -gt 0 && ${#INFRA_FAILURES[@]} -eq ${#FAILED_TESTS[@]} ]]; then
+    CLASSIFICATION="INFRASTRUCTURE_BLOCKED"
+  elif [[ ${#NON_GATE_FAILURES[@]} -eq 0 ]]; then
     CLASSIFICATION="PASS_WITH_HARDWARE_GATE"
   else
     CLASSIFICATION="FAIL"
@@ -96,6 +115,10 @@ fi
 
 if [[ "$STRICT" -eq 1 && "$FAILED_COUNT" -gt 0 ]]; then
   exit 1
+fi
+
+if [[ "$CLASSIFICATION" == "INFRASTRUCTURE_BLOCKED" ]]; then
+  exit 87
 fi
 
 if [[ "$CLASSIFICATION" == "FAIL" ]]; then
