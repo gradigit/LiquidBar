@@ -4,6 +4,7 @@ import ApplicationServices
 
 @MainActor
 final class WindowManager {
+    private(set) var lastFrontmostWindowId: UInt32?
 
     private struct AXWindowSnapshot {
         var title: String
@@ -53,11 +54,14 @@ final class WindowManager {
         currentSpaceKeysByDisplay: [CGDirectDisplayID: String] = [:],
         spacesService: SpacesService? = nil
     ) -> [WindowInfo] {
+        lastFrontmostWindowId = nil
+
         #if DEBUG
         if let path = ProcessInfo.processInfo.environment["LIQUIDBAR_TEST_WINDOWS_PATH"],
            !path.isEmpty {
             if let windows = TestWindowList.load(from: URL(fileURLWithPath: path)) {
                 Log.window.debug("Using test window list: \(path, privacy: .public) (\(windows.count) windows)")
+                lastFrontmostWindowId = windows.first { !$0.isHidden && !$0.isMinimized }?.id.raw
                 return Array(windows.prefix(maxWindows))
             }
         }
@@ -118,6 +122,7 @@ final class WindowManager {
                 Log.window.debug("CGWindowList on-screen returned empty; falling back to .optionAll")
             }
         }
+        lastFrontmostWindowId = frontmostWindowId(in: windowList, usingAllFallback: usingAllFallback)
 
         for dict in windowList {
             if usingAllFallback && !isOnscreen(dict) { continue }
@@ -276,6 +281,22 @@ final class WindowManager {
         return false
     }
 
+    private func frontmostWindowId(in windowList: [[CFString: Any]], usingAllFallback: Bool) -> UInt32? {
+        let ownPid = ProcessInfo.processInfo.processIdentifier
+        for dict in windowList {
+            if usingAllFallback && !isOnscreen(dict) { continue }
+            let layer = dict[kCGWindowLayer as CFString] as? Int ?? 0
+            guard layer == 0 else { continue }
+            guard let pid = dict[kCGWindowOwnerPID] as? Int32,
+                  pid != ownPid,
+                  let windowId = dict[kCGWindowNumber] as? UInt32 else {
+                continue
+            }
+            return windowId
+        }
+        return nil
+    }
+
     private func monitorForWindow(_ bounds: WindowBounds, screens: [(displayId: UInt32, bounds: WindowBounds)]) -> MonitorId {
         DisplayAssignment.monitorId(for: bounds, screens: screens)
     }
@@ -392,11 +413,10 @@ final class WindowManager {
 
         var value: AnyObject?
         guard AXUIElementCopyAttributeValue(appEl, kAXWindowsAttribute as CFString, &value) == .success,
-              let v = value else {
+              let axWindows = Self.cfArray(from: value) else {
             return []
         }
 
-        let axWindows = unsafeDowncast(v, to: CFArray.self)
         let count = CFArrayGetCount(axWindows)
         if count <= 0 { return [] }
 
@@ -404,7 +424,7 @@ final class WindowManager {
         snapshots.reserveCapacity(count)
 
         for i in 0..<count {
-            let axWin = unsafeBitCast(CFArrayGetValueAtIndex(axWindows, i), to: AXUIElement.self)
+            guard let axWin = Self.axElement(at: i, in: axWindows) else { continue }
             AXUIElementSetMessagingTimeout(axWin, axMessagingTimeout)
 
             var titleVal: CFTypeRef?
@@ -442,6 +462,24 @@ final class WindowManager {
         return nil
     }
 
+    private nonisolated static func cfArray(from value: AnyObject?) -> CFArray? {
+        guard let value,
+              CFGetTypeID(value as CFTypeRef) == CFArrayGetTypeID() else {
+            return nil
+        }
+        return unsafeDowncast(value, to: CFArray.self)
+    }
+
+    private nonisolated static func axElement(at index: CFIndex, in array: CFArray) -> AXUIElement? {
+        guard index >= 0, index < CFArrayGetCount(array),
+              let raw = CFArrayGetValueAtIndex(array, index) else {
+            return nil
+        }
+        let element = unsafeBitCast(raw, to: AXUIElement.self)
+        guard CFGetTypeID(element) == AXUIElementGetTypeID() else { return nil }
+        return element
+    }
+
     private nonisolated static func axPosition(from element: AXUIElement) -> CGPoint? {
         var value: CFTypeRef?
         guard AXUIElementCopyAttributeValue(element, kAXPositionAttribute as CFString, &value) == .success,
@@ -450,7 +488,7 @@ final class WindowManager {
             return nil
         }
         var point = CGPoint.zero
-        guard AXValueGetValue((value as! AXValue), .cgPoint, &point) else { return nil }
+        guard AXValueGetValue(unsafeDowncast(value, to: AXValue.self), .cgPoint, &point) else { return nil }
         return point
     }
 
@@ -462,7 +500,7 @@ final class WindowManager {
             return nil
         }
         var size = CGSize.zero
-        guard AXValueGetValue((value as! AXValue), .cgSize, &size) else { return nil }
+        guard AXValueGetValue(unsafeDowncast(value, to: AXValue.self), .cgSize, &size) else { return nil }
         return size
     }
 

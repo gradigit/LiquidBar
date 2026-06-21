@@ -285,9 +285,14 @@ metrics = {
     "switcher_failed_total": switcher_failed_total,
     "switcher_entries_max": switcher_entries_max,
     "switcher_action_counts": dict(sorted(switcher_action_counts.items())),
+    "switcher_open_count": len(switcher_durations_by_action.get("open", [])),
+    "switcher_open_cold_ms": (switcher_durations_by_action.get("open", []) or [None])[0],
     "switcher_open_median_ms": percentile_or_none(switcher_durations_by_action.get("open", []), 0.50),
     "switcher_open_p95_ms": percentile_or_none(switcher_durations_by_action.get("open", []), 0.95),
     "switcher_open_worst_ms": max_or_none(switcher_durations_by_action.get("open", [])),
+    "switcher_open_warm_median_ms": percentile_or_none(switcher_durations_by_action.get("open", [])[1:], 0.50),
+    "switcher_open_warm_p95_ms": percentile_or_none(switcher_durations_by_action.get("open", [])[1:], 0.95),
+    "switcher_open_warm_worst_ms": max_or_none(switcher_durations_by_action.get("open", [])[1:]),
     "switcher_cycle_median_ms": percentile_or_none(switcher_durations_by_action.get("cycle", []), 0.50),
     "switcher_cycle_p95_ms": percentile_or_none(switcher_durations_by_action.get("cycle", []), 0.95),
     "switcher_cycle_worst_ms": max_or_none(switcher_durations_by_action.get("cycle", [])),
@@ -402,8 +407,12 @@ print(f"  poll_p95_median_ms: {fmt(metrics['poll_p95_median_ms'])}")
 print(f"  poll_exec_skip_total: {metrics['poll_exec_total']} / {metrics['poll_skip_total']}")
 print(f"  switcher_lines: {metrics['switcher_lines']}")
 print(f"  switcher_failed_total: {metrics['switcher_failed_total']}")
+print(f"  switcher_open_count: {metrics['switcher_open_count']}")
+print(f"  switcher_open_cold_ms: {fmt(metrics['switcher_open_cold_ms'])}")
 print(f"  switcher_open_median_ms: {fmt(metrics['switcher_open_median_ms'])}")
 print(f"  switcher_open_p95_ms: {fmt(metrics['switcher_open_p95_ms'])}")
+print(f"  switcher_open_warm_median_ms: {fmt(metrics['switcher_open_warm_median_ms'])}")
+print(f"  switcher_open_warm_p95_ms: {fmt(metrics['switcher_open_warm_p95_ms'])}")
 print(f"  switcher_cycle_step_median_ms: {fmt(metrics['switcher_cycle_step_median_ms'])}")
 print(f"  switcher_cycle_step_p95_ms: {fmt(metrics['switcher_cycle_step_p95_ms'])}")
 
@@ -453,9 +462,14 @@ if markdown_out:
         f"| Switcher lines | {metrics['switcher_lines']} |",
         f"| Switcher failed actions | {metrics['switcher_failed_total']} |",
         f"| Switcher max entries | {metrics['switcher_entries_max']} |",
+        f"| Switcher open count | {metrics['switcher_open_count']} |",
+        f"| Switcher open cold ms | {fmt(metrics['switcher_open_cold_ms'])} |",
         f"| Switcher open median ms | {fmt(metrics['switcher_open_median_ms'])} |",
         f"| Switcher open p95 ms | {fmt(metrics['switcher_open_p95_ms'])} |",
         f"| Switcher open worst ms | {fmt(metrics['switcher_open_worst_ms'])} |",
+        f"| Switcher open warm median ms | {fmt(metrics['switcher_open_warm_median_ms'])} |",
+        f"| Switcher open warm p95 ms | {fmt(metrics['switcher_open_warm_p95_ms'])} |",
+        f"| Switcher open warm worst ms | {fmt(metrics['switcher_open_warm_worst_ms'])} |",
         f"| Switcher cycle median ms | {fmt(metrics['switcher_cycle_median_ms'])} |",
         f"| Switcher cycle p95 ms | {fmt(metrics['switcher_cycle_p95_ms'])} |",
         f"| Switcher cycle worst ms | {fmt(metrics['switcher_cycle_worst_ms'])} |",

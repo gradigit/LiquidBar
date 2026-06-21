@@ -23,6 +23,12 @@ enum ContextAction: Int, Sendable {
     case deleteCustomItem = 22
 }
 
+enum AppContextAction: Int, Sendable {
+    case openPreferences = 30
+    case reloadConfig = 31
+    case quit = 32
+}
+
 enum Command: Sendable {
     case shutdown
     case refresh

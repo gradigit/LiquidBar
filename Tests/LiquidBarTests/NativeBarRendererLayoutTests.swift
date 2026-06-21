@@ -99,6 +99,29 @@ struct NativeBarRendererLayoutTests {
         renderer.shutdown()
     }
 
+    @Test func testLauncherUsesIconOnlyWidthInTitledUniformMode() throws {
+        let renderer = NativeBarRenderer()
+
+        let items: [TaskbarItem] = [
+            .launcher(screenId: 1),
+            .window(id: WindowId(1), bundleId: "com.app.one", title: "Window One", appName: "App One", isHidden: false, isMinimized: false, screenId: 1),
+        ]
+
+        var config = Config(iconsOnly: false)
+        config.itemSizing = .uniform
+        let rects = renderer.computeItemRects(
+            items: items,
+            config: config,
+            barWidth: 600,
+            barHeight: 30
+        )
+
+        #expect(rects.count == 2)
+        #expect(abs(rects[0].rect.width - Double(max(44, config.iconSize + 20))) < 0.001)
+        #expect(rects[1].rect.width > rects[0].rect.width)
+        renderer.shutdown()
+    }
+
     @Test func testLayoutSingleItem() throws {
         let renderer = NativeBarRenderer()
 

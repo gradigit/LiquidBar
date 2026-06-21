@@ -68,12 +68,7 @@ final class PanelManager {
             }
         }()
 
-        let panelThickness: CGFloat = {
-            if config.sidebarModeEnabled, config.taskbarPosition.isVertical {
-                return SidebarRuntimeEvaluator.barThickness(for: initialPresentation, config: config)
-            }
-            return CGFloat(config.taskbarHeight)
-        }()
+        let panelThickness = Self.panelThickness(for: config, sidebarPresentation: initialPresentation)
 
         let panel = LiquidBarPanel(
             screen: screen,
@@ -158,6 +153,16 @@ final class PanelManager {
         }
 
         return entries
+    }
+
+    nonisolated static func panelThickness(
+        for config: Config,
+        sidebarPresentation: SidebarPresentation = .compact
+    ) -> CGFloat {
+        if config.sidebarModeEnabled, config.taskbarPosition.isVertical {
+            return SidebarRuntimeEvaluator.barThickness(for: sidebarPresentation, config: config)
+        }
+        return CGFloat(config.effectiveTaskbarHeight)
     }
 
     // MARK: - Display Geometry Reconciliation

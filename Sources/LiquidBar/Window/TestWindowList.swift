@@ -2,7 +2,14 @@ import Foundation
 
 #if DEBUG
 
+@MainActor
 enum TestWindowList {
+    private struct CacheKey: Equatable {
+        var path: String
+        var modificationDate: Date?
+        var fileSize: Int?
+    }
+
     struct Root: Codable {
         var windows: [Window]
     }
@@ -25,13 +32,21 @@ enum TestWindowList {
         var height: Double
     }
 
+    private static var cachedKey: CacheKey?
+    private static var cachedWindows: [WindowInfo]?
+
     static func load(from url: URL) -> [WindowInfo]? {
         do {
+            let key = try cacheKey(for: url)
+            if cachedKey == key, let cachedWindows {
+                return cachedWindows
+            }
+
             let data = try Data(contentsOf: url)
             let decoder = JSONDecoder()
             decoder.keyDecodingStrategy = .convertFromSnakeCase
             let root = try decoder.decode(Root.self, from: data)
-            return root.windows.map { w in
+            let windows = root.windows.map { w in
                 WindowInfo(
                     id: WindowId(w.id),
                     bundleId: BundleId(w.bundleId),
@@ -48,12 +63,32 @@ enum TestWindowList {
                     )
                 )
             }
+            cachedKey = key
+            cachedWindows = windows
+            return windows
         } catch {
             Log.window.error("Failed to load test windows from \(url.path, privacy: .public): \(error)")
             return nil
         }
     }
+
+    static func clearCacheForTests() {
+        cachedKey = nil
+        cachedWindows = nil
+    }
+
+    private static func cacheKey(for url: URL) throws -> CacheKey {
+        let standardizedURL = url.standardizedFileURL
+        let values = try standardizedURL.resourceValues(forKeys: [
+            .contentModificationDateKey,
+            .fileSizeKey,
+        ])
+        return CacheKey(
+            path: standardizedURL.path,
+            modificationDate: values.contentModificationDate,
+            fileSize: values.fileSize
+        )
+    }
 }
 
 #endif
-

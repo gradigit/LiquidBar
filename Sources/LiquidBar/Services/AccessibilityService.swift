@@ -216,17 +216,9 @@ final class AccessibilityService {
 
     // MARK: - Launcher helpers
 
-    /// Open Spotlight via Cmd+Space.
+    /// Open Apple's Spotlight app directly, independent of the user's Cmd+Space binding.
     static func openSpotlight() {
-        // Key code 49 = Space on US keyboard layout
-        guard let keyDown = CGEvent(keyboardEventSource: nil, virtualKey: 49, keyDown: true),
-              let keyUp = CGEvent(keyboardEventSource: nil, virtualKey: 49, keyDown: false) else {
-            return
-        }
-        keyDown.flags = .maskCommand
-        keyUp.flags = .maskCommand
-        keyDown.post(tap: .cgSessionEventTap)
-        keyUp.post(tap: .cgSessionEventTap)
+        launchApp(bundleId: "com.apple.Spotlight")
     }
 
     // MARK: - Adjust Windows for Taskbar

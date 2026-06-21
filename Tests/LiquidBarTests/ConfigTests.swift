@@ -6,7 +6,7 @@ import Foundation
 struct ConfigTests {
     @Test func testDefaults() {
         let config = Config()
-        #expect(config.taskbarHeight == 30)
+        #expect(config.taskbarHeight == 32)
         #expect(config.iconSize == 20)
         #expect(config.fontSize == 11)
         #expect(config.maxItemWidth == 150)
@@ -31,7 +31,7 @@ struct ConfigTests {
         #expect(config.previewsEnabled == true)
         #expect(config.previewHoverDelayMs == 0)
         #expect(config.performanceLoggingEnabled == false)
-        #expect(config.performanceGpuTimingEnabled == true)
+        #expect(config.performanceGpuTimingEnabled == false)
         #expect(config.performanceLogIntervalMs == 1000)
         #expect(config.multiMonitorMode == .allDisplays)
         #expect(config.windowDisplayMode == .perDisplay)
@@ -40,6 +40,7 @@ struct ConfigTests {
         #expect(config.pinnedAppsScope == .perSpace)
         #expect(config.customItems.isEmpty)
         #expect(config.hoverIntensity == .subtle)
+        #expect(config.visualDepth == .balanced)
         #expect(config.appGroupCountBadgeInIconsOnly == true)
         #expect(config.appGroupCountBadgeStyle == .minimal)
         #expect(config.secondClickAction == .hide)
@@ -48,9 +49,11 @@ struct ConfigTests {
         #expect(config.disabledPluginIds.isEmpty)
         #expect(config.switcherEnabled == false)
         #expect(config.switcherHotkey == "option+tab")
+        #expect(config.switcherLayoutStyle == .heroCarousel)
         #expect(config.providerRuntimeEnabled == true)
         #expect(config.providerTimeoutMs == 900)
         #expect(config.providerCircuitBreakerThreshold == 3)
+        #expect(config.showMenuBarIcon == true)
     }
 
     @Test func testValidation() {
@@ -65,6 +68,13 @@ struct ConfigTests {
         #expect(tooHigh.taskbarHeight == 64)
         #expect(tooHigh.iconSize == 48)
         #expect(tooHigh.fontSize == 16)
+    }
+
+    @Test func effectiveTaskbarHeightKeepsUserMinimumUntilIconsOutgrowIt() {
+        #expect(Config(taskbarHeight: 32, iconSize: 20).effectiveTaskbarHeight == 32)
+        #expect(Config(taskbarHeight: 32, iconSize: 32).effectiveTaskbarHeight == 32)
+        #expect(Config(taskbarHeight: 32, iconSize: 36).effectiveTaskbarHeight == 36)
+        #expect(Config(taskbarHeight: 48, iconSize: 20).effectiveTaskbarHeight == 48)
     }
 
     @Test func testJSONRoundtrip() throws {
@@ -83,7 +93,8 @@ struct ConfigTests {
             blacklistedApps: ["com.test.blocked"],
             pinnedApps: ["com.test.pinned"],
             pinnedAppsScope: .global,
-            hoverIntensity: .medium
+            hoverIntensity: .medium,
+            visualDepth: .rich
         )
 
         let encoder = JSONEncoder()
@@ -121,6 +132,7 @@ struct ConfigTests {
         #expect(json.contains("hover_intent_guard_enabled"))
         #expect(json.contains("animation_profile"))
         #expect(json.contains("show_hidden_apps"))
+        #expect(json.contains("show_menu_bar_icon"))
         #expect(json.contains("tabbed_taskbar_enabled"))
         #expect(json.contains("multi_monitor_mode"))
         #expect(json.contains("window_display_mode"))
@@ -129,6 +141,7 @@ struct ConfigTests {
         #expect(json.contains("pinned_apps_scope"))
         #expect(json.contains("custom_items"))
         #expect(json.contains("hover_intensity"))
+        #expect(json.contains("visual_depth"))
         #expect(json.contains("app_group_count_badge_in_icons_only"))
         #expect(json.contains("app_group_count_badge_style"))
         #expect(json.contains("second_click_action"))
@@ -140,6 +153,7 @@ struct ConfigTests {
         #expect(json.contains("disabled_plugin_ids"))
         #expect(json.contains("switcher_enabled"))
         #expect(json.contains("switcher_hotkey"))
+        #expect(json.contains("switcher_layout_style"))
         #expect(json.contains("provider_runtime_enabled"))
         #expect(json.contains("provider_timeout_ms"))
         #expect(json.contains("provider_circuit_breaker_threshold"))
@@ -161,6 +175,7 @@ struct ConfigTests {
         decoder.keyDecodingStrategy = .convertFromSnakeCase
         let config = try decoder.decode(Config.self, from: json.data(using: .utf8)!)
         #expect(config.hoverIntensity == .subtle)
+        #expect(config.visualDepth == .balanced)
         #expect(config.pinnedAppsScope == .perSpace)
         #expect(config.customItems.isEmpty)
         #expect(config.tabbedTaskbarEnabled == false)
@@ -169,14 +184,16 @@ struct ConfigTests {
         #expect(config.appGroupCountBadgeStyle == .minimal)
         #expect(config.scrollWheelMode == .cycleWindows)
         #expect(config.performanceLoggingEnabled == false)
-        #expect(config.performanceGpuTimingEnabled == true)
+        #expect(config.performanceGpuTimingEnabled == false)
         #expect(config.performanceLogIntervalMs == 1000)
         #expect(config.pluginsEnabled == false)
         #expect(config.disabledPluginIds.isEmpty)
         #expect(config.sidebarModeEnabled == false)
         #expect(config.tileZoneEnabled == false)
         #expect(config.switcherEnabled == false)
+        #expect(config.switcherLayoutStyle == .heroCarousel)
         #expect(config.providerRuntimeEnabled == true)
+        #expect(config.showMenuBarIcon == true)
     }
 
     @Test func testHelpers() {
@@ -188,6 +205,22 @@ struct ConfigTests {
         #expect(config.isBlacklisted("com.other.app") == false)
         #expect(config.isPinned("com.pinned.app") == true)
         #expect(config.isPinned("com.other.app") == false)
+    }
+
+    @Test func testValidationNormalizesLegacyAndDuplicateSettings() {
+        var config = Config(
+            blacklistedApps: ["com.blocked.app", "com.blocked.app", "com.other.app"],
+            pinnedApps: ["com.pinned.app", "com.pinned.app"],
+            previewsEnabled: true,
+            previewMode: .liveLowFps,
+            performanceGpuTimingEnabled: true
+        )
+        config.validate()
+
+        #expect(config.blacklistedApps == ["com.blocked.app", "com.other.app"])
+        #expect(config.pinnedApps == ["com.pinned.app"])
+        #expect(config.previewMode == .staticImage)
+        #expect(config.performanceGpuTimingEnabled == false)
     }
 
     @Test func testRequiresPanelRebuildIgnoresNonVisualRuntimeOptions() {
@@ -215,5 +248,21 @@ struct ConfigTests {
         var changedMultiMonitor = base
         changedMultiMonitor.multiMonitorMode = .mainOnly
         #expect(changedMultiMonitor.requiresPanelRebuild(comparedTo: base) == true)
+    }
+
+    @Test func testRequiresPanelRebuildTracksEffectiveHeightNotRawIconSize() {
+        let base = Config(taskbarHeight: 32, iconSize: 20)
+
+        var iconStillFits = base
+        iconStillFits.iconSize = 28
+        #expect(iconStillFits.requiresPanelRebuild(comparedTo: base) == false)
+
+        var iconOutgrowsBar = base
+        iconOutgrowsBar.iconSize = 36
+        #expect(iconOutgrowsBar.requiresPanelRebuild(comparedTo: base) == true)
+
+        var preferredHeightHiddenByLargerIcon = Config(taskbarHeight: 40, iconSize: 48)
+        preferredHeightHiddenByLargerIcon.taskbarHeight = 32
+        #expect(preferredHeightHiddenByLargerIcon.requiresPanelRebuild(comparedTo: Config(taskbarHeight: 40, iconSize: 48)) == false)
     }
 }

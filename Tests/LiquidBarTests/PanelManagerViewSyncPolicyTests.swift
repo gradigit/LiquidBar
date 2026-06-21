@@ -85,4 +85,10 @@ struct PanelManagerViewSyncPolicyTests {
             ) == false
         )
     }
+
+    @Test func panelThicknessUsesEffectiveTaskbarHeight() {
+        #expect(PanelManager.panelThickness(for: Config(taskbarHeight: 32, iconSize: 28)) == 32)
+        #expect(PanelManager.panelThickness(for: Config(taskbarHeight: 32, iconSize: 40)) == 40)
+        #expect(PanelManager.panelThickness(for: Config(taskbarHeight: 48, iconSize: 24)) == 48)
+    }
 }

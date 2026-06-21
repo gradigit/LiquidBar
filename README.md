@@ -2,6 +2,8 @@
 
 ![LiquidBar glass bar](Assets/Brand/liquidbar-github-hero-transparent.png)
 
+![LiquidBar taskbar modes](Assets/Brand/liquidbar-taskbar-showcase.png)
+
 LiquidBar is a native macOS window bar for people who want a more deliberate
 window switcher and taskbar-style workflow without replacing the desktop shell.
 It is built with Swift, AppKit panels, retained Core Animation layers, and

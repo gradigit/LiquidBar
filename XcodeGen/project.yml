@@ -16,11 +16,18 @@ targets:
     platform: macOS
     sources:
       - path: Sources/LiquidBar
+      - path: Assets/AppIcon/LiquidBar.icns
+        buildPhase: resources
+      - path: Assets/MenuBar/liquidbar-menubar-template.png
+        buildPhase: resources
+      - path: Assets/Brand/liquidbar-brand-bar-transparent.png
+        buildPhase: resources
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.liquidbar.testhost
         GENERATE_INFOPLIST_FILE: YES
         INFOPLIST_KEY_CFBundleDisplayName: LiquidBar
+        INFOPLIST_KEY_CFBundleIconFile: LiquidBar
         ENABLE_TESTABILITY: true
 
   LiquidBarFixture:

@@ -34,6 +34,21 @@ struct CommandTypesTests {
         #expect(ContextAction(rawValue: 99) == nil)
     }
 
+    // MARK: - AppContextAction
+
+    @Test func testAppContextActionRawValues() {
+        #expect(AppContextAction.openPreferences.rawValue == 30)
+        #expect(AppContextAction.reloadConfig.rawValue == 31)
+        #expect(AppContextAction.quit.rawValue == 32)
+    }
+
+    @Test func testAppContextActionFromRawValue() {
+        #expect(AppContextAction(rawValue: 30) == .openPreferences)
+        #expect(AppContextAction(rawValue: 31) == .reloadConfig)
+        #expect(AppContextAction(rawValue: 32) == .quit)
+        #expect(AppContextAction(rawValue: 99) == nil)
+    }
+
     // MARK: - Command
 
     @Test func testCommandShutdown() {

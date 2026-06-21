@@ -123,7 +123,7 @@ enum TaskbarItem: Sendable {
             return bundleId.split(separator: ".").last.map(String.init) ?? bundleId
 
         case .launcher:
-            return "Launcher"
+            return ""
 
         case .pluginTile(_, _, let title, _, _, _):
             if title.count > 30 {
@@ -159,37 +159,49 @@ enum TaskbarItem: Sendable {
 // MARK: - UIRenderer
 
 enum UIRenderer {
+    private struct WindowGroupKey: Hashable {
+        let bundleId: BundleId
+        let monitorId: MonitorId?
+    }
+
+    private struct WindowGroupBucket {
+        let key: WindowGroupKey
+        var windows: [WindowInfo]
+    }
+
+    private static func groupedWindows(_ windows: [WindowInfo], config: Config) -> [WindowGroupBucket] {
+        var buckets: [WindowGroupBucket] = []
+        buckets.reserveCapacity(windows.count)
+
+        var bucketIndexByKey: [WindowGroupKey: Int] = [:]
+        bucketIndexByKey.reserveCapacity(windows.count)
+
+        for window in windows {
+            let key = WindowGroupKey(
+                bundleId: window.bundleId,
+                monitorId: config.windowDisplayMode == .perDisplay ? window.monitorId : nil
+            )
+
+            if let index = bucketIndexByKey[key] {
+                buckets[index].windows.append(window)
+            } else {
+                bucketIndexByKey[key] = buckets.count
+                buckets.append(WindowGroupBucket(key: key, windows: [window]))
+            }
+        }
+
+        return buckets
+    }
+
     @MainActor
     static func render(from state: WindowStateStore, config: Config) -> [TaskbarItem] {
         var items: [TaskbarItem] = []
         let allWindows = state.getWindows()
 
         if config.groupByApp {
-            var seenKeys: Set<String> = []
-            seenKeys.reserveCapacity(allWindows.count)
-
-            for window in allWindows {
-                let bid = window.bundleId.raw
-                let key: String
-                if config.windowDisplayMode == .perDisplay {
-                    key = "\(bid)|\(window.monitorId.raw)"
-                } else {
-                    key = bid
-                }
-
-                guard !seenKeys.contains(key) else { continue }
-                seenKeys.insert(key)
-
-                let group: [WindowInfo]
-                if config.windowDisplayMode == .perDisplay {
-                    group = dedupedGroupWindows(
-                        allWindows.filter { $0.bundleId.raw == bid && $0.monitorId == window.monitorId }
-                    )
-                } else {
-                    group = dedupedGroupWindows(
-                        allWindows.filter { $0.bundleId.raw == bid }
-                    )
-                }
+            for bucket in groupedWindows(allWindows, config: config) {
+                let group = dedupedGroupWindows(bucket.windows)
+                let bid = bucket.key.bundleId.raw
 
                 if group.count == 1 {
                     let w = group[0]

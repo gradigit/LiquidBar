@@ -25,6 +25,7 @@ DEFAULT_METRICS = [
     MetricSpec("drawable_miss_total", "Drawable misses", False),
     MetricSpec("poll_p95_median_ms", "Poll p95 median ms", False, "poll_p95_worst_ms"),
     MetricSpec("switcher_open_p95_ms", "Switcher open p95 ms", False, "switcher_open_worst_ms"),
+    MetricSpec("switcher_open_warm_p95_ms", "Switcher warm open p95 ms", False, "switcher_open_p95_ms"),
     MetricSpec(
         "switcher_cycle_step_p95_ms",
         "Switcher cycle step p95 ms",

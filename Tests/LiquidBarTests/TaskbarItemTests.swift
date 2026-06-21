@@ -24,6 +24,11 @@ func makeTestWindow(
 
 @Suite
 struct TaskbarItemTests {
+    @Test func launcherDisplayTitleIsAlwaysEmpty() {
+        #expect(TaskbarItem.launcher(screenId: 1).displayTitle(iconsOnly: false) == "")
+        #expect(TaskbarItem.launcher(screenId: 1).displayTitle(iconsOnly: true) == "")
+    }
+
     @Test @MainActor func testUngrouped() {
         let store = WindowStateStore()
         let config = Config(groupByApp: false)
@@ -54,6 +59,46 @@ struct TaskbarItemTests {
         #expect(items.count == 2)
     }
 
+    @Test @MainActor func testGroupedAllWindowsPreservesFirstSeenBundleOrder() {
+        let store = WindowStateStore()
+        let config = Config(groupByApp: true, windowDisplayMode: .allWindows)
+
+        let windows = [
+            makeTestWindow(id: 1, bundle: "com.app.Safari", title: "GitHub"),
+            makeTestWindow(id: 2, bundle: "com.app.VSCode", title: "Editor", monitorId: 1),
+            makeTestWindow(id: 3, bundle: "com.app.Safari", title: "Google", monitorId: 1),
+            makeTestWindow(id: 4, bundle: "com.app.Terminal", title: "Shell"),
+        ]
+        _ = store.update(windows: windows, config: config)
+
+        let items = UIRenderer.render(from: store, config: config)
+        #expect(items.count == 3)
+
+        if case .appGroup(let bundleId, _, let count, let groupedWindows, _, _, let screenId) = items[0] {
+            #expect(bundleId == "com.app.Safari")
+            #expect(count == 2)
+            #expect(groupedWindows.map(\.raw) == [1, 3])
+            #expect(screenId == 0)
+        } else {
+            Issue.record("Expected Safari to stay first as the first-seen grouped app")
+        }
+
+        if case .window(let id, let bundleId, _, _, _, _, let screenId) = items[1] {
+            #expect(id.raw == 2)
+            #expect(bundleId == "com.app.VSCode")
+            #expect(screenId == 1)
+        } else {
+            Issue.record("Expected VSCode to stay second as the next first-seen app")
+        }
+
+        if case .window(let id, let bundleId, _, _, _, _, _) = items[2] {
+            #expect(id.raw == 4)
+            #expect(bundleId == "com.app.Terminal")
+        } else {
+            Issue.record("Expected Terminal to stay third as the final first-seen app")
+        }
+    }
+
     @Test @MainActor func testGroupedPerDisplay() {
         let store = WindowStateStore()
         let config = Config(groupByApp: true, windowDisplayMode: .perDisplay)
@@ -80,6 +125,47 @@ struct TaskbarItemTests {
             }
             return false
         })
+    }
+
+    @Test @MainActor func testGroupedPerDisplayPreservesFirstSeenBundleDisplayOrder() {
+        let store = WindowStateStore()
+        let config = Config(groupByApp: true, windowDisplayMode: .perDisplay)
+
+        let windows = [
+            makeTestWindow(id: 1, bundle: "com.app.Safari", title: "A", monitorId: 1),
+            makeTestWindow(id: 2, bundle: "com.app.Chrome", title: "B", monitorId: 0),
+            makeTestWindow(id: 3, bundle: "com.app.Safari", title: "C", monitorId: 0),
+            makeTestWindow(id: 4, bundle: "com.app.Safari", title: "D", monitorId: 1),
+        ]
+        _ = store.update(windows: windows, config: config)
+
+        let items = UIRenderer.render(from: store, config: config)
+        #expect(items.count == 3)
+
+        if case .appGroup(let bundleId, _, let count, let groupedWindows, _, _, let screenId) = items[0] {
+            #expect(bundleId == "com.app.Safari")
+            #expect(count == 2)
+            #expect(groupedWindows.map(\.raw) == [1, 4])
+            #expect(screenId == 1)
+        } else {
+            Issue.record("Expected display-1 Safari group to stay first")
+        }
+
+        if case .window(let id, let bundleId, _, _, _, _, let screenId) = items[1] {
+            #expect(id.raw == 2)
+            #expect(bundleId == "com.app.Chrome")
+            #expect(screenId == 0)
+        } else {
+            Issue.record("Expected Chrome display-0 window to stay second")
+        }
+
+        if case .window(let id, let bundleId, _, _, _, _, let screenId) = items[2] {
+            #expect(id.raw == 3)
+            #expect(bundleId == "com.app.Safari")
+            #expect(screenId == 0)
+        } else {
+            Issue.record("Expected display-0 Safari window to stay third")
+        }
     }
 
     @Test @MainActor func testGroupedDedupesGhostDuplicates() {

@@ -55,7 +55,7 @@ enum SidebarRuntimeEvaluator {
         for presentation: SidebarPresentation,
         config: Config
     ) -> CGFloat {
-        let compact = max(24, CGFloat(config.taskbarHeight))
+        let compact = max(24, CGFloat(config.effectiveTaskbarHeight))
 
         switch presentation {
         case .compact:

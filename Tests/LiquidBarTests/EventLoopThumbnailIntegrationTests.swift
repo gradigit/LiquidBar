@@ -20,6 +20,22 @@ struct EventLoopThumbnailIntegrationTests {
         #expect(EventLoop.ThumbnailCaptureContext.prewarm.producer == .prewarm)
     }
 
+    @Test func switcherThumbnailPolicyPrioritizesSelectedWindowOutsideInitialPage() {
+        let indices = EventLoop.switcherThumbnailIndices(count: 40, selectedIndex: 20)
+
+        #expect(indices.first == 20)
+        #expect(indices.contains(17))
+        #expect(indices.contains(23))
+        #expect(indices.contains(0))
+        #expect(indices.count <= 12)
+        #expect(Set(indices).count == indices.count)
+    }
+
+    @Test func switcherThumbnailPolicyBoundsSelection() {
+        #expect(EventLoop.switcherThumbnailIndices(count: 5, selectedIndex: 50).first == 4)
+        #expect(EventLoop.switcherThumbnailIndices(count: 0, selectedIndex: 0).isEmpty)
+    }
+
     @Test func hideSwitcherInvalidatesQueuedSwitcherRequests() throws {
         let (loop, renderer) = try makeLoop()
         defer { renderer.shutdown() }

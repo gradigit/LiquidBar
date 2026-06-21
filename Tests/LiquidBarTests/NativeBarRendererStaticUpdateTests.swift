@@ -1,5 +1,6 @@
 import Testing
 import CoreGraphics
+import AppKit
 @testable import LiquidBar
 
 @Suite
@@ -99,6 +100,56 @@ struct NativeBarRendererStaticUpdateTests {
 
         #expect(renderer.debugStaticUpdateBuildCount(displayId: 1) == initialBuildCount)
         #expect(renderer.debugFrameIndex(displayId: 1) == initialFrameIndex)
+        renderer.shutdown()
+    }
+
+    @Test func cursorPositionUpdatesDebugStateWithoutSnapshotChurn() throws {
+        let renderer = try makeRenderer()
+        let iconCache = IconCache()
+        let items: [TaskbarItem] = [
+            .customText(id: "metric", text: "CPU 42%", screenId: 1),
+        ]
+        let config = Config()
+
+        renderer.updateItems(items, config: config, iconCache: iconCache, displayId: 1)
+        let initialBuildCount = renderer.debugStaticUpdateBuildCount(displayId: 1)
+        let initialFrameIndex = renderer.debugFrameIndex(displayId: 1)
+        let initialDecorationCount = renderer.debugDecorationCount(displayId: 1)
+
+        #expect(renderer.setCursorPosition(SIMD2<Float>(10, 12), for: 1) == true)
+        #expect(renderer.debugCursorPoint(displayId: 1) == NSPoint(x: 10, y: 12))
+        #expect(renderer.debugStaticUpdateBuildCount(displayId: 1) == initialBuildCount)
+        #expect(renderer.debugFrameIndex(displayId: 1) == initialFrameIndex)
+        #expect(renderer.debugDecorationCount(displayId: 1) == initialDecorationCount)
+
+        #expect(renderer.setCursorPosition(SIMD2<Float>(10, 12), for: 1) == false)
+        #expect(renderer.setCursorPosition(nil, for: 1) == true)
+        #expect(renderer.setCursorPosition(nil, for: 1) == false)
+        renderer.shutdown()
+    }
+
+    @Test func duplicateHoverStateSkipsSnapshotRebuild() throws {
+        let renderer = try makeRenderer()
+        let iconCache = IconCache()
+        let items: [TaskbarItem] = [
+            .customText(id: "metric", text: "CPU 42%", screenId: 1),
+        ]
+        let config = Config()
+
+        renderer.updateItems(items, config: config, iconCache: iconCache, displayId: 1)
+
+        #expect(renderer.setHoveredItemIndex(0, for: 1) == true)
+        #expect(renderer.setHoveredItemIndex(0, for: 1) == false)
+        #expect(renderer.setHoveredItemIndex(nil, for: 1) == true)
+        #expect(renderer.setHoveredItemIndex(nil, for: 1) == false)
+
+        #expect(renderer.setHoverRect(NSRect(x: 10, y: 4, width: 30, height: 20), for: 1) == true)
+        let decorationCountAfterHover = renderer.debugDecorationCount(displayId: 1)
+        #expect(decorationCountAfterHover > 0)
+        #expect(renderer.setHoverRect(NSRect(x: 10, y: 4, width: 30, height: 20), for: 1) == false)
+        #expect(renderer.debugDecorationCount(displayId: 1) == decorationCountAfterHover)
+        #expect(renderer.setHoverRect(nil, for: 1) == true)
+        #expect(renderer.setHoverRect(nil, for: 1) == false)
         renderer.shutdown()
     }
 }

@@ -164,6 +164,34 @@ struct ConfigEnumTests {
         }
     }
 
+    // MARK: - VisualDepth
+
+    @Test func testVisualDepthRawValues() {
+        #expect(VisualDepth.subtle.rawValue == "subtle")
+        #expect(VisualDepth.balanced.rawValue == "balanced")
+        #expect(VisualDepth.rich.rawValue == "rich")
+    }
+
+    @Test func testVisualDepthAllCases() {
+        #expect(VisualDepth.allCases.count == 3)
+    }
+
+    @Test func testVisualDepthFloatValue() {
+        #expect(VisualDepth.subtle.floatValue == 0.0)
+        #expect(VisualDepth.balanced.floatValue == 0.5)
+        #expect(VisualDepth.rich.floatValue == 1.0)
+    }
+
+    @Test func testVisualDepthCodable() throws {
+        let encoder = JSONEncoder()
+        let decoder = JSONDecoder()
+        for depth in VisualDepth.allCases {
+            let data = try encoder.encode(depth)
+            let decoded = try decoder.decode(VisualDepth.self, from: data)
+            #expect(decoded == depth)
+        }
+    }
+
     // MARK: - SecondClickAction
 
     @Test func testSecondClickActionRawValues() {
@@ -220,6 +248,14 @@ struct ConfigEnumTests {
         }
     }
 
+    @Test func testLauncherActionResolverTargets() {
+        #expect(LauncherActionResolver.target(for: Config(launcherAction: .spotlight)) == .application(bundleId: "com.apple.Spotlight"))
+        #expect(LauncherActionResolver.target(for: Config(launcherAction: .raycast)) == .url("raycast://"))
+        #expect(LauncherActionResolver.target(for: Config(launcherAction: .alfred)) == .url("alfred://"))
+        #expect(LauncherActionResolver.target(for: Config(launcherAction: .customUrl, launcherCustomUrl: " raycast://extensions/test ")) == .url("raycast://extensions/test"))
+        #expect(LauncherActionResolver.target(for: Config(launcherAction: .customUrl, launcherCustomUrl: " ")) == .none)
+    }
+
     // MARK: - PreviewMode
 
     @Test func testPreviewModeRawValues() {
@@ -250,6 +286,23 @@ struct ConfigEnumTests {
         for style in FocusIndicatorStyle.allCases {
             let data = try encoder.encode(style)
             let decoded = try decoder.decode(FocusIndicatorStyle.self, from: data)
+            #expect(decoded == style)
+        }
+    }
+
+    // MARK: - SwitcherLayoutStyle
+
+    @Test func testSwitcherLayoutStyleRawValues() {
+        #expect(SwitcherLayoutStyle.compactShelf.rawValue == "compact_shelf")
+        #expect(SwitcherLayoutStyle.heroCarousel.rawValue == "hero_carousel")
+    }
+
+    @Test func testSwitcherLayoutStyleCodable() throws {
+        let encoder = JSONEncoder()
+        let decoder = JSONDecoder()
+        for style in SwitcherLayoutStyle.allCases {
+            let data = try encoder.encode(style)
+            let decoded = try decoder.decode(SwitcherLayoutStyle.self, from: data)
             #expect(decoded == style)
         }
     }

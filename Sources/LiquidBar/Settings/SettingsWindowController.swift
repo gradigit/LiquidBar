@@ -1,4 +1,101 @@
 import Cocoa
+import ApplicationServices
+import UniformTypeIdentifiers
+
+enum SettingsIconSizeRange {
+    static let minimum = 16
+    static let maximum = 48
+    static let tickCount = 9
+}
+
+private final class SettingsBarPreviewView: NSView {
+    var config = Config() {
+        didSet { needsDisplay = true }
+    }
+
+    override var isFlipped: Bool { true }
+
+    override init(frame frameRect: NSRect) {
+        super.init(frame: frameRect)
+        wantsLayer = true
+        layer?.cornerRadius = 12
+        layer?.backgroundColor = NSColor.controlBackgroundColor.withAlphaComponent(0.35).cgColor
+    }
+
+    @available(*, unavailable)
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) not supported")
+    }
+
+    override func draw(_ dirtyRect: NSRect) {
+        super.draw(dirtyRect)
+
+        let barHeight = CGFloat(config.effectiveTaskbarHeight).clamped(to: 30...54)
+        let barWidth = min(bounds.width - 40, 410)
+        let barRect = NSRect(
+            x: (bounds.width - barWidth) / 2,
+            y: (bounds.height - barHeight) / 2,
+            width: barWidth,
+            height: barHeight
+        )
+        let cornerRadius = config.barStyle == .floating ? min(18, barHeight / 2) : 8
+        let barPath = NSBezierPath(roundedRect: barRect, xRadius: cornerRadius, yRadius: cornerRadius)
+        let fillAlpha: CGFloat = config.glassStyle == .publicClear ? 0.36 : 0.68
+        NSColor.windowBackgroundColor.withAlphaComponent(fillAlpha).setFill()
+        barPath.fill()
+        NSColor.separatorColor.withAlphaComponent(0.45).setStroke()
+        barPath.lineWidth = 1
+        barPath.stroke()
+
+        let iconSize = CGFloat(config.iconSize).clamped(to: 16...48)
+        let itemGap: CGFloat = config.groupByApp ? 10 : 8
+        let itemY = barRect.midY - iconSize / 2
+        var itemX = barRect.minX + 18
+
+        for index in 0..<5 {
+            let isFocused = index == 1
+            let itemWidth: CGFloat = config.iconsOnly ? iconSize + 10 : min(CGFloat(config.maxItemWidth), 72)
+            let itemRect = NSRect(x: itemX, y: barRect.midY - (iconSize + 10) / 2, width: itemWidth, height: iconSize + 10)
+            if isFocused {
+                let focusPath = NSBezierPath(roundedRect: itemRect, xRadius: 9, yRadius: 9)
+                let focusAlpha: CGFloat = config.focusIndicatorStyle == .tile ? 0.44 : 0.18
+                NSColor.controlAccentColor.withAlphaComponent(focusAlpha).setFill()
+                focusPath.fill()
+            }
+
+            let iconRect = NSRect(x: itemX + 5, y: itemY, width: iconSize, height: iconSize)
+            let iconPath = NSBezierPath(roundedRect: iconRect, xRadius: min(8, iconSize / 4), yRadius: min(8, iconSize / 4))
+            let hue = CGFloat(index) / 7.0
+            NSColor(calibratedHue: hue, saturation: 0.45, brightness: 0.78, alpha: 0.9).setFill()
+            iconPath.fill()
+
+            if !config.iconsOnly {
+                let titleRect = NSRect(x: iconRect.maxX + 8, y: barRect.midY - 4, width: max(18, itemWidth - iconSize - 18), height: 8)
+                let titlePath = NSBezierPath(roundedRect: titleRect, xRadius: 4, yRadius: 4)
+                NSColor.labelColor.withAlphaComponent(isFocused ? 0.45 : 0.24).setFill()
+                titlePath.fill()
+            }
+
+            if isFocused, config.focusIndicatorStyle == .dot {
+                let dotRect = NSRect(x: itemRect.midX - 8, y: barRect.maxY - 6, width: 16, height: 3)
+                let dotPath = NSBezierPath(roundedRect: dotRect, xRadius: 2, yRadius: 2)
+                NSColor.controlAccentColor.withAlphaComponent(0.8).setFill()
+                dotPath.fill()
+            }
+
+            itemX += itemWidth + itemGap
+        }
+    }
+}
+
+private final class FocusClearingTabViewController: NSTabViewController {
+    var onDidSelectTabViewItem: (() -> Void)?
+
+    override func tabView(_ tabView: NSTabView, didSelect tabViewItem: NSTabViewItem?) {
+        super.tabView(tabView, didSelect: tabViewItem)
+        onDidSelectTabViewItem?()
+    }
+}
 
 @MainActor
 final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTextFieldDelegate {
@@ -34,13 +131,32 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTe
     private var minimizedModePopup: NSPopUpButton!
     private var secondClickPopup: NSPopUpButton!
     private var hideDockCheckbox: NSButton!
+    private var showMenuBarIconCheckbox: NSButton!
     private var loginCheckbox: NSButton!
+    private var itemSizingPopup: NSPopUpButton!
+    private var maxItemWidthSlider: NSSlider!
+    private var maxItemWidthLabel: NSTextField!
+    private var maxTitleWidthSlider: NSSlider!
+    private var maxTitleWidthLabel: NSTextField!
+    private var centerItemsCheckbox: NSButton!
+    private var multiMonitorPopup: NSPopUpButton!
+    private var windowDisplayPopup: NSPopUpButton!
+    private var scrollWheelPopup: NSPopUpButton!
+    private var launcherEnabledCheckbox: NSButton!
+    private var launcherActionPopup: NSPopUpButton!
+    private var launcherCustomUrlField: NSTextField!
 
     // Appearance tab controls
+    private var appearancePreviewView: SettingsBarPreviewView!
     private var themePopup: NSPopUpButton!
     private var barStylePopup: NSPopUpButton!
     private var glassStylePopup: NSPopUpButton!
+    private var iconSizeSlider: NSSlider!
+    private var iconSizeLabel: NSTextField!
+    private var titleFontSizeSlider: NSSlider!
+    private var titleFontSizeLabel: NSTextField!
     private var hoverIntensityPopup: NSPopUpButton!
+    private var visualDepthPopup: NSPopUpButton!
     private var focusIndicatorPopup: NSPopUpButton!
     private var stackStylePopup: NSPopUpButton!
     private var stackGeometryPopup: NSPopUpButton!
@@ -52,23 +168,35 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTe
     // Apps tab controls
     private var blacklistField: NSTextField!
     private var pinnedAppsLabel: NSTextField!
+    private var pinnedAppsScopePopup: NSPopUpButton!
+    private var pendingPinnedApps: [String]?
+
+    // Advanced tab controls
+    private var accessibilityStatusLabel: NSTextField!
+    private var inputMonitoringStatusLabel: NSTextField!
+    private var screenRecordingStatusLabel: NSTextField!
+    private var previewsEnabledCheckbox: NSButton!
+    private var previewHoverDelayField: NSTextField!
     private var providerRuntimeCheckbox: NSButton!
     private var providerTimeoutField: NSTextField!
     private var providerCircuitBreakerField: NSTextField!
+    private var perfLoggingCheckbox: NSButton!
+    private var perfLogIntervalField: NSTextField!
+    private var pluginsEnabledCheckbox: NSButton!
+    private var windowTabGroupsCheckbox: NSButton!
+    private var tabGroupHoverDelayField: NSTextField!
+    private var tabGroupCollapseCheckbox: NSButton!
 
     // About tab controls
     private var updateStatusLabel: NSTextField!
     private var configPathLabel: NSTextField!
-    private var perfLoggingCheckbox: NSButton!
-    private var perfGpuTimingCheckbox: NSButton!
-    private var perfLogIntervalField: NSTextField!
 
-    private let tabViewController = NSTabViewController()
+    private let tabViewController = FocusClearingTabViewController()
 
-    init() {
+    init(configOverride: Config? = nil) {
         let window = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 480, height: 420),
-            styleMask: [.titled, .closable],
+            contentRect: NSRect(x: 0, y: 0, width: 560, height: 620),
+            styleMask: [.titled, .closable, .miniaturizable],
             backing: .buffered,
             defer: false
         )
@@ -76,11 +204,18 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTe
         window.center()
         window.isReleasedWhenClosed = false
         window.toolbarStyle = .preference
+        window.titlebarAppearsTransparent = true
+        window.isMovableByWindowBackground = true
+        window.backgroundColor = .windowBackgroundColor
 
         super.init(window: window)
         window.delegate = self
         buildUI()
-        loadConfig()
+        if let configOverride {
+            applyConfigToControls(configOverride)
+        } else {
+            loadConfig()
+        }
     }
 
     @available(*, unavailable)
@@ -94,6 +229,9 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTe
         guard let window else { return }
 
         tabViewController.tabStyle = .toolbar
+        tabViewController.onDidSelectTabViewItem = { [weak self] in
+            self?.clearTransientTextFocus()
+        }
 
         // General tab
         let generalVC = NSViewController()
@@ -122,6 +260,15 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTe
         appsItem.image = NSImage(systemSymbolName: "app.badge.checkmark", accessibilityDescription: "Apps")
         tabViewController.addTabViewItem(appsItem)
 
+        // Advanced tab
+        let advancedVC = NSViewController()
+        advancedVC.view = wrapWithApplyButton(buildAdvancedTab())
+        advancedVC.preferredContentSize = advancedVC.view.frame.size
+        advancedVC.title = "Advanced"
+        let advancedItem = NSTabViewItem(viewController: advancedVC)
+        advancedItem.image = NSImage(systemSymbolName: "slider.horizontal.3", accessibilityDescription: "Advanced")
+        tabViewController.addTabViewItem(advancedItem)
+
         // About tab
         let aboutVC = NSViewController()
         aboutVC.view = wrapWithApplyButton(buildAboutTab())
@@ -135,14 +282,14 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTe
         window.contentViewController = tabViewController
         // Ensure the full tab content (including lower controls) is visible.
         window.setContentSize(generalVC.view.frame.size)
-        window.minSize = NSSize(width: 480, height: 500)
+        window.minSize = NSSize(width: 540, height: 560)
     }
 
     /// Wraps tab content in a container with an Apply button at the bottom-right.
     private func wrapWithApplyButton(_ contentView: NSView) -> NSView {
-        let footerHeight: CGFloat = 44
-        let scrollViewportHeight: CGFloat = 520
-        let containerW = max(460, contentView.frame.width)
+        let footerHeight: CGFloat = 52
+        let scrollViewportHeight: CGFloat = 560
+        let containerW = max(540, contentView.frame.width)
         let containerH = scrollViewportHeight + footerHeight
         let container = NSView(frame: NSRect(x: 0, y: 0, width: containerW, height: containerH))
 
@@ -152,39 +299,80 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTe
         scrollView.hasHorizontalScroller = false
         scrollView.borderType = .noBorder
         scrollView.drawsBackground = false
+        scrollView.contentInsets = NSEdgeInsets(top: 14, left: 0, bottom: 18, right: 0)
 
+        let minimumDocumentHeight = scrollViewportHeight
+        let documentHeightDelta = max(0, minimumDocumentHeight - contentView.frame.height)
+        if documentHeightDelta > 0 {
+            for subview in contentView.subviews {
+                subview.frame.origin.y += documentHeightDelta
+            }
+            contentView.frame.size.height += documentHeightDelta
+        }
         contentView.frame.origin = .zero
         contentView.frame.size.width = containerW
         contentView.autoresizingMask = [.width]
         scrollView.documentView = contentView
+        scrollDocumentViewToTop(in: scrollView, fallbackViewportHeight: scrollViewportHeight)
         container.addSubview(scrollView)
 
-        let liveCb = NSButton(frame: NSRect(x: 15, y: 14, width: 230, height: 18))
+        let footer = NSVisualEffectView(frame: NSRect(x: 0, y: 0, width: containerW, height: footerHeight))
+        footer.material = .contentBackground
+        footer.blendingMode = .withinWindow
+        footer.state = .active
+        footer.autoresizingMask = [.width, .maxYMargin]
+        container.addSubview(footer)
+
+        let separator = NSBox(frame: NSRect(x: 0, y: footerHeight - 1, width: containerW, height: 1))
+        separator.boxType = .separator
+        separator.autoresizingMask = [.width, .minYMargin]
+        footer.addSubview(separator)
+
+        let liveCb = NSButton(frame: NSRect(x: 18, y: 17, width: 152, height: 18))
         liveCb.setButtonType(.switch)
-        liveCb.title = "Apply changes automatically"
+        liveCb.title = "Auto Apply"
         liveCb.font = NSFont.systemFont(ofSize: 12)
         liveCb.target = self
         liveCb.action = #selector(liveApplyToggled(_:))
-        container.addSubview(liveCb)
+        footer.addSubview(liveCb)
         liveApplyCheckboxes.append(liveCb)
 
-        let reloadBtn = NSButton(frame: NSRect(x: 235, y: 10, width: 110, height: 30))
+        let resetBtn = NSButton(frame: NSRect(x: containerW - 358, y: 10, width: 94, height: 30))
+        resetBtn.bezelStyle = .rounded
+        resetBtn.title = "Reset Tab"
+        resetBtn.target = self
+        resetBtn.action = #selector(resetSelectedTabClicked(_:))
+        resetBtn.autoresizingMask = [.minXMargin]
+        footer.addSubview(resetBtn)
+
+        let revertBtn = NSButton(frame: NSRect(x: containerW - 258, y: 10, width: 82, height: 30))
+        revertBtn.bezelStyle = .rounded
+        revertBtn.title = "Revert"
+        revertBtn.target = self
+        revertBtn.action = #selector(revertClicked(_:))
+        revertBtn.autoresizingMask = [.minXMargin]
+        footer.addSubview(revertBtn)
+
+        let reloadBtn = NSButton(frame: NSRect(x: containerW - 170, y: 10, width: 74, height: 30))
         reloadBtn.bezelStyle = .rounded
-        reloadBtn.title = "Reload config"
+        reloadBtn.title = "Reload"
         reloadBtn.target = self
         reloadBtn.action = #selector(reloadConfigClicked(_:))
-        container.addSubview(reloadBtn)
+        reloadBtn.autoresizingMask = [.minXMargin]
+        footer.addSubview(reloadBtn)
 
-        let applyBtn = NSButton(frame: NSRect(x: 350, y: 10, width: 100, height: 30))
+        let applyBtn = NSButton(frame: NSRect(x: containerW - 90, y: 10, width: 72, height: 30))
         if let glassStyle = NSButton.BezelStyle(rawValue: 16) {
             applyBtn.bezelStyle = glassStyle
         } else {
             applyBtn.bezelStyle = .rounded
         }
         applyBtn.title = "Apply"
+        applyBtn.keyEquivalent = "\r"
         applyBtn.target = self
         applyBtn.action = #selector(applyClicked(_:))
-        container.addSubview(applyBtn)
+        applyBtn.autoresizingMask = [.minXMargin]
+        footer.addSubview(applyBtn)
         applyButtons.append(applyBtn)
 
         updateApplyControls()
@@ -195,10 +383,13 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTe
     // MARK: - Tab Builders
 
     private func buildGeneralTab() -> NSView {
-        let view = NSView(frame: NSRect(x: 0, y: 0, width: 460, height: 700))
+        let view = NSView(frame: NSRect(x: 0, y: 0, width: 540, height: 1160))
         var y: CGFloat = view.bounds.height - 30
-        let labelW: CGFloat = 150
-        let controlX: CGFloat = 165
+        let labelW: CGFloat = 160
+        let controlX: CGFloat = 180
+
+        addSectionHeader("Taskbar", at: NSPoint(x: 15, y: y), width: 500, to: view)
+        y -= 34
 
         // Taskbar height slider + label
         addLabel("Taskbar Height:", at: NSPoint(x: 15, y: y), width: labelW, to: view)
@@ -223,6 +414,81 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTe
         view.addSubview(positionPopup)
 
         y -= 36
+
+        addSectionHeader("Layout", at: NSPoint(x: 15, y: y), width: 500, to: view)
+        y -= 30
+
+        addLabel("Item Sizing:", at: NSPoint(x: 15, y: y + 2), width: labelW, to: view)
+        itemSizingPopup = NSPopUpButton(frame: NSRect(x: controlX, y: y - 2, width: 180, height: 26), pullsDown: false)
+        itemSizingPopup.addItems(withTitles: ["Uniform", "Auto"])
+        itemSizingPopup.target = self
+        itemSizingPopup.action = #selector(controlChanged(_:))
+        view.addSubview(itemSizingPopup)
+
+        y -= 36
+
+        addLabel("Max Item Width:", at: NSPoint(x: 15, y: y), width: labelW, to: view)
+        maxItemWidthSlider = NSSlider(frame: NSRect(x: controlX, y: y, width: 210, height: 22))
+        maxItemWidthSlider.minValue = 60
+        maxItemWidthSlider.maxValue = 360
+        maxItemWidthSlider.numberOfTickMarks = 7
+        maxItemWidthSlider.allowsTickMarkValuesOnly = false
+        maxItemWidthSlider.target = self
+        maxItemWidthSlider.action = #selector(maxItemWidthChanged(_:))
+        view.addSubview(maxItemWidthSlider)
+
+        maxItemWidthLabel = makeLabel("", at: NSPoint(x: controlX + 220, y: y + 2), width: 60)
+        maxItemWidthLabel.textColor = .secondaryLabelColor
+        view.addSubview(maxItemWidthLabel)
+
+        y -= 36
+
+        addLabel("Max Title Width:", at: NSPoint(x: 15, y: y), width: labelW, to: view)
+        maxTitleWidthSlider = NSSlider(frame: NSRect(x: controlX, y: y, width: 210, height: 22))
+        maxTitleWidthSlider.minValue = 20
+        maxTitleWidthSlider.maxValue = 240
+        maxTitleWidthSlider.numberOfTickMarks = 6
+        maxTitleWidthSlider.allowsTickMarkValuesOnly = false
+        maxTitleWidthSlider.target = self
+        maxTitleWidthSlider.action = #selector(maxTitleWidthChanged(_:))
+        view.addSubview(maxTitleWidthSlider)
+
+        maxTitleWidthLabel = makeLabel("", at: NSPoint(x: controlX + 220, y: y + 2), width: 60)
+        maxTitleWidthLabel.textColor = .secondaryLabelColor
+        view.addSubview(maxTitleWidthLabel)
+
+        y -= 32
+
+        centerItemsCheckbox = makeCheckbox("Center icons-only bottom bar", at: NSPoint(x: 15, y: y))
+        centerItemsCheckbox.target = self
+        centerItemsCheckbox.action = #selector(controlChanged(_:))
+        view.addSubview(centerItemsCheckbox)
+
+        y -= 36
+
+        addSectionHeader("Displays", at: NSPoint(x: 15, y: y), width: 500, to: view)
+        y -= 30
+
+        addLabel("Bar Displays:", at: NSPoint(x: 15, y: y + 2), width: labelW, to: view)
+        multiMonitorPopup = NSPopUpButton(frame: NSRect(x: controlX, y: y - 2, width: 180, height: 26), pullsDown: false)
+        multiMonitorPopup.addItems(withTitles: ["All Displays", "Main Display Only"])
+        multiMonitorPopup.target = self
+        multiMonitorPopup.action = #selector(controlChanged(_:))
+        view.addSubview(multiMonitorPopup)
+
+        y -= 36
+
+        addLabel("Window Scope:", at: NSPoint(x: 15, y: y + 2), width: labelW, to: view)
+        windowDisplayPopup = NSPopUpButton(frame: NSRect(x: controlX, y: y - 2, width: 220, height: 26), pullsDown: false)
+        windowDisplayPopup.addItems(withTitles: ["Per Display", "All Windows Everywhere"])
+        windowDisplayPopup.target = self
+        windowDisplayPopup.action = #selector(controlChanged(_:))
+        view.addSubview(windowDisplayPopup)
+
+        y -= 36
+
+        addSectionHeader("Sidebar", at: NSPoint(x: 15, y: y), width: 500, to: view)
+        y -= 30
 
         sidebarModeCheckbox = makeCheckbox("Enable sidebar mode", at: NSPoint(x: 15, y: y))
         sidebarModeCheckbox.target = self
@@ -264,9 +530,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTe
         y -= 32
 
         addLabel("Overlay Hover Delay:", at: NSPoint(x: 15, y: y + 2), width: labelW, to: view)
-        hoverDelayField = NSTextField(frame: NSRect(x: controlX, y: y - 1, width: 80, height: 22))
-        hoverDelayField.font = NSFont.monospacedDigitSystemFont(ofSize: 12, weight: .regular)
-        hoverDelayField.alignment = .right
+        hoverDelayField = makeNumberField(frame: NSRect(x: controlX, y: y - 1, width: 80, height: 22), min: 0, max: 2000)
         hoverDelayField.delegate = self
         hoverDelayField.target = self
         hoverDelayField.action = #selector(controlChanged(_:))
@@ -285,6 +549,9 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTe
 
         y -= 28
 
+        addSectionHeader("Switcher", at: NSPoint(x: 15, y: y), width: 500, to: view)
+        y -= 30
+
         switcherEnabledCheckbox = makeCheckbox("Enable keyboard switcher overlay", at: NSPoint(x: 15, y: y))
         switcherEnabledCheckbox.target = self
         switcherEnabledCheckbox.action = #selector(controlChanged(_:))
@@ -302,6 +569,45 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTe
         view.addSubview(switcherHotkeyField)
 
         y -= 32
+
+        addLabel("Scroll Wheel:", at: NSPoint(x: 15, y: y + 2), width: labelW, to: view)
+        scrollWheelPopup = NSPopUpButton(frame: NSRect(x: controlX, y: y - 2, width: 210, height: 26), pullsDown: false)
+        scrollWheelPopup.addItems(withTitles: ["Cycle Windows", "Hide / Show Bar", "System Volume", "Off"])
+        scrollWheelPopup.target = self
+        scrollWheelPopup.action = #selector(controlChanged(_:))
+        view.addSubview(scrollWheelPopup)
+
+        y -= 36
+
+        launcherEnabledCheckbox = makeCheckbox("Show launcher button", at: NSPoint(x: 15, y: y))
+        launcherEnabledCheckbox.target = self
+        launcherEnabledCheckbox.action = #selector(controlChanged(_:))
+        view.addSubview(launcherEnabledCheckbox)
+
+        y -= 32
+
+        addLabel("Launcher Action:", at: NSPoint(x: 15, y: y + 2), width: labelW, to: view)
+        launcherActionPopup = NSPopUpButton(frame: NSRect(x: controlX, y: y - 2, width: 180, height: 26), pullsDown: false)
+        launcherActionPopup.addItems(withTitles: ["Spotlight", "Raycast", "Alfred", "Custom URL"])
+        launcherActionPopup.target = self
+        launcherActionPopup.action = #selector(controlChanged(_:))
+        view.addSubview(launcherActionPopup)
+
+        y -= 32
+
+        addLabel("Custom URL:", at: NSPoint(x: 15, y: y + 2), width: labelW, to: view)
+        launcherCustomUrlField = NSTextField(frame: NSRect(x: controlX, y: y - 1, width: 260, height: 22))
+        launcherCustomUrlField.placeholderString = "raycast://extensions/..."
+        launcherCustomUrlField.font = NSFont.systemFont(ofSize: 12)
+        launcherCustomUrlField.delegate = self
+        launcherCustomUrlField.target = self
+        launcherCustomUrlField.action = #selector(controlChanged(_:))
+        view.addSubview(launcherCustomUrlField)
+
+        y -= 36
+
+        addSectionHeader("Window Behavior", at: NSPoint(x: 15, y: y), width: 500, to: view)
+        y -= 30
 
         // Icons only checkbox
         iconsOnlyCheckbox = makeCheckbox("Icons only (hide window titles)", at: NSPoint(x: 15, y: y))
@@ -381,11 +687,21 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTe
 
         y -= 32
 
+        addSectionHeader("System", at: NSPoint(x: 15, y: y), width: 500, to: view)
+        y -= 30
+
         // Hide dock checkbox
         hideDockCheckbox = makeCheckbox("Auto-hide macOS Dock", at: NSPoint(x: 15, y: y))
         hideDockCheckbox.target = self
         hideDockCheckbox.action = #selector(controlChanged(_:))
         view.addSubview(hideDockCheckbox)
+
+        y -= 28
+
+        showMenuBarIconCheckbox = makeCheckbox("Show menu bar icon", at: NSPoint(x: 15, y: y))
+        showMenuBarIconCheckbox.target = self
+        showMenuBarIconCheckbox.action = #selector(controlChanged(_:))
+        view.addSubview(showMenuBarIconCheckbox)
 
         y -= 28
 
@@ -399,10 +715,21 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTe
     }
 
     private func buildAppearanceTab() -> NSView {
-        let view = NSView(frame: NSRect(x: 0, y: 0, width: 440, height: 430))
-        var y: CGFloat = view.bounds.height - 40
-        let labelW: CGFloat = 150
-        let controlX: CGFloat = 165
+        let view = NSView(frame: NSRect(x: 0, y: 0, width: 540, height: 820))
+        var y: CGFloat = view.bounds.height - 36
+        let labelW: CGFloat = 160
+        let controlX: CGFloat = 180
+
+        addSectionHeader("Preview", at: NSPoint(x: 15, y: y), width: 500, to: view)
+        y -= 110
+
+        appearancePreviewView = SettingsBarPreviewView(frame: NSRect(x: 34, y: y, width: 472, height: 88))
+        view.addSubview(appearancePreviewView)
+
+        y -= 38
+
+        addSectionHeader("Surface", at: NSPoint(x: 15, y: y), width: 500, to: view)
+        y -= 34
 
         // Theme popup
         addLabel("Theme:", at: NSPoint(x: 15, y: y), width: labelW, to: view)
@@ -434,6 +761,41 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTe
 
         y -= 40
 
+        addLabel("Icon Size:", at: NSPoint(x: 15, y: y), width: labelW, to: view)
+        iconSizeSlider = NSSlider(frame: NSRect(x: controlX, y: y, width: 210, height: 22))
+        iconSizeSlider.minValue = Double(SettingsIconSizeRange.minimum)
+        iconSizeSlider.maxValue = Double(SettingsIconSizeRange.maximum)
+        iconSizeSlider.numberOfTickMarks = SettingsIconSizeRange.tickCount
+        iconSizeSlider.allowsTickMarkValuesOnly = false
+        iconSizeSlider.target = self
+        iconSizeSlider.action = #selector(iconSizeChanged(_:))
+        view.addSubview(iconSizeSlider)
+
+        iconSizeLabel = makeLabel("", at: NSPoint(x: controlX + 220, y: y + 2), width: 55)
+        iconSizeLabel.textColor = .secondaryLabelColor
+        view.addSubview(iconSizeLabel)
+
+        y -= 40
+
+        addLabel("Title Font Size:", at: NSPoint(x: 15, y: y), width: labelW, to: view)
+        titleFontSizeSlider = NSSlider(frame: NSRect(x: controlX, y: y, width: 210, height: 22))
+        titleFontSizeSlider.minValue = 10
+        titleFontSizeSlider.maxValue = 16
+        titleFontSizeSlider.numberOfTickMarks = 7
+        titleFontSizeSlider.allowsTickMarkValuesOnly = true
+        titleFontSizeSlider.target = self
+        titleFontSizeSlider.action = #selector(titleFontSizeChanged(_:))
+        view.addSubview(titleFontSizeSlider)
+
+        titleFontSizeLabel = makeLabel("", at: NSPoint(x: controlX + 220, y: y + 2), width: 55)
+        titleFontSizeLabel.textColor = .secondaryLabelColor
+        view.addSubview(titleFontSizeLabel)
+
+        y -= 40
+
+        addSectionHeader("Motion & Depth", at: NSPoint(x: 15, y: y), width: 500, to: view)
+        y -= 34
+
         // Hover highlight intensity popup
         addLabel("Hover Highlight:", at: NSPoint(x: 15, y: y), width: labelW, to: view)
         hoverIntensityPopup = NSPopUpButton(frame: NSRect(x: controlX, y: y - 2, width: 180, height: 26), pullsDown: false)
@@ -441,6 +803,15 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTe
         hoverIntensityPopup.target = self
         hoverIntensityPopup.action = #selector(controlChanged(_:))
         view.addSubview(hoverIntensityPopup)
+
+        y -= 40
+
+        addLabel("Visual Depth:", at: NSPoint(x: 15, y: y), width: labelW, to: view)
+        visualDepthPopup = NSPopUpButton(frame: NSRect(x: controlX, y: y - 2, width: 180, height: 26), pullsDown: false)
+        visualDepthPopup.addItems(withTitles: ["Subtle", "Balanced", "Rich"])
+        visualDepthPopup.target = self
+        visualDepthPopup.action = #selector(controlChanged(_:))
+        view.addSubview(visualDepthPopup)
 
         y -= 40
 
@@ -452,6 +823,9 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTe
         view.addSubview(animationProfilePopup)
 
         y -= 40
+
+        addSectionHeader("Focus & Groups", at: NSPoint(x: 15, y: y), width: 500, to: view)
+        y -= 34
 
         // Focus indicator style
         addLabel("Focused Indicator:", at: NSPoint(x: 15, y: y), width: labelW, to: view)
@@ -489,14 +863,16 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTe
 
         y -= 28
 
-        stackCountBadgeCheckbox = makeCheckbox("Show group count badge (all modes)", at: NSPoint(x: 15, y: y))
-        stackCountBadgeCheckbox.frame.size.width = 210
+        stackCountBadgeCheckbox = makeCheckbox("Show group count badge", at: NSPoint(x: 15, y: y))
+        stackCountBadgeCheckbox.frame.size.width = 300
         stackCountBadgeCheckbox.target = self
         stackCountBadgeCheckbox.action = #selector(controlChanged(_:))
         view.addSubview(stackCountBadgeCheckbox)
 
-        addLabel("Style:", at: NSPoint(x: 230, y: y + 2), width: 45, to: view)
-        stackCountBadgeStylePopup = NSPopUpButton(frame: NSRect(x: 275, y: y - 2, width: 140, height: 26), pullsDown: false)
+        y -= 32
+
+        addLabel("Badge Style:", at: NSPoint(x: 15, y: y + 2), width: labelW, to: view)
+        stackCountBadgeStylePopup = NSPopUpButton(frame: NSRect(x: controlX, y: y - 2, width: 180, height: 26), pullsDown: false)
         stackCountBadgeStylePopup.addItems(withTitles: ["Minimal", "Pill", "Separator"])
         stackCountBadgeStylePopup.target = self
         stackCountBadgeStylePopup.action = #selector(controlChanged(_:))
@@ -506,29 +882,158 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTe
     }
 
     private func buildAppsTab() -> NSView {
-        let view = NSView(frame: NSRect(x: 0, y: 0, width: 440, height: 430))
-        var y: CGFloat = 370
-        let labelW: CGFloat = 150
-        let controlX: CGFloat = 165
+        let view = NSView(frame: NSRect(x: 0, y: 0, width: 540, height: 470))
+        var y: CGFloat = 430
+        let labelW: CGFloat = 160
+        let controlX: CGFloat = 180
+
+        addSectionHeader("App Rules", at: NSPoint(x: 15, y: y), width: 500, to: view)
+        y -= 34
 
         // Blacklisted apps
         addLabel("Blacklisted Apps:", at: NSPoint(x: 15, y: y + 4), width: labelW, to: view)
-        blacklistField = NSTextField(frame: NSRect(x: controlX, y: y, width: 260, height: 22))
+        blacklistField = NSTextField(frame: NSRect(x: controlX, y: y, width: 320, height: 22))
         blacklistField.placeholderString = "com.app.one, com.app.two"
         blacklistField.font = NSFont.systemFont(ofSize: 11)
         blacklistField.delegate = self
         view.addSubview(blacklistField)
 
+        y -= 34
+
+        let addBlacklistedAppBtn = makeActionButton(
+            title: "Add App...",
+            symbolName: "plus.app",
+            frame: NSRect(x: controlX, y: y, width: 122, height: 28),
+            action: #selector(addBlacklistedAppClicked(_:))
+        )
+        view.addSubview(addBlacklistedAppBtn)
+
+        let clearBlacklistBtn = makeActionButton(
+            title: "Clear",
+            symbolName: "xmark.circle",
+            frame: NSRect(x: controlX + 132, y: y, width: 88, height: 28),
+            action: #selector(clearBlacklistClicked(_:))
+        )
+        view.addSubview(clearBlacklistBtn)
+
         y -= 44
 
         // Pinned apps (read-only)
         addLabel("Pinned Apps:", at: NSPoint(x: 15, y: y + 4), width: labelW, to: view)
-        pinnedAppsLabel = makeLabel("", at: NSPoint(x: controlX, y: y), width: 260)
+        pinnedAppsLabel = makeLabel("", at: NSPoint(x: controlX, y: y), width: 320)
         pinnedAppsLabel.font = NSFont.systemFont(ofSize: 11)
         pinnedAppsLabel.textColor = .secondaryLabelColor
         view.addSubview(pinnedAppsLabel)
 
-        y -= 44
+        y -= 34
+
+        let clearPinnedAppsBtn = makeActionButton(
+            title: "Clear Pinned Apps",
+            symbolName: "pin.slash",
+            frame: NSRect(x: controlX, y: y, width: 158, height: 28),
+            action: #selector(clearPinnedAppsClicked(_:))
+        )
+        view.addSubview(clearPinnedAppsBtn)
+
+        y -= 42
+
+        addSectionHeader("Pinned Scope", at: NSPoint(x: 15, y: y), width: 500, to: view)
+        y -= 34
+
+        addLabel("Pinned Apps:", at: NSPoint(x: 15, y: y + 2), width: labelW, to: view)
+        pinnedAppsScopePopup = NSPopUpButton(frame: NSRect(x: controlX, y: y - 2, width: 220, height: 26), pullsDown: false)
+        pinnedAppsScopePopup.addItems(withTitles: ["Per Space", "Global"])
+        pinnedAppsScopePopup.target = self
+        pinnedAppsScopePopup.action = #selector(controlChanged(_:))
+        view.addSubview(pinnedAppsScopePopup)
+
+        return view
+    }
+
+    private func buildAdvancedTab() -> NSView {
+        let view = NSView(frame: NSRect(x: 0, y: 0, width: 540, height: 940))
+        var y: CGFloat = view.bounds.height - 30
+        let labelW: CGFloat = 160
+        let controlX: CGFloat = 180
+        let contentWidth: CGFloat = 510
+
+        addSectionHeader("Permissions", at: NSPoint(x: 15, y: y), width: contentWidth, to: view)
+        y -= 36
+
+        addLabel("Accessibility:", at: NSPoint(x: 15, y: y + 4), width: labelW, to: view)
+        accessibilityStatusLabel = makeLabel("", at: NSPoint(x: controlX, y: y + 4), width: 110)
+        accessibilityStatusLabel.textColor = .secondaryLabelColor
+        view.addSubview(accessibilityStatusLabel)
+        let accessibilityBtn = makeActionButton(
+            title: "Open Settings",
+            symbolName: "figure",
+            frame: NSRect(x: controlX + 120, y: y, width: 142, height: 28),
+            action: #selector(openAccessibilitySettings(_:))
+        )
+        view.addSubview(accessibilityBtn)
+
+        y -= 34
+
+        addLabel("Input Monitoring:", at: NSPoint(x: 15, y: y + 4), width: labelW, to: view)
+        inputMonitoringStatusLabel = makeLabel("", at: NSPoint(x: controlX, y: y + 4), width: 110)
+        inputMonitoringStatusLabel.textColor = .secondaryLabelColor
+        view.addSubview(inputMonitoringStatusLabel)
+        let inputBtn = makeActionButton(
+            title: "Open Settings",
+            symbolName: "keyboard",
+            frame: NSRect(x: controlX + 120, y: y, width: 142, height: 28),
+            action: #selector(openInputMonitoringSettings(_:))
+        )
+        view.addSubview(inputBtn)
+
+        y -= 34
+
+        addLabel("Screen Recording:", at: NSPoint(x: 15, y: y + 4), width: labelW, to: view)
+        screenRecordingStatusLabel = makeLabel("", at: NSPoint(x: controlX, y: y + 4), width: 110)
+        screenRecordingStatusLabel.textColor = .secondaryLabelColor
+        view.addSubview(screenRecordingStatusLabel)
+        let screenBtn = makeActionButton(
+            title: "Open Settings",
+            symbolName: "rectangle.on.rectangle",
+            frame: NSRect(x: controlX + 120, y: y, width: 132, height: 28),
+            action: #selector(openScreenRecordingSettings(_:))
+        )
+        view.addSubview(screenBtn)
+
+        let refreshBtn = makeActionButton(
+            title: "Refresh",
+            symbolName: "arrow.clockwise",
+            frame: NSRect(x: controlX + 258, y: y, width: 88, height: 28),
+            action: #selector(refreshPermissionStatusClicked(_:))
+        )
+        view.addSubview(refreshBtn)
+
+        y -= 46
+
+        addSectionHeader("Previews", at: NSPoint(x: 15, y: y), width: contentWidth, to: view)
+        y -= 34
+
+        previewsEnabledCheckbox = makeCheckbox("Show window previews", at: NSPoint(x: 15, y: y))
+        previewsEnabledCheckbox.target = self
+        previewsEnabledCheckbox.action = #selector(controlChanged(_:))
+        view.addSubview(previewsEnabledCheckbox)
+
+        y -= 32
+
+        addLabel("Preview Delay:", at: NSPoint(x: 15, y: y + 2), width: labelW, to: view)
+        previewHoverDelayField = makeNumberField(frame: NSRect(x: controlX, y: y - 1, width: 80, height: 22), min: 0, max: 2000)
+        previewHoverDelayField.delegate = self
+        previewHoverDelayField.target = self
+        previewHoverDelayField.action = #selector(controlChanged(_:))
+        view.addSubview(previewHoverDelayField)
+        let previewDelaySuffix = makeLabel("ms", at: NSPoint(x: controlX + 86, y: y + 2), width: 30)
+        previewDelaySuffix.textColor = .secondaryLabelColor
+        view.addSubview(previewDelaySuffix)
+
+        y -= 46
+
+        addSectionHeader("Providers", at: NSPoint(x: 15, y: y), width: contentWidth, to: view)
+        y -= 34
 
         addLabel("Provider Runtime:", at: NSPoint(x: 15, y: y + 2), width: labelW, to: view)
         providerRuntimeCheckbox = makeCheckbox("Enable provider runtime", at: NSPoint(x: controlX, y: y - 2))
@@ -539,9 +1044,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTe
         y -= 34
 
         addLabel("Provider Timeout:", at: NSPoint(x: 15, y: y + 2), width: labelW, to: view)
-        providerTimeoutField = NSTextField(frame: NSRect(x: controlX, y: y - 1, width: 80, height: 22))
-        providerTimeoutField.font = NSFont.monospacedDigitSystemFont(ofSize: 12, weight: .regular)
-        providerTimeoutField.alignment = .right
+        providerTimeoutField = makeNumberField(frame: NSRect(x: controlX, y: y - 1, width: 80, height: 22), min: 150, max: 5000)
         providerTimeoutField.delegate = self
         providerTimeoutField.target = self
         providerTimeoutField.action = #selector(controlChanged(_:))
@@ -553,170 +1056,192 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTe
         y -= 34
 
         addLabel("Circuit Breaker:", at: NSPoint(x: 15, y: y + 2), width: labelW, to: view)
-        providerCircuitBreakerField = NSTextField(frame: NSRect(x: controlX, y: y - 1, width: 80, height: 22))
-        providerCircuitBreakerField.font = NSFont.monospacedDigitSystemFont(ofSize: 12, weight: .regular)
-        providerCircuitBreakerField.alignment = .right
+        providerCircuitBreakerField = makeNumberField(frame: NSRect(x: controlX, y: y - 1, width: 80, height: 22), min: 1, max: 20)
         providerCircuitBreakerField.delegate = self
         providerCircuitBreakerField.target = self
         providerCircuitBreakerField.action = #selector(controlChanged(_:))
         view.addSubview(providerCircuitBreakerField)
 
-        return view
-    }
-
-    private func buildAboutTab() -> NSView {
-        let view = NSView(frame: NSRect(x: 0, y: 0, width: 440, height: 390))
-        var y: CGFloat = 340
-
-        // App title (large font, centered)
-        let titleLabel = NSTextField(frame: NSRect(x: 15, y: y, width: 410, height: 30))
-        titleLabel.stringValue = "LiquidBar"
-        titleLabel.isEditable = false
-        titleLabel.isBordered = false
-        titleLabel.backgroundColor = .clear
-        titleLabel.font = NSFont.systemFont(ofSize: 20, weight: .bold)
-        titleLabel.alignment = .center
-        view.addSubview(titleLabel)
-
-        y -= 30
-
-        // Version text
-        let version = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? Updater.currentVersion
-        let build = Bundle.main.infoDictionary?["CFBundleVersion"] as? String
-        var versionString = "Version \(version)"
-        if let build, !build.isEmpty, build != version {
-            versionString += " (\(build))"
-        }
-        let versionLabel = NSTextField(frame: NSRect(x: 15, y: y, width: 410, height: 20))
-        versionLabel.stringValue = versionString
-        versionLabel.isEditable = false
-        versionLabel.isBordered = false
-        versionLabel.backgroundColor = .clear
-        versionLabel.font = NSFont.systemFont(ofSize: 13)
-        versionLabel.alignment = .center
-        versionLabel.textColor = .secondaryLabelColor
-        view.addSubview(versionLabel)
-
-        y -= 40
-
-        // Check for Updates button
-        let updateBtn = NSButton(frame: NSRect(x: 150, y: y, width: 140, height: 30))
-        updateBtn.bezelStyle = .rounded
-        updateBtn.title = "Check for Updates"
-        updateBtn.target = self
-        updateBtn.action = #selector(checkForUpdatesClicked(_:))
-        view.addSubview(updateBtn)
-
-        y -= 28
-
-        // Update status label
-        updateStatusLabel = NSTextField(frame: NSRect(x: 15, y: y, width: 410, height: 20))
-        updateStatusLabel.stringValue = ""
-        updateStatusLabel.isEditable = false
-        updateStatusLabel.isBordered = false
-        updateStatusLabel.backgroundColor = .clear
-        updateStatusLabel.font = NSFont.systemFont(ofSize: 11)
-        updateStatusLabel.alignment = .center
-        updateStatusLabel.textColor = .secondaryLabelColor
-        view.addSubview(updateStatusLabel)
-
-        y -= 36
-
-        // GitHub link
-        let linkLabel = NSTextField(frame: NSRect(x: 15, y: y, width: 410, height: 20))
-        linkLabel.isEditable = false
-        linkLabel.isBordered = false
-        linkLabel.backgroundColor = .clear
-        linkLabel.alignment = .center
-        linkLabel.allowsEditingTextAttributes = true
-        linkLabel.isSelectable = true
-
-        let urlString = "https://github.com/\(Updater.githubRepo)"
-        let attrString = NSMutableAttributedString(
-            string: urlString,
-            attributes: [
-                .font: NSFont.systemFont(ofSize: 12),
-                .foregroundColor: NSColor.linkColor,
-                .link: URL(string: urlString)!,
-            ]
-        )
-        linkLabel.attributedStringValue = attrString
-        view.addSubview(linkLabel)
-
         y -= 46
 
-        // Config shortcuts
-        let openConfigBtn = NSButton(frame: NSRect(x: 80, y: y, width: 140, height: 30))
-        openConfigBtn.bezelStyle = .rounded
-        openConfigBtn.title = "Open config.json"
-        openConfigBtn.target = self
-        openConfigBtn.action = #selector(openConfigFile(_:))
+        addSectionHeader("Configuration", at: NSPoint(x: 15, y: y), width: contentWidth, to: view)
+        y -= 42
+
+        let openConfigBtn = makeActionButton(
+            title: "Open Config",
+            symbolName: "doc.text",
+            frame: NSRect(x: controlX, y: y, width: 142, height: 30),
+            action: #selector(openConfigFile(_:))
+        )
         view.addSubview(openConfigBtn)
 
-        let revealConfigBtn = NSButton(frame: NSRect(x: 220, y: y, width: 140, height: 30))
-        revealConfigBtn.bezelStyle = .rounded
-        revealConfigBtn.title = "Show in Finder"
-        revealConfigBtn.target = self
-        revealConfigBtn.action = #selector(revealConfigFile(_:))
+        let revealConfigBtn = makeActionButton(
+            title: "Show in Finder",
+            symbolName: "folder",
+            frame: NSRect(x: controlX + 154, y: y, width: 150, height: 30),
+            action: #selector(revealConfigFile(_:))
+        )
         view.addSubview(revealConfigBtn)
 
-        y -= 28
+        let resetAllBtn = makeActionButton(
+            title: "Reset All",
+            symbolName: "arrow.counterclockwise",
+            frame: NSRect(x: controlX, y: y - 36, width: 112, height: 30),
+            action: #selector(resetAllSettingsClicked(_:))
+        )
+        view.addSubview(resetAllBtn)
 
-        configPathLabel = NSTextField(frame: NSRect(x: 15, y: y, width: 410, height: 20))
-        configPathLabel.stringValue = Config.configPath.path
+        configPathLabel = NSTextField(frame: NSRect(x: controlX, y: y - 67, width: 330, height: 20))
+        configPathLabel.stringValue = Self.displayPath(for: Config.configPath)
         configPathLabel.isEditable = false
         configPathLabel.isBordered = false
         configPathLabel.backgroundColor = .clear
         configPathLabel.font = NSFont.monospacedSystemFont(ofSize: 10, weight: .regular)
         configPathLabel.textColor = .secondaryLabelColor
-        configPathLabel.alignment = .center
         if let cell = configPathLabel.cell as? NSTextFieldCell {
             cell.usesSingleLineMode = true
             cell.lineBreakMode = .byTruncatingMiddle
         }
         view.addSubview(configPathLabel)
 
-        y -= 46
+        y -= 106
 
-        let perfTitle = NSTextField(frame: NSRect(x: 15, y: y, width: 410, height: 20))
-        perfTitle.stringValue = "Performance Debugging"
-        perfTitle.isEditable = false
-        perfTitle.isBordered = false
-        perfTitle.backgroundColor = .clear
-        perfTitle.font = NSFont.systemFont(ofSize: 13, weight: .semibold)
-        perfTitle.alignment = .center
-        view.addSubview(perfTitle)
+        addSectionHeader("Diagnostics", at: NSPoint(x: 15, y: y), width: contentWidth, to: view)
+        y -= 34
 
-        y -= 26
-
-        perfLoggingCheckbox = NSButton(frame: NSRect(x: 60, y: y, width: 320, height: 20))
-        perfLoggingCheckbox.setButtonType(.switch)
-        perfLoggingCheckbox.title = "Enable performance logging (FPS / poll / CPU frame)"
-        perfLoggingCheckbox.font = NSFont.systemFont(ofSize: 12)
+        perfLoggingCheckbox = makeCheckbox("Performance logging", at: NSPoint(x: 15, y: y))
         perfLoggingCheckbox.target = self
         perfLoggingCheckbox.action = #selector(controlChanged(_:))
         view.addSubview(perfLoggingCheckbox)
 
-        y -= 24
+        y -= 34
 
-        perfGpuTimingCheckbox = NSButton(frame: NSRect(x: 60, y: y, width: 320, height: 20))
-        perfGpuTimingCheckbox.setButtonType(.switch)
-        perfGpuTimingCheckbox.title = "Include detailed renderer timing (legacy flag)"
-        perfGpuTimingCheckbox.font = NSFont.systemFont(ofSize: 12)
-        perfGpuTimingCheckbox.target = self
-        perfGpuTimingCheckbox.action = #selector(controlChanged(_:))
-        view.addSubview(perfGpuTimingCheckbox)
-
-        y -= 30
-
-        addLabel("Log Interval (ms):", at: NSPoint(x: 110, y: y + 2), width: 120, to: view)
-        perfLogIntervalField = NSTextField(frame: NSRect(x: 230, y: y - 1, width: 80, height: 22))
-        perfLogIntervalField.font = NSFont.monospacedDigitSystemFont(ofSize: 12, weight: .regular)
-        perfLogIntervalField.alignment = .right
+        addLabel("Log Interval:", at: NSPoint(x: 15, y: y + 2), width: labelW, to: view)
+        perfLogIntervalField = makeNumberField(frame: NSRect(x: controlX, y: y - 1, width: 80, height: 22), min: 250, max: 10000)
         perfLogIntervalField.delegate = self
         perfLogIntervalField.target = self
         perfLogIntervalField.action = #selector(controlChanged(_:))
         view.addSubview(perfLogIntervalField)
+        let intervalSuffix = makeLabel("ms", at: NSPoint(x: controlX + 86, y: y + 2), width: 30)
+        intervalSuffix.textColor = .secondaryLabelColor
+        view.addSubview(intervalSuffix)
+
+        y -= 46
+
+        addSectionHeader("Experimental", at: NSPoint(x: 15, y: y), width: contentWidth, to: view)
+        y -= 34
+
+        pluginsEnabledCheckbox = makeCheckbox("Enable plugins", at: NSPoint(x: 15, y: y))
+        pluginsEnabledCheckbox.target = self
+        pluginsEnabledCheckbox.action = #selector(controlChanged(_:))
+        view.addSubview(pluginsEnabledCheckbox)
+
+        y -= 30
+
+        windowTabGroupsCheckbox = makeCheckbox("Enable window tab groups", at: NSPoint(x: 15, y: y))
+        windowTabGroupsCheckbox.target = self
+        windowTabGroupsCheckbox.action = #selector(controlChanged(_:))
+        view.addSubview(windowTabGroupsCheckbox)
+
+        y -= 34
+
+        addLabel("Group Hover Delay:", at: NSPoint(x: 15, y: y + 2), width: labelW, to: view)
+        tabGroupHoverDelayField = makeNumberField(frame: NSRect(x: controlX, y: y - 1, width: 80, height: 22), min: 100, max: 5000)
+        tabGroupHoverDelayField.delegate = self
+        tabGroupHoverDelayField.target = self
+        tabGroupHoverDelayField.action = #selector(controlChanged(_:))
+        view.addSubview(tabGroupHoverDelayField)
+        let groupDelaySuffix = makeLabel("ms", at: NSPoint(x: controlX + 86, y: y + 2), width: 30)
+        groupDelaySuffix.textColor = .secondaryLabelColor
+        view.addSubview(groupDelaySuffix)
+
+        y -= 30
+
+        tabGroupCollapseCheckbox = makeCheckbox("Collapse group on outside click", at: NSPoint(x: 15, y: y))
+        tabGroupCollapseCheckbox.target = self
+        tabGroupCollapseCheckbox.action = #selector(controlChanged(_:))
+        view.addSubview(tabGroupCollapseCheckbox)
+
+        return view
+    }
+
+    private func buildAboutTab() -> NSView {
+        let view = NSView(frame: NSRect(x: 0, y: 0, width: 540, height: 500))
+        var y: CGFloat = 408
+        let centerX = view.frame.width / 2
+
+        let brandSize = NSSize(width: 292, height: 70)
+        let brandView = NSImageView(frame: NSRect(
+            x: centerX - brandSize.width / 2,
+            y: y,
+            width: brandSize.width,
+            height: brandSize.height
+        ))
+        brandView.image = LiquidBarLogo.makeBrandBarImage(displaySize: brandSize)
+        brandView.imageScaling = .scaleProportionallyUpOrDown
+        view.addSubview(brandView)
+
+        y -= 42
+
+        let titleLabel = NSTextField(frame: NSRect(x: 0, y: y, width: view.frame.width, height: 32))
+        titleLabel.stringValue = "LiquidBar"
+        titleLabel.isEditable = false
+        titleLabel.isBordered = false
+        titleLabel.backgroundColor = .clear
+        titleLabel.font = NSFont.systemFont(ofSize: 24, weight: .semibold)
+        titleLabel.alignment = .center
+        view.addSubview(titleLabel)
+
+        let version = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? Updater.currentVersion
+        let build = Bundle.main.infoDictionary?["CFBundleVersion"] as? String
+        var versionString = "Version \(version)"
+        if let build, !build.isEmpty, build != version {
+            versionString += " (\(build))"
+        }
+        y -= 22
+
+        let versionLabel = NSTextField(frame: NSRect(x: 0, y: y, width: view.frame.width, height: 20))
+        versionLabel.stringValue = versionString
+        versionLabel.isEditable = false
+        versionLabel.isBordered = false
+        versionLabel.backgroundColor = .clear
+        versionLabel.font = NSFont.systemFont(ofSize: 13)
+        versionLabel.textColor = .secondaryLabelColor
+        versionLabel.alignment = .center
+        view.addSubview(versionLabel)
+
+        y -= 22
+
+        updateStatusLabel = NSTextField(frame: NSRect(x: 0, y: y, width: view.frame.width, height: 18))
+        updateStatusLabel.stringValue = ""
+        updateStatusLabel.isEditable = false
+        updateStatusLabel.isBordered = false
+        updateStatusLabel.backgroundColor = .clear
+        updateStatusLabel.font = NSFont.systemFont(ofSize: 11)
+        updateStatusLabel.textColor = .secondaryLabelColor
+        updateStatusLabel.alignment = .center
+        view.addSubview(updateStatusLabel)
+
+        y -= 42
+        let actionButtonWidth: CGFloat = 166
+        let actionGap: CGFloat = 14
+        let actionStartX = centerX - actionButtonWidth - actionGap / 2
+
+        let updateBtn = makeActionButton(
+            title: "Check for Updates",
+            symbolName: "arrow.triangle.2.circlepath",
+            frame: NSRect(x: actionStartX, y: y, width: actionButtonWidth, height: 30),
+            action: #selector(checkForUpdatesClicked(_:))
+        )
+        view.addSubview(updateBtn)
+
+        let githubBtn = makeActionButton(
+            title: "GitHub",
+            symbolName: "arrow.up.right.square",
+            frame: NSRect(x: actionStartX + actionButtonWidth + actionGap, y: y, width: actionButtonWidth, height: 30),
+            action: #selector(openGitHub(_:))
+        )
+        view.addSubview(githubBtn)
 
         return view
     }
@@ -724,7 +1249,10 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTe
     // MARK: - Config
 
     private func loadConfig() {
-        let config = Config.load()
+        applyConfigToControls(Config.load())
+    }
+
+    private func applyConfigToControls(_ config: Config) {
         heightSlider.integerValue = config.taskbarHeight
         heightLabel.stringValue = "\(config.taskbarHeight) px"
         switch config.taskbarPosition {
@@ -733,6 +1261,24 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTe
         case .left: positionPopup.selectItem(at: 2)
         case .right: positionPopup.selectItem(at: 3)
         }
+        switch config.itemSizing {
+        case .uniform: itemSizingPopup.selectItem(at: 0)
+        case .auto: itemSizingPopup.selectItem(at: 1)
+        }
+        maxItemWidthSlider.integerValue = config.maxItemWidth
+        maxItemWidthLabel.stringValue = "\(config.maxItemWidth) px"
+        maxTitleWidthSlider.integerValue = config.maxTitleWidth
+        maxTitleWidthLabel.stringValue = "\(config.maxTitleWidth) px"
+        centerItemsCheckbox.state = config.centerItems ? .on : .off
+        switch config.multiMonitorMode {
+        case .allDisplays: multiMonitorPopup.selectItem(at: 0)
+        case .mainOnly: multiMonitorPopup.selectItem(at: 1)
+        }
+        switch config.windowDisplayMode {
+        case .perDisplay: windowDisplayPopup.selectItem(at: 0)
+        case .allWindows: windowDisplayPopup.selectItem(at: 1)
+        }
+
         sidebarModeCheckbox.state = config.sidebarModeEnabled ? .on : .off
         switch config.sidebarStateDefault {
         case .expanded: sidebarStatePopup.selectItem(at: 0)
@@ -750,77 +1296,87 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTe
         hoverIntentGuardCheckbox.state = config.hoverIntentGuardEnabled ? .on : .off
         switcherEnabledCheckbox.state = config.switcherEnabled ? .on : .off
         switcherHotkeyField.stringValue = config.switcherHotkey
+        switch config.scrollWheelMode {
+        case .cycleWindows: scrollWheelPopup.selectItem(at: 0)
+        case .hideShow: scrollWheelPopup.selectItem(at: 1)
+        case .volume: scrollWheelPopup.selectItem(at: 2)
+        case .off: scrollWheelPopup.selectItem(at: 3)
+        }
+        launcherEnabledCheckbox.state = config.launcherEnabled ? .on : .off
+        switch config.launcherAction {
+        case .spotlight: launcherActionPopup.selectItem(at: 0)
+        case .raycast: launcherActionPopup.selectItem(at: 1)
+        case .alfred: launcherActionPopup.selectItem(at: 2)
+        case .customUrl: launcherActionPopup.selectItem(at: 3)
+        }
+        launcherCustomUrlField.stringValue = config.launcherCustomUrl ?? ""
+
         iconsOnlyCheckbox.state = config.iconsOnly ? .on : .off
         groupByAppCheckbox.state = config.groupByApp ? .on : .off
         tabbedTaskbarCheckbox.state = config.tabbedTaskbarEnabled ? .on : .off
         showHiddenCheckbox.state = config.showHiddenApps ? .on : .off
         showMinimizedCheckbox.state = config.showMinimizedWindows ? .on : .off
         adjustWindowsCheckbox.state = config.adjustWindowsForTaskbar ? .on : .off
-
-        // Hidden mode
         switch config.hiddenWindowMode {
         case .inPlace: hiddenModePopup.selectItem(at: 0)
         case .collapsedRight: hiddenModePopup.selectItem(at: 1)
         }
-
-        // Minimized mode
         switch config.minimizedWindowMode {
         case .inPlace: minimizedModePopup.selectItem(at: 0)
         case .collapsedRight: minimizedModePopup.selectItem(at: 1)
         }
-
         switch config.secondClickAction {
         case .hide: secondClickPopup.selectItem(at: 0)
         case .minimize: secondClickPopup.selectItem(at: 1)
         case .none: secondClickPopup.selectItem(at: 2)
         }
-
         hideDockCheckbox.state = config.hideDock ? .on : .off
+        showMenuBarIconCheckbox.state = config.showMenuBarIcon ? .on : .off
         loginCheckbox.state = LoginItem.isEnabled() ? .on : .off
 
-        // Appearance
         switch config.theme {
         case .system: themePopup.selectItem(at: 0)
         case .light: themePopup.selectItem(at: 1)
         case .dark: themePopup.selectItem(at: 2)
         }
-
         switch config.barStyle {
         case .flush: barStylePopup.selectItem(at: 0)
         case .floating: barStylePopup.selectItem(at: 1)
         }
-
         switch config.glassStyle {
         case .publicRegular: glassStylePopup.selectItem(at: 0)
         case .publicClear: glassStylePopup.selectItem(at: 1)
         }
-
+        updateIconSizeControl(for: config.iconSize)
+        titleFontSizeSlider.integerValue = config.fontSize
+        titleFontSizeLabel.stringValue = "\(config.fontSize) pt"
         switch config.hoverIntensity {
         case .subtle: hoverIntensityPopup.selectItem(at: 0)
         case .medium: hoverIntensityPopup.selectItem(at: 1)
         case .pronounced: hoverIntensityPopup.selectItem(at: 2)
+        }
+        switch config.visualDepth {
+        case .subtle: visualDepthPopup.selectItem(at: 0)
+        case .balanced: visualDepthPopup.selectItem(at: 1)
+        case .rich: visualDepthPopup.selectItem(at: 2)
         }
         switch config.animationProfile {
         case .balancedSpring: animationProfilePopup.selectItem(at: 0)
         case .snappyMinimal: animationProfilePopup.selectItem(at: 1)
         case .richExpressive: animationProfilePopup.selectItem(at: 2)
         }
-
         switch config.focusIndicatorStyle {
         case .tile: focusIndicatorPopup.selectItem(at: 0)
         case .dot: focusIndicatorPopup.selectItem(at: 1)
         }
-
         switch config.appGroupStackStyle {
         case .filled: stackStylePopup.selectItem(at: 0)
         case .outline: stackStylePopup.selectItem(at: 1)
         }
-
         switch config.appGroupStackGeometry {
         case .subtle: stackGeometryPopup.selectItem(at: 0)
         case .strong: stackGeometryPopup.selectItem(at: 1)
         }
-
         stackHoverSpreadCheckbox.state = config.appGroupStackHoverSpreadEnabled ? .on : .off
         stackCountBadgeCheckbox.state = config.appGroupCountBadgeInIconsOnly ? .on : .off
         switch config.appGroupCountBadgeStyle {
@@ -829,34 +1385,70 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTe
         case .compactDot: stackCountBadgeStylePopup.selectItem(at: 0)
         case .separator: stackCountBadgeStylePopup.selectItem(at: 2)
         }
-        updateCountBadgeControlsEnabledState()
 
-        // Apps
-        blacklistField.stringValue = config.blacklistedApps.joined(separator: ", ")
-        if config.pinnedApps.isEmpty {
-            pinnedAppsLabel.stringValue = "(none)"
-        } else {
-            pinnedAppsLabel.stringValue = config.pinnedApps.joined(separator: ", ")
+        blacklistField.stringValue = Self.uniquePreservingOrder(config.blacklistedApps).joined(separator: ", ")
+        pendingPinnedApps = nil
+        pinnedAppsLabel.stringValue = config.pinnedApps.isEmpty ? "(none)" : config.pinnedApps.joined(separator: ", ")
+        switch config.pinnedAppsScope {
+        case .perSpace: pinnedAppsScopePopup.selectItem(at: 0)
+        case .global: pinnedAppsScopePopup.selectItem(at: 1)
         }
+
+        previewsEnabledCheckbox.state = config.previewsEnabled ? .on : .off
+        previewHoverDelayField.stringValue = "\(config.previewHoverDelayMs)"
         providerRuntimeCheckbox.state = config.providerRuntimeEnabled ? .on : .off
         providerTimeoutField.stringValue = "\(config.providerTimeoutMs)"
         providerCircuitBreakerField.stringValue = "\(config.providerCircuitBreakerThreshold)"
+        perfLoggingCheckbox.state = config.performanceLoggingEnabled ? .on : .off
+        perfLogIntervalField.stringValue = "\(config.performanceLogIntervalMs)"
+        pluginsEnabledCheckbox.state = config.pluginsEnabled ? .on : .off
+        windowTabGroupsCheckbox.state = config.windowTabGroupsEnabled ? .on : .off
+        tabGroupHoverDelayField.stringValue = "\(config.tabGroupHoverExpandDelayMs)"
+        tabGroupCollapseCheckbox.state = config.tabGroupCollapseOnOutsideClick ? .on : .off
+
+        updateStatusLabel.stringValue = ""
+        updateCountBadgeControlsEnabledState()
         updateSwitcherControlsEnabledState()
         updateSidebarControlsEnabledState()
+        updateWindowStateControlsEnabledState()
+        updateLauncherControlsEnabledState()
+        updatePreviewControlsEnabledState()
         updateProviderControlsEnabledState()
-
-        // Reset update status
-        updateStatusLabel.stringValue = ""
-        perfLoggingCheckbox.state = config.performanceLoggingEnabled ? .on : .off
-        perfGpuTimingCheckbox.state = config.performanceGpuTimingEnabled ? .on : .off
-        perfLogIntervalField.stringValue = "\(config.performanceLogIntervalMs)"
         updatePerfControlsEnabledState()
+        updateTabGroupControlsEnabledState()
+        refreshPermissionStatus()
+        updateAppearancePreview()
     }
 
     // MARK: - Actions
 
     @objc private func heightChanged(_ sender: NSSlider) {
         heightLabel.stringValue = "\(sender.integerValue) px"
+        updateAppearancePreview()
+        scheduleAutoApply()
+    }
+
+    @objc private func iconSizeChanged(_ sender: NSSlider) {
+        iconSizeLabel.stringValue = "\(sender.integerValue) px"
+        updateAppearancePreview()
+        scheduleAutoApply()
+    }
+
+    @objc private func titleFontSizeChanged(_ sender: NSSlider) {
+        titleFontSizeLabel.stringValue = "\(sender.integerValue) pt"
+        updateAppearancePreview()
+        scheduleAutoApply()
+    }
+
+    @objc private func maxItemWidthChanged(_ sender: NSSlider) {
+        maxItemWidthLabel.stringValue = "\(sender.integerValue) px"
+        updateAppearancePreview()
+        scheduleAutoApply()
+    }
+
+    @objc private func maxTitleWidthChanged(_ sender: NSSlider) {
+        maxTitleWidthLabel.stringValue = "\(sender.integerValue) px"
+        updateAppearancePreview()
         scheduleAutoApply()
     }
 
@@ -865,7 +1457,12 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTe
         updateCountBadgeControlsEnabledState()
         updateSwitcherControlsEnabledState()
         updateSidebarControlsEnabledState()
+        updateWindowStateControlsEnabledState()
+        updateLauncherControlsEnabledState()
+        updatePreviewControlsEnabledState()
         updateProviderControlsEnabledState()
+        updateTabGroupControlsEnabledState()
+        updateAppearancePreview()
         scheduleAutoApply()
     }
 
@@ -881,6 +1478,90 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTe
         autoApplyWorkItem = nil
         onReloadRequested?()
         loadConfig()
+    }
+
+    @objc private func revertClicked(_ sender: Any) {
+        autoApplyWorkItem?.cancel()
+        autoApplyWorkItem = nil
+        loadConfig()
+    }
+
+    @objc private func resetSelectedTabClicked(_ sender: Any) {
+        var config = Config.load()
+        var defaults = Config()
+        defaults.validate()
+        switch tabViewController.selectedTabViewItemIndex {
+        case 0:
+            config.taskbarHeight = defaults.taskbarHeight
+            config.taskbarPosition = defaults.taskbarPosition
+            config.itemSizing = defaults.itemSizing
+            config.maxItemWidth = defaults.maxItemWidth
+            config.maxTitleWidth = defaults.maxTitleWidth
+            config.centerItems = defaults.centerItems
+            config.multiMonitorMode = defaults.multiMonitorMode
+            config.windowDisplayMode = defaults.windowDisplayMode
+            config.sidebarModeEnabled = defaults.sidebarModeEnabled
+            config.sidebarStateDefault = defaults.sidebarStateDefault
+            config.sidebarExpandTrigger = defaults.sidebarExpandTrigger
+            config.tileZoneEnabled = defaults.tileZoneEnabled
+            config.tilePopupSingleton = defaults.tilePopupSingleton
+            config.hoverDelayMs = defaults.hoverDelayMs
+            config.hoverIntentGuardEnabled = defaults.hoverIntentGuardEnabled
+            config.switcherEnabled = defaults.switcherEnabled
+            config.switcherHotkey = defaults.switcherHotkey
+            config.scrollWheelMode = defaults.scrollWheelMode
+            config.launcherEnabled = defaults.launcherEnabled
+            config.launcherAction = defaults.launcherAction
+            config.launcherCustomUrl = defaults.launcherCustomUrl
+            config.iconsOnly = defaults.iconsOnly
+            config.groupByApp = defaults.groupByApp
+            config.tabbedTaskbarEnabled = defaults.tabbedTaskbarEnabled
+            config.showHiddenApps = defaults.showHiddenApps
+            config.hiddenWindowMode = defaults.hiddenWindowMode
+            config.showMinimizedWindows = defaults.showMinimizedWindows
+            config.minimizedWindowMode = defaults.minimizedWindowMode
+            config.adjustWindowsForTaskbar = defaults.adjustWindowsForTaskbar
+            config.secondClickAction = defaults.secondClickAction
+            config.hideDock = defaults.hideDock
+            config.showMenuBarIcon = defaults.showMenuBarIcon
+        case 1:
+            config.theme = defaults.theme
+            config.barStyle = defaults.barStyle
+            config.glassStyle = defaults.glassStyle
+            config.iconSize = defaults.iconSize
+            config.fontSize = defaults.fontSize
+            config.hoverIntensity = defaults.hoverIntensity
+            config.visualDepth = defaults.visualDepth
+            config.animationProfile = defaults.animationProfile
+            config.focusIndicatorStyle = defaults.focusIndicatorStyle
+            config.appGroupStackStyle = defaults.appGroupStackStyle
+            config.appGroupStackGeometry = defaults.appGroupStackGeometry
+            config.appGroupStackHoverSpreadEnabled = defaults.appGroupStackHoverSpreadEnabled
+            config.appGroupCountBadgeInIconsOnly = defaults.appGroupCountBadgeInIconsOnly
+            config.appGroupCountBadgeStyle = defaults.appGroupCountBadgeStyle
+        case 2:
+            config.blacklistedApps = defaults.blacklistedApps
+            config.pinnedApps = defaults.pinnedApps
+            config.pinnedAppsScope = defaults.pinnedAppsScope
+        case 3:
+            config.previewsEnabled = defaults.previewsEnabled
+            config.previewMode = defaults.previewMode
+            config.previewHoverDelayMs = defaults.previewHoverDelayMs
+            config.providerRuntimeEnabled = defaults.providerRuntimeEnabled
+            config.providerTimeoutMs = defaults.providerTimeoutMs
+            config.providerCircuitBreakerThreshold = defaults.providerCircuitBreakerThreshold
+            config.performanceLoggingEnabled = defaults.performanceLoggingEnabled
+            config.performanceGpuTimingEnabled = defaults.performanceGpuTimingEnabled
+            config.performanceLogIntervalMs = defaults.performanceLogIntervalMs
+            config.pluginsEnabled = defaults.pluginsEnabled
+            config.windowTabGroupsEnabled = defaults.windowTabGroupsEnabled
+            config.tabGroupHoverExpandDelayMs = defaults.tabGroupHoverExpandDelayMs
+            config.tabGroupCollapseOnOutsideClick = defaults.tabGroupCollapseOnOutsideClick
+        default:
+            return
+        }
+        applyConfigToControls(config)
+        scheduleAutoApply()
     }
 
     private func updateApplyControls() {
@@ -907,7 +1588,6 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTe
 
     private func updatePerfControlsEnabledState() {
         let enabled = perfLoggingCheckbox.state == .on
-        perfGpuTimingCheckbox.isEnabled = enabled
         perfLogIntervalField.isEnabled = enabled
     }
 
@@ -933,22 +1613,84 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTe
         tilePopupSingletonCheckbox?.isEnabled = sidebarEnabled && tileZoneCheckbox.state == .on
     }
 
+    private func updateWindowStateControlsEnabledState() {
+        hiddenModePopup?.isEnabled = showHiddenCheckbox.state == .on
+        minimizedModePopup?.isEnabled = showMinimizedCheckbox.state == .on
+    }
+
+    private func updateLauncherControlsEnabledState() {
+        let enabled = launcherEnabledCheckbox.state == .on
+        launcherActionPopup?.isEnabled = enabled
+        launcherCustomUrlField?.isEnabled = enabled && launcherActionPopup.indexOfSelectedItem == 3
+    }
+
+    private func updatePreviewControlsEnabledState() {
+        let enabled = previewsEnabledCheckbox.state == .on
+        previewHoverDelayField?.isEnabled = enabled
+    }
+
+    private func updateTabGroupControlsEnabledState() {
+        let enabled = windowTabGroupsCheckbox.state == .on
+        tabGroupHoverDelayField?.isEnabled = enabled
+        tabGroupCollapseCheckbox?.isEnabled = enabled
+    }
+
+    private func updateIconSizeControl(for iconSize: Int) {
+        iconSizeLabel.stringValue = "\(iconSize) px"
+        iconSizeSlider.integerValue = iconSize
+    }
+
+    private func updateAppearancePreview() {
+        guard appearancePreviewView != nil else { return }
+        var previewConfig = Config()
+        previewConfig.taskbarHeight = heightSlider.integerValue
+        previewConfig.iconSize = iconSizeSlider.integerValue
+        previewConfig.fontSize = titleFontSizeSlider.integerValue
+        previewConfig.maxItemWidth = maxItemWidthSlider.integerValue
+        previewConfig.maxTitleWidth = maxTitleWidthSlider.integerValue
+        previewConfig.iconsOnly = iconsOnlyCheckbox.state == .on
+        previewConfig.groupByApp = groupByAppCheckbox.state == .on
+        previewConfig.centerItems = centerItemsCheckbox.state == .on
+        switch barStylePopup.indexOfSelectedItem {
+        case 0: previewConfig.barStyle = .flush
+        case 1: previewConfig.barStyle = .floating
+        default: break
+        }
+        switch glassStylePopup.indexOfSelectedItem {
+        case 0: previewConfig.glassStyle = .publicRegular
+        case 1: previewConfig.glassStyle = .publicClear
+        default: break
+        }
+        switch focusIndicatorPopup.indexOfSelectedItem {
+        case 0: previewConfig.focusIndicatorStyle = .tile
+        case 1: previewConfig.focusIndicatorStyle = .dot
+        default: break
+        }
+        previewConfig.validate()
+        appearancePreviewView.config = previewConfig
+    }
+
     func controlTextDidChange(_ obj: Notification) {
         if obj.object as? NSTextField === blacklistField ||
             obj.object as? NSTextField === perfLogIntervalField ||
             obj.object as? NSTextField === hoverDelayField ||
             obj.object as? NSTextField === switcherHotkeyField ||
+            obj.object as? NSTextField === launcherCustomUrlField ||
+            obj.object as? NSTextField === previewHoverDelayField ||
             obj.object as? NSTextField === providerTimeoutField ||
-            obj.object as? NSTextField === providerCircuitBreakerField {
+            obj.object as? NSTextField === providerCircuitBreakerField ||
+            obj.object as? NSTextField === tabGroupHoverDelayField {
             scheduleAutoApply()
         }
     }
 
     @objc private func applyClicked(_ sender: Any) {
-        let blacklist = blacklistField.stringValue
-            .split(separator: ",")
-            .map { $0.trimmingCharacters(in: .whitespaces) }
-            .filter { !$0.isEmpty }
+        let blacklist = Self.uniquePreservingOrder(
+            blacklistField.stringValue
+                .split(separator: ",")
+                .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+                .filter { !$0.isEmpty }
+        )
 
         var config = Config.load()
         config.taskbarHeight = heightSlider.integerValue
@@ -957,6 +1699,24 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTe
         case 1: config.taskbarPosition = .bottom
         case 2: config.taskbarPosition = .left
         case 3: config.taskbarPosition = .right
+        default: break
+        }
+        switch itemSizingPopup.indexOfSelectedItem {
+        case 0: config.itemSizing = .uniform
+        case 1: config.itemSizing = .auto
+        default: break
+        }
+        config.maxItemWidth = maxItemWidthSlider.integerValue
+        config.maxTitleWidth = maxTitleWidthSlider.integerValue
+        config.centerItems = centerItemsCheckbox.state == .on
+        switch multiMonitorPopup.indexOfSelectedItem {
+        case 0: config.multiMonitorMode = .allDisplays
+        case 1: config.multiMonitorMode = .mainOnly
+        default: break
+        }
+        switch windowDisplayPopup.indexOfSelectedItem {
+        case 0: config.windowDisplayMode = .perDisplay
+        case 1: config.windowDisplayMode = .allWindows
         default: break
         }
         config.sidebarModeEnabled = sidebarModeCheckbox.state == .on
@@ -983,6 +1743,23 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTe
         if !hotkey.isEmpty {
             config.switcherHotkey = hotkey
         }
+        switch scrollWheelPopup.indexOfSelectedItem {
+        case 0: config.scrollWheelMode = .cycleWindows
+        case 1: config.scrollWheelMode = .hideShow
+        case 2: config.scrollWheelMode = .volume
+        case 3: config.scrollWheelMode = .off
+        default: break
+        }
+        config.launcherEnabled = launcherEnabledCheckbox.state == .on
+        switch launcherActionPopup.indexOfSelectedItem {
+        case 0: config.launcherAction = .spotlight
+        case 1: config.launcherAction = .raycast
+        case 2: config.launcherAction = .alfred
+        case 3: config.launcherAction = .customUrl
+        default: break
+        }
+        let customLauncherUrl = launcherCustomUrlField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        config.launcherCustomUrl = customLauncherUrl.isEmpty ? nil : customLauncherUrl
         config.iconsOnly = iconsOnlyCheckbox.state == .on
         config.groupByApp = groupByAppCheckbox.state == .on
         config.tabbedTaskbarEnabled = tabbedTaskbarCheckbox.state == .on
@@ -1013,6 +1790,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTe
         }
 
         config.hideDock = hideDockCheckbox.state == .on
+        config.showMenuBarIcon = showMenuBarIconCheckbox.state == .on
 
         // Appearance
         switch themePopup.indexOfSelectedItem {
@@ -1034,10 +1812,19 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTe
         default: break
         }
 
+        config.iconSize = iconSizeSlider.integerValue
+        config.fontSize = titleFontSizeSlider.integerValue
+
         switch hoverIntensityPopup.indexOfSelectedItem {
         case 0: config.hoverIntensity = .subtle
         case 1: config.hoverIntensity = .medium
         case 2: config.hoverIntensity = .pronounced
+        default: break
+        }
+        switch visualDepthPopup.indexOfSelectedItem {
+        case 0: config.visualDepth = .subtle
+        case 1: config.visualDepth = .balanced
+        case 2: config.visualDepth = .rich
         default: break
         }
         switch animationProfilePopup.indexOfSelectedItem {
@@ -1075,12 +1862,24 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTe
         }
 
         config.performanceLoggingEnabled = perfLoggingCheckbox.state == .on
-        config.performanceGpuTimingEnabled = perfGpuTimingCheckbox.state == .on
         if let interval = Int(perfLogIntervalField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)) {
             config.performanceLogIntervalMs = interval
         }
 
         config.blacklistedApps = blacklist
+        if let pendingPinnedApps {
+            config.pinnedApps = pendingPinnedApps
+        }
+        switch pinnedAppsScopePopup.indexOfSelectedItem {
+        case 0: config.pinnedAppsScope = .perSpace
+        case 1: config.pinnedAppsScope = .global
+        default: break
+        }
+        config.previewsEnabled = previewsEnabledCheckbox.state == .on
+        config.previewMode = .staticImage
+        if let delay = Int(previewHoverDelayField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)) {
+            config.previewHoverDelayMs = delay
+        }
         config.providerRuntimeEnabled = providerRuntimeCheckbox.state == .on
         if let timeout = Int(providerTimeoutField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)) {
             config.providerTimeoutMs = timeout
@@ -1088,6 +1887,12 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTe
         if let threshold = Int(providerCircuitBreakerField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)) {
             config.providerCircuitBreakerThreshold = threshold
         }
+        config.pluginsEnabled = pluginsEnabledCheckbox.state == .on
+        config.windowTabGroupsEnabled = windowTabGroupsCheckbox.state == .on
+        if let delay = Int(tabGroupHoverDelayField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)) {
+            config.tabGroupHoverExpandDelayMs = delay
+        }
+        config.tabGroupCollapseOnOutsideClick = tabGroupCollapseCheckbox.state == .on
         config.validate()
         config.save()
 
@@ -1124,6 +1929,86 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTe
         }
     }
 
+    @objc private func openGitHub(_ sender: Any) {
+        NSWorkspace.shared.open(Updater.repositoryURL)
+    }
+
+    @objc private func addBlacklistedAppClicked(_ sender: Any) {
+        guard let window else { return }
+        let panel = NSOpenPanel()
+        panel.title = "Choose an app to hide from LiquidBar"
+        panel.canChooseDirectories = false
+        panel.canChooseFiles = true
+        panel.allowsMultipleSelection = false
+        panel.allowedContentTypes = [.applicationBundle]
+        panel.directoryURL = URL(fileURLWithPath: "/Applications", isDirectory: true)
+        panel.beginSheetModal(for: window) { [weak self] response in
+            guard response == .OK,
+                  let url = panel.url,
+                  let bundleId = Bundle(url: url)?.bundleIdentifier
+            else { return }
+            Task { @MainActor in
+                self?.appendBlacklistBundleId(bundleId)
+            }
+        }
+    }
+
+    @objc private func clearBlacklistClicked(_ sender: Any) {
+        blacklistField.stringValue = ""
+        scheduleAutoApply()
+    }
+
+    @objc private func clearPinnedAppsClicked(_ sender: Any) {
+        pendingPinnedApps = []
+        pinnedAppsLabel.stringValue = "(none)"
+        scheduleAutoApply()
+    }
+
+    @objc private func openAccessibilitySettings(_ sender: Any) {
+        AccessibilityService.requestPermission()
+        openPrivacyPane("Privacy_Accessibility")
+        refreshPermissionStatus()
+    }
+
+    @objc private func openInputMonitoringSettings(_ sender: Any) {
+        _ = HotkeyMonitor.requestListenEventAccess()
+        openPrivacyPane("Privacy_ListenEvent")
+        refreshPermissionStatus()
+    }
+
+    @objc private func openScreenRecordingSettings(_ sender: Any) {
+        _ = CGRequestScreenCaptureAccess()
+        openPrivacyPane("Privacy_ScreenCapture")
+        refreshPermissionStatus()
+    }
+
+    @objc private func refreshPermissionStatusClicked(_ sender: Any) {
+        refreshPermissionStatus()
+    }
+
+    @objc private func resetAllSettingsClicked(_ sender: Any) {
+        let alert = NSAlert()
+        alert.messageText = "Reset all LiquidBar settings?"
+        alert.informativeText = "This restores default preferences and keeps the current app installed."
+        alert.alertStyle = .warning
+        alert.addButton(withTitle: "Reset All")
+        alert.addButton(withTitle: "Cancel")
+        let response: NSApplication.ModalResponse
+        if let window {
+            response = alert.runModal()
+            window.makeKey()
+        } else {
+            response = alert.runModal()
+        }
+        guard response == .alertFirstButtonReturn else { return }
+
+        var defaults = Config()
+        defaults.validate()
+        defaults.save()
+        applyConfigToControls(defaults)
+        onConfigChanged?()
+    }
+
     @objc private func openConfigFile(_ sender: Any) {
         ensureConfigFileExists()
         NSWorkspace.shared.open(Config.configPath)
@@ -1137,6 +2022,37 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTe
     private func ensureConfigFileExists() {
         if !FileManager.default.fileExists(atPath: Config.configPath.path) {
             Config().save()
+        }
+    }
+
+    private func appendBlacklistBundleId(_ bundleId: String) {
+        var ids = blacklistField.stringValue
+            .split(separator: ",")
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+        if !ids.contains(bundleId) {
+            ids.append(bundleId)
+        }
+        blacklistField.stringValue = Self.uniquePreservingOrder(ids).joined(separator: ", ")
+        scheduleAutoApply()
+    }
+
+    private func refreshPermissionStatus() {
+        accessibilityStatusLabel?.stringValue = AXIsProcessTrusted() ? "Allowed" : "Needs Access"
+        inputMonitoringStatusLabel?.stringValue = HotkeyMonitor.listenEventAccessGranted() ? "Allowed" : "Needs Access"
+        screenRecordingStatusLabel?.stringValue = CGPreflightScreenCaptureAccess() ? "Allowed" : "Needs Access"
+    }
+
+    private func openPrivacyPane(_ anchor: String) {
+        guard let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?\(anchor)") else { return }
+        NSWorkspace.shared.open(url)
+    }
+
+    private func clearTransientTextFocus() {
+        Task { @MainActor [weak self] in
+            await Task.yield()
+            self?.window?.endEditing(for: nil)
+            self?.window?.makeFirstResponder(nil)
         }
     }
 
@@ -1155,6 +2071,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTe
             shared = SettingsWindowController()
         }
         shared?.loadConfig()
+        shared?.scrollSelectedTabToTop()
         shared?.window?.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
     }
@@ -1178,6 +2095,99 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTe
         return label
     }
 
+    private func makeNumberField(frame: NSRect, min: Int, max: Int) -> NSTextField {
+        let field = NSTextField(frame: frame)
+        field.font = NSFont.monospacedDigitSystemFont(ofSize: 12, weight: .regular)
+        field.alignment = .right
+        let formatter = NumberFormatter()
+        formatter.numberStyle = .none
+        formatter.minimum = NSNumber(value: min)
+        formatter.maximum = NSNumber(value: max)
+        formatter.allowsFloats = false
+        formatter.generatesDecimalNumbers = false
+        field.formatter = formatter
+        return field
+    }
+
+    private func makeActionButton(title: String, symbolName: String, frame: NSRect, action: Selector) -> NSButton {
+        let button = NSButton(frame: frame)
+        button.bezelStyle = .rounded
+        button.title = title
+        button.image = NSImage(systemSymbolName: symbolName, accessibilityDescription: nil)
+        button.imagePosition = .imageLeading
+        button.target = self
+        button.action = action
+        return button
+    }
+
+    private func scrollSelectedTabToTop() {
+        let selectedIndex = tabViewController.selectedTabViewItemIndex
+        guard selectedIndex >= 0,
+              selectedIndex < tabViewController.tabViewItems.count,
+              let tabView = tabViewController.tabViewItems[selectedIndex].viewController?.view,
+              let scrollView = firstScrollView(in: tabView)
+        else { return }
+
+        scrollDocumentViewToTop(in: scrollView)
+    }
+
+    private func scrollDocumentViewToTop(in scrollView: NSScrollView, fallbackViewportHeight: CGFloat? = nil) {
+        guard let documentView = scrollView.documentView else { return }
+
+        let measuredViewportHeight = scrollView.contentView.bounds.height
+        let viewportHeight = measuredViewportHeight > 0
+            ? measuredViewportHeight
+            : fallbackViewportHeight ?? scrollView.frame.height
+        let topY = max(0, documentView.bounds.height - viewportHeight)
+        scrollView.contentView.scroll(to: NSPoint(x: 0, y: topY))
+        scrollView.reflectScrolledClipView(scrollView.contentView)
+    }
+
+    private func firstScrollView(in view: NSView) -> NSScrollView? {
+        if let scrollView = view as? NSScrollView {
+            return scrollView
+        }
+
+        for subview in view.subviews {
+            if let scrollView = firstScrollView(in: subview) {
+                return scrollView
+            }
+        }
+        return nil
+    }
+
+    private static func displayPath(for url: URL) -> String {
+        let path = url.path
+        let homePath = FileManager.default.homeDirectoryForCurrentUser.path
+        if path == homePath {
+            return "~"
+        }
+        if path.hasPrefix(homePath + "/") {
+            return "~" + path.dropFirst(homePath.count)
+        }
+        return path
+    }
+
+    private static func uniquePreservingOrder(_ values: [String]) -> [String] {
+        var seen = Set<String>()
+        return values.filter { seen.insert($0).inserted }
+    }
+
+    private func addSectionHeader(_ text: String, at point: NSPoint, width: CGFloat, to parent: NSView) {
+        let label = NSTextField(frame: NSRect(x: point.x, y: point.y, width: 140, height: 18))
+        label.stringValue = text
+        label.isEditable = false
+        label.isBordered = false
+        label.backgroundColor = .clear
+        label.font = NSFont.systemFont(ofSize: 11, weight: .semibold)
+        label.textColor = .secondaryLabelColor
+        parent.addSubview(label)
+
+        let separator = NSBox(frame: NSRect(x: point.x + 150, y: point.y + 7, width: max(0, width - 150), height: 1))
+        separator.boxType = .separator
+        parent.addSubview(separator)
+    }
+
     private func makeCheckbox(_ title: String, at point: NSPoint) -> NSButton {
         let cb = NSButton(frame: NSRect(x: point.x, y: point.y, width: 300, height: 22))
         cb.setButtonType(.switch)
@@ -1186,9 +2196,9 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTe
         return cb
     }
 
-    #if DEBUG
     deinit {
+        #if DEBUG
         Log.ui.debug("SettingsWindowController deinit")
+        #endif
     }
-    #endif
 }

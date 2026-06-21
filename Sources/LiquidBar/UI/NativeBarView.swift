@@ -24,6 +24,16 @@ private struct IconLayerRenderIdentity: Equatable {
     let scaleKey: Int
 }
 
+private struct DecorationDepthTokens {
+    let fillScale: CGFloat
+    let edgeAlpha: CGFloat
+    let topHighlightAlpha: CGFloat
+    let lowerShadeAlpha: CGFloat
+    let shadowAlpha: Float
+    let shadowRadius: CGFloat
+    let shadowOffsetY: CGFloat
+}
+
 enum DragCompletionDecision: Equatable {
     case click(sourceIndex: Int)
     case reorder(from: Int, to: Int, dropIndex: Int?)
@@ -87,6 +97,7 @@ final class NativeBarView: NSView {
     var onItemClicked: ((Int, MouseButton) -> Void)?
     var onItemReordered: ((Int, Int) -> Void)?
     var onContextAction: ((Int, ContextAction, String?) -> Void)?
+    var onAppContextAction: ((AppContextAction) -> Void)?
     var onHoverChanged: ((Int?) -> Void)?
     /// Cursor position in bar-local native coordinates (origin top-left). `nil` when exited.
     var onCursorMoved: ((NSPoint?) -> Void)?
@@ -129,11 +140,15 @@ final class NativeBarView: NSView {
         retainedRootLayer.isOpaque = false
         retainedRootLayer.backgroundColor = NSColor.clear.cgColor
         retainedRootLayer.masksToBounds = false
+        if decorationContainerLayer.superlayer == nil {
+            retainedRootLayer.addSublayer(decorationContainerLayer)
+        }
         if itemContainerLayer.superlayer == nil {
             retainedRootLayer.addSublayer(itemContainerLayer)
         }
-        if decorationContainerLayer.superlayer == nil {
-            retainedRootLayer.addSublayer(decorationContainerLayer)
+        if decorationContainerLayer.superlayer === retainedRootLayer,
+           itemContainerLayer.superlayer === retainedRootLayer {
+            retainedRootLayer.insertSublayer(decorationContainerLayer, below: itemContainerLayer)
         }
 
         ensureNativeTextOverlayView()
@@ -294,7 +309,31 @@ final class NativeBarView: NSView {
         }
     }
 
+    func debugDecorationLayerSublayerNames() -> [[String]] {
+        decorationContainerLayer.sublayers?.map { decorationLayer in
+            recursiveLayerNames(in: decorationLayer)
+        } ?? []
+    }
+
+    func debugRetainedLayerOrder() -> [String] {
+        retainedRootLayer.sublayers?.compactMap { layer in
+            if layer === decorationContainerLayer { return "decorations" }
+            if layer === itemContainerLayer { return "items" }
+            return layer.name
+        } ?? []
+    }
+
+    private func recursiveLayerNames(in layer: CALayer) -> [String] {
+        (layer.sublayers ?? []).flatMap { sublayer in
+            [sublayer.name].compactMap { $0 } + recursiveLayerNames(in: sublayer)
+        }
+    }
+
     private func makeDecorationLayer(_ decoration: NativeDecoration, scale: CGFloat) -> CALayer {
+        if shouldUseLayeredGlass(for: decoration) {
+            return makeLayeredGlassDecorationLayer(decoration, scale: scale)
+        }
+
         let layer = CALayer()
         layer.frame = pixelAlignedRect(viewRect(fromTopLeft: decoration.rect), scale: scale)
         layer.cornerRadius = CGFloat(decoration.cornerRadius)
@@ -302,6 +341,162 @@ final class NativeBarView: NSView {
         layer.opacity = 1
         configureLayerQuality(layer, scale: scale)
         return layer
+    }
+
+    private func shouldUseLayeredGlass(for decoration: NativeDecoration) -> Bool {
+        switch decoration.kind {
+        case .hover, .focus, .badge, .pluginState, .stackPlate:
+            return decoration.rect.width >= 4 && decoration.rect.height >= 4
+        case .pin, .separator, .dragShadow:
+            return false
+        }
+    }
+
+    private func makeLayeredGlassDecorationLayer(_ decoration: NativeDecoration, scale: CGFloat) -> CALayer {
+        let frame = pixelAlignedRect(viewRect(fromTopLeft: decoration.rect), scale: scale)
+        let radius = CGFloat(decoration.cornerRadius)
+        let tokens = decorationDepthTokens(for: decoration)
+
+        let container = CALayer()
+        container.name = "glass-\(decoration.kind)"
+        container.frame = frame
+        container.cornerRadius = radius
+        container.masksToBounds = false
+        container.opacity = 1
+        configureLayerQuality(container, scale: scale)
+
+        if tokens.shadowAlpha > 0 {
+            container.shadowColor = NSColor.black.cgColor
+            container.shadowOpacity = tokens.shadowAlpha
+            container.shadowRadius = tokens.shadowRadius
+            container.shadowOffset = CGSize(width: 0, height: tokens.shadowOffsetY)
+            container.shadowPath = CGPath(
+                roundedRect: container.bounds,
+                cornerWidth: radius,
+                cornerHeight: radius,
+                transform: nil
+            )
+        }
+
+        let base = CALayer()
+        base.name = "glass-fill"
+        base.frame = container.bounds
+        base.cornerRadius = radius
+        base.masksToBounds = true
+        base.backgroundColor = decoration.color
+            .withAlphaComponent(CGFloat(decoration.alpha) * tokens.fillScale)
+            .cgColor
+        base.borderWidth = max(0.5, 1.0 / max(scale, 1.0))
+        base.borderColor = NSColor.white.withAlphaComponent(tokens.edgeAlpha).cgColor
+        configureLayerQuality(base, scale: scale)
+        container.addSublayer(base)
+
+        let topHighlight = CAGradientLayer()
+        topHighlight.name = "glass-top-highlight"
+        topHighlight.frame = CGRect(
+            x: 1 / max(scale, 1),
+            y: container.bounds.height * 0.52,
+            width: max(0, container.bounds.width - 2 / max(scale, 1)),
+            height: max(1, container.bounds.height * 0.48)
+        )
+        topHighlight.cornerRadius = max(0, radius - 1)
+        topHighlight.masksToBounds = true
+        topHighlight.colors = [
+            NSColor.white.withAlphaComponent(tokens.topHighlightAlpha).cgColor,
+            NSColor.white.withAlphaComponent(tokens.topHighlightAlpha * 0.22).cgColor,
+            NSColor.clear.cgColor,
+        ]
+        topHighlight.locations = [0, 0.42, 1]
+        topHighlight.startPoint = CGPoint(x: 0.5, y: 1)
+        topHighlight.endPoint = CGPoint(x: 0.5, y: 0)
+        configureLayerQuality(topHighlight, scale: scale)
+        base.addSublayer(topHighlight)
+
+        let lowerShade = CAGradientLayer()
+        lowerShade.name = "glass-lower-shade"
+        lowerShade.frame = CGRect(
+            x: 0,
+            y: 0,
+            width: container.bounds.width,
+            height: max(1, container.bounds.height * 0.50)
+        )
+        lowerShade.colors = [
+            NSColor.black.withAlphaComponent(tokens.lowerShadeAlpha).cgColor,
+            NSColor.clear.cgColor,
+        ]
+        lowerShade.locations = [0, 1]
+        lowerShade.startPoint = CGPoint(x: 0.5, y: 0)
+        lowerShade.endPoint = CGPoint(x: 0.5, y: 1)
+        configureLayerQuality(lowerShade, scale: scale)
+        base.addSublayer(lowerShade)
+
+        if decoration.visualDepth == .rich && decoration.rect.width > 12 && decoration.rect.height > 8 {
+            let specular = CALayer()
+            specular.name = "glass-specular-edge"
+            specular.frame = CGRect(
+                x: max(2, container.bounds.width * 0.10),
+                y: container.bounds.height - max(1, 1.5 / max(scale, 1)) - 2 / max(scale, 1),
+                width: container.bounds.width * 0.58,
+                height: max(1, 1.5 / max(scale, 1))
+            )
+            specular.cornerRadius = specular.frame.height / 2
+            specular.backgroundColor = NSColor.white.withAlphaComponent(tokens.topHighlightAlpha * 0.86).cgColor
+            configureLayerQuality(specular, scale: scale)
+            base.addSublayer(specular)
+        }
+
+        return container
+    }
+
+    private func decorationDepthTokens(for decoration: NativeDecoration) -> DecorationDepthTokens {
+        let depth = CGFloat(decoration.visualDepth.floatValue)
+        let contrastBoost: CGFloat = SystemAccessibilityPreferences.increaseContrast ? 0.08 : 0
+        let shadowScale: Float = SystemAccessibilityPreferences.increaseContrast ? 0.65 : 1.0
+
+        switch decoration.kind {
+        case .focus:
+            return DecorationDepthTokens(
+                fillScale: 0.72 + depth * 0.22,
+                edgeAlpha: 0.20 + depth * 0.16 + contrastBoost,
+                topHighlightAlpha: 0.24 + depth * 0.20 + contrastBoost,
+                lowerShadeAlpha: 0.06 + depth * 0.08,
+                shadowAlpha: Float(0.05 + depth * 0.08) * shadowScale,
+                shadowRadius: 3 + depth * 5,
+                shadowOffsetY: -0.5
+            )
+        case .pluginState:
+            return DecorationDepthTokens(
+                fillScale: 0.76 + depth * 0.20,
+                edgeAlpha: 0.16 + depth * 0.14 + contrastBoost,
+                topHighlightAlpha: 0.18 + depth * 0.18 + contrastBoost,
+                lowerShadeAlpha: 0.05 + depth * 0.07,
+                shadowAlpha: Float(0.03 + depth * 0.05) * shadowScale,
+                shadowRadius: 2 + depth * 4,
+                shadowOffsetY: -0.4
+            )
+        case .badge:
+            return DecorationDepthTokens(
+                fillScale: 0.82 + depth * 0.16,
+                edgeAlpha: 0.18 + depth * 0.16 + contrastBoost,
+                topHighlightAlpha: 0.22 + depth * 0.18 + contrastBoost,
+                lowerShadeAlpha: 0.06 + depth * 0.07,
+                shadowAlpha: Float(0.02 + depth * 0.04) * shadowScale,
+                shadowRadius: 1.5 + depth * 3,
+                shadowOffsetY: -0.3
+            )
+        case .hover, .stackPlate:
+            fallthrough
+        default:
+            return DecorationDepthTokens(
+                fillScale: 0.66 + depth * 0.20,
+                edgeAlpha: 0.13 + depth * 0.14 + contrastBoost,
+                topHighlightAlpha: 0.18 + depth * 0.18 + contrastBoost,
+                lowerShadeAlpha: 0.04 + depth * 0.08,
+                shadowAlpha: Float(0.02 + depth * 0.06) * shadowScale,
+                shadowRadius: 2 + depth * 5,
+                shadowOffsetY: -0.4
+            )
+        }
     }
 
     private func currentBackingScale() -> CGFloat {
@@ -795,11 +990,11 @@ final class NativeBarView: NSView {
 
     override func menu(for event: NSEvent) -> NSMenu? {
         let point = convert(event.locationInWindow, from: nil)
-        guard let index = indexForPoint(point) else { return nil }
+        guard let index = indexForPoint(point) else { return makeAppContextMenu() }
 
         let menu = NSMenu()
 
-        guard index < items.count else { return nil }
+        guard index < items.count else { return makeAppContextMenu() }
         let item = items[index]
 
         switch item {
@@ -821,6 +1016,7 @@ final class NativeBarView: NSView {
                 info.isEnabled = false
                 menu.addItem(info)
             }
+            appendAppContextItems(to: menu)
             return menu
 
         case .customText(let id, _, _):
@@ -841,6 +1037,7 @@ final class NativeBarView: NSView {
                 info.isEnabled = false
                 menu.addItem(info)
             }
+            appendAppContextItems(to: menu)
             return menu
 
         case .customLink(let id, _, _, _, _):
@@ -870,6 +1067,7 @@ final class NativeBarView: NSView {
                 info.isEnabled = false
                 menu.addItem(info)
             }
+            appendAppContextItems(to: menu)
             return menu
 
         case .customFolder(let id, _, _, _, _):
@@ -899,6 +1097,7 @@ final class NativeBarView: NSView {
                 info.isEnabled = false
                 menu.addItem(info)
             }
+            appendAppContextItems(to: menu)
             return menu
 
         case .tabGroup(let groupId, _, _, _, _, _, _, _):
@@ -914,13 +1113,14 @@ final class NativeBarView: NSView {
             delete.representedObject = groupId
             menu.addItem(delete)
 
+            appendAppContextItems(to: menu)
             return menu
 
         case .launcher:
-            return nil
+            return makeAppContextMenu()
 
         case .pluginTile:
-            return nil
+            return makeAppContextMenu()
 
         case .window(let id, _, _, _, _, _, _):
             let closeItem = NSMenuItem(title: "Close Window", action: #selector(contextClose(_:)), keyEquivalent: "")
@@ -987,6 +1187,7 @@ final class NativeBarView: NSView {
                 }
             }
 
+            appendAppContextItems(to: menu)
             return menu
 
         default:
@@ -1019,7 +1220,48 @@ final class NativeBarView: NSView {
         hideItem.tag = index
         menu.addItem(hideItem)
 
+        appendAppContextItems(to: menu)
         return menu
+    }
+
+    private func makeAppContextMenu() -> NSMenu {
+        let menu = NSMenu()
+        appendAppContextItems(to: menu, includeSeparator: false)
+        return menu
+    }
+
+    private func appendAppContextItems(to menu: NSMenu, includeSeparator: Bool = true) {
+        if includeSeparator, !menu.items.isEmpty {
+            menu.addItem(.separator())
+        }
+
+        let preferences = NSMenuItem(title: "Preferences\u{2026}", action: #selector(contextOpenPreferences(_:)), keyEquivalent: ",")
+        preferences.target = self
+        preferences.keyEquivalentModifierMask = .command
+        menu.addItem(preferences)
+
+        let reload = NSMenuItem(title: "Reload config.json", action: #selector(contextReloadConfig(_:)), keyEquivalent: "")
+        reload.target = self
+        menu.addItem(reload)
+
+        menu.addItem(.separator())
+
+        let quit = NSMenuItem(title: "Quit LiquidBar", action: #selector(contextQuit(_:)), keyEquivalent: "q")
+        quit.target = self
+        quit.keyEquivalentModifierMask = .command
+        menu.addItem(quit)
+    }
+
+    @objc private func contextOpenPreferences(_ sender: NSMenuItem) {
+        onAppContextAction?(.openPreferences)
+    }
+
+    @objc private func contextReloadConfig(_ sender: NSMenuItem) {
+        onAppContextAction?(.reloadConfig)
+    }
+
+    @objc private func contextQuit(_ sender: NSMenuItem) {
+        onAppContextAction?(.quit)
     }
 
     @objc private func contextClose(_ sender: NSMenuItem) {

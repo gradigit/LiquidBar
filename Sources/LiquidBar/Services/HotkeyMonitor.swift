@@ -116,8 +116,14 @@ struct HotkeyShortcut: Sendable, Equatable {
 final class HotkeyMonitor {
     enum EventTapDecision: Equatable {
         case passThrough
-        case swallowMatchedPress
+        case swallowMatchedPress(HotkeyPressContext)
         case emitRelease
+    }
+
+    struct HotkeyPressContext: Sendable, Equatable {
+        var isReverse: Bool
+
+        static let forward = HotkeyPressContext(isReverse: false)
     }
 
     struct EventTapContext {
@@ -134,7 +140,7 @@ final class HotkeyMonitor {
     private var eventHandlerRef: EventHandlerRef?
     private var hotKeyRef: EventHotKeyRef?
     private let shouldHandleEventTapPress: @Sendable () -> Bool
-    private let onPress: @Sendable () -> Bool
+    private let onPress: @Sendable (HotkeyPressContext) -> Bool
     private let onRelease: @Sendable () -> Void
     private var currentShortcut: HotkeyShortcut?
     private var didRequestListenEventAccess = false
@@ -146,14 +152,14 @@ final class HotkeyMonitor {
     /// Static callback pointer — same pattern as MouseTracker._activeTapPtr.
     /// The C callback cannot capture `self`, so we stash the closure pointer here.
     nonisolated(unsafe) private static var _shouldHandleEventTapPressCallback: (@Sendable () -> Bool)?
-    nonisolated(unsafe) private static var _onPressCallback: (@Sendable () -> Bool)?
+    nonisolated(unsafe) private static var _onPressCallback: (@Sendable (HotkeyPressContext) -> Bool)?
     nonisolated(unsafe) private static var _onReleaseCallback: (@Sendable () -> Void)?
     nonisolated(unsafe) private static var _activeTapPort: CFMachPort?
     nonisolated(unsafe) private static var _tapShortcutSessionActive = false
 
     init(
         shouldHandleEventTapPress: @escaping @Sendable () -> Bool = { true },
-        onPress: @escaping @Sendable () -> Bool,
+        onPress: @escaping @Sendable (HotkeyPressContext) -> Bool,
         onRelease: @escaping @Sendable () -> Void = {}
     ) {
         self.shouldHandleEventTapPress = shouldHandleEventTapPress
@@ -278,11 +284,11 @@ final class HotkeyMonitor {
                 switch decision {
                 case .passThrough:
                     return Unmanaged.passUnretained(event)
-                case .swallowMatchedPress:
+                case .swallowMatchedPress(let pressContext):
                     HotkeyMonitor._tapShortcutSessionActive = true
                     if let onPress = HotkeyMonitor._onPressCallback {
                         DispatchQueue.main.async {
-                            _ = onPress()
+                            _ = onPress(pressContext)
                         }
                     }
                     return nil
@@ -351,7 +357,7 @@ final class HotkeyMonitor {
         guard status == noErr else { return }
         guard hk.signature == Self.signature, hk.id == Self.hotkeyId else { return }
 
-        _ = onPress()
+        _ = onPress(.forward)
     }
 
     private nonisolated(unsafe) static var _currentShortcutForTap: HotkeyShortcut?
@@ -375,14 +381,14 @@ final class HotkeyMonitor {
         }
 
         guard context.type == .keyDown, let keyCode = context.keyCode else { return .passThrough }
-        guard matchesEventTapEvent(
+        guard let pressContext = eventTapPressContext(
             keyCode: keyCode,
             flags: context.flags,
             shortcut: shortcut
         ) else {
             return .passThrough
         }
-        return shouldHandleMatchedPress ? .swallowMatchedPress : .passThrough
+        return shouldHandleMatchedPress ? .swallowMatchedPress(pressContext) : .passThrough
     }
 
     private static func shouldReleaseEventTapSession(
@@ -409,10 +415,29 @@ final class HotkeyMonitor {
         flags: CGEventFlags,
         shortcut: HotkeyShortcut
     ) -> Bool {
-        guard keyCode == Int64(shortcut.keyCode) else { return false }
+        eventTapPressContext(keyCode: keyCode, flags: flags, shortcut: shortcut) != nil
+    }
+
+    static func eventTapPressContext(
+        keyCode: Int64,
+        flags: CGEventFlags,
+        shortcut: HotkeyShortcut
+    ) -> HotkeyPressContext? {
+        guard keyCode == Int64(shortcut.keyCode) else { return nil }
         let active = normalizedEventTapModifiers(flags)
         let expected = normalizedEventTapModifiers(shortcut.modifiers)
-        return active == expected
+        if active == expected {
+            return .forward
+        }
+
+        if shortcut.keyCode == UInt32(kVK_Tab),
+           expected.contains(.maskCommand),
+           !expected.contains(.maskShift),
+           active == expected.union(.maskShift) {
+            return HotkeyPressContext(isReverse: true)
+        }
+
+        return nil
     }
 
     private static func normalizedEventTapModifiers(_ flags: CGEventFlags) -> CGEventFlags {

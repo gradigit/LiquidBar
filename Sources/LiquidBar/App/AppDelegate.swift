@@ -47,6 +47,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             renderer: renderer!,
             panelManager: panelManager
         )
+        loop.onOpenPreferences = { [weak self] in
+            self?.showSettings()
+        }
         loop.start()
         eventLoop = loop
         schedulePanelBootstrapCheck(attempt: 1)
@@ -72,19 +75,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         // 7. Dock auto-hide
         dockService = DockService()
         dockService?.restoreIfNeeded()
-        if config.hideDock {
-            dockService?.hideDock()
-        }
+        applyDockVisibility(config: config)
 
-        // 8. App icon (programmatic — replace with real asset later)
-        NSApp.applicationIconImage = makeAppIcon()
+        // 8. App icon
+        NSApp.applicationIconImage = LiquidBarLogo.makeApplicationIcon()
 
         // 9. Menu bar status item
-        setupStatusItem()
+        updateStatusItemVisibility(config: config)
 
         // 10. Hot-reload config.json changes (when edited manually).
         configWatcher = ConfigFileWatcher(configPath: Config.configPath) { [weak self] in
-            self?.eventLoop?.reloadConfig()
+            guard let self else { return }
+            self.eventLoop?.reloadConfig()
+            let config = Config.load()
+            self.applyDockVisibility(config: config)
+            self.updateStatusItemVisibility(config: config)
         }
         updateConfigWatcherState()
         liveApplyObserver = NotificationCenter.default.addObserver(
@@ -115,7 +120,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         configWatcher?.stop()
         configWatcher = nil
         renderer = nil
-        statusItem = nil
+        removeStatusItem()
         Log.app.info("LiquidBar terminated")
     }
 
@@ -162,9 +167,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             if !LiveApplySettings.isEnabled() {
                 self.eventLoop?.reloadConfig()
             }
+            let config = Config.load()
+            self.applyDockVisibility(config: config)
+            self.updateStatusItemVisibility(config: config)
         }
         SettingsWindowController.shared?.onReloadRequested = { [weak self] in
-            self?.eventLoop?.reloadConfig()
+            guard let self else { return }
+            self.eventLoop?.reloadConfig()
+            let config = Config.load()
+            self.applyDockVisibility(config: config)
+            self.updateStatusItemVisibility(config: config)
+        }
+    }
+
+    private func applyDockVisibility(config: Config = Config.load()) {
+        if config.hideDock {
+            dockService?.hideDock()
+        } else {
+            dockService?.restoreDock()
         }
     }
 
@@ -178,69 +198,32 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     // MARK: - Status Item
 
+    private func updateStatusItemVisibility(config: Config = Config.load()) {
+        if config.showMenuBarIcon {
+            setupStatusItem()
+        } else {
+            removeStatusItem()
+        }
+    }
+
     private func setupStatusItem() {
-        statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
+        if statusItem == nil {
+            statusItem = NSStatusBar.system.statusItem(withLength: LiquidBarLogo.menuBarStatusItemLength)
+        } else {
+            statusItem?.length = LiquidBarLogo.menuBarStatusItemLength
+        }
         if let button = statusItem?.button {
-            button.image = makeTemplateImage()
+            button.image = LiquidBarLogo.makeMenuBarTemplateImage()
         }
         let menu = buildStatusMenu()
         menu.delegate = self
         statusItem?.menu = menu
     }
 
-    private func makeAppIcon() -> NSImage {
-        let size = NSSize(width: 256, height: 256)
-        return NSImage(size: size, flipped: false) { rect in
-            // Dark rounded-rect background
-            let bgColor = NSColor(srgbRed: 0.15, green: 0.15, blue: 0.2, alpha: 1)
-            bgColor.setFill()
-            NSBezierPath(roundedRect: rect.insetBy(dx: 8, dy: 8), xRadius: 48, yRadius: 48).fill()
-
-            // Three horizontal bars (taskbar icon)
-            let barColor = NSColor(srgbRed: 0.4, green: 0.7, blue: 1.0, alpha: 1)
-            barColor.setFill()
-            let barHeight: CGFloat = 18
-            let barSpacing: CGFloat = 28
-            let insetX: CGFloat = 48.0
-            let totalHeight = 3 * barHeight + 2 * barSpacing
-            let startY = (rect.height - totalHeight) / 2
-            for i in 0..<3 {
-                let y = startY + CGFloat(i) * (barHeight + barSpacing)
-                let barRect = NSRect(
-                    x: insetX,
-                    y: y,
-                    width: rect.width - 2 * insetX,
-                    height: barHeight
-                )
-                NSBezierPath(roundedRect: barRect, xRadius: barHeight / 2, yRadius: barHeight / 2).fill()
-            }
-            return true
-        }
-    }
-
-    private func makeTemplateImage() -> NSImage {
-        let size = NSSize(width: 18, height: 18)
-        let image = NSImage(size: size, flipped: false) { rect in
-            NSColor.black.setFill()
-            let lineHeight: CGFloat = 1.5
-            let lineSpacing: CGFloat = 3.5
-            let insetX: CGFloat = 3.0
-            let totalHeight = 3 * lineHeight + 2 * lineSpacing
-            let startY = (rect.height - totalHeight) / 2
-            for i in 0..<3 {
-                let y = startY + CGFloat(i) * (lineHeight + lineSpacing)
-                let lineRect = NSRect(
-                    x: insetX,
-                    y: y,
-                    width: rect.width - 2 * insetX,
-                    height: lineHeight
-                )
-                NSBezierPath(roundedRect: lineRect, xRadius: lineHeight / 2, yRadius: lineHeight / 2).fill()
-            }
-            return true
-        }
-        image.isTemplate = true
-        return image
+    private func removeStatusItem() {
+        guard let item = statusItem else { return }
+        NSStatusBar.system.removeStatusItem(item)
+        statusItem = nil
     }
 
     private func buildStatusMenu() -> NSMenu {
@@ -523,11 +506,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         var config = Config.load()
         config.hideDock = !config.hideDock
         config.save()
-        if config.hideDock {
-            dockService?.hideDock()
-        } else {
-            dockService?.restoreDock()
-        }
+        applyDockVisibility(config: config)
         if !LiveApplySettings.isEnabled() {
             eventLoop?.reloadConfig()
         }
@@ -547,6 +526,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     @objc private func reloadConfigFromDisk() {
         eventLoop?.reloadConfig()
+        let config = Config.load()
+        applyDockVisibility(config: config)
+        updateStatusItemVisibility(config: config)
     }
 
     @objc private func checkForUpdates() {

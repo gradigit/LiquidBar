@@ -95,6 +95,20 @@ enum HoverIntensity: String, Codable, Sendable, CaseIterable {
     }
 }
 
+enum VisualDepth: String, Codable, Sendable, CaseIterable {
+    case subtle
+    case balanced
+    case rich
+
+    var floatValue: Float {
+        switch self {
+        case .subtle: return 0.0
+        case .balanced: return 0.5
+        case .rich: return 1.0
+        }
+    }
+}
+
 enum SecondClickAction: String, Codable, Sendable, CaseIterable {
     /// Hide the focused app (Cmd+H behavior, Windows-style "minimize" equivalent for macOS).
     case hide
@@ -132,6 +146,11 @@ enum FocusIndicatorStyle: String, Codable, Sendable, CaseIterable {
     case tile
     /// Focused item is indicated by a small capsule/dot.
     case dot
+}
+
+enum SwitcherLayoutStyle: String, Codable, Sendable, CaseIterable {
+    case compactShelf = "compact_shelf"
+    case heroCarousel = "hero_carousel"
 }
 
 enum AppGroupStackStyle: String, Codable, Sendable, CaseIterable {
@@ -203,6 +222,7 @@ struct Config: Codable, Sendable, Equatable {
     var customItems: [CustomItem]
     var centerItems: Bool
     var hideDock: Bool
+    var showMenuBarIcon: Bool
     var hiddenWindowMode: HiddenWindowMode
     /// How minimized windows should be presented in the bar.
     /// Default is in-place + dimmed, but can be collapsed separately from hidden apps.
@@ -211,6 +231,8 @@ struct Config: Codable, Sendable, Equatable {
     /// Glass rendering style for the bar and overlays.
     var glassStyle: GlassStyle
     var hoverIntensity: HoverIntensity
+    /// Retained decoration depth for hover, focus, badges, plugin states, and stacks.
+    var visualDepth: VisualDepth
     /// Focus indicator style for the currently focused window/item.
     var focusIndicatorStyle: FocusIndicatorStyle
     /// Visual style for app-group window stacks (icons-only + group-by-app).
@@ -253,12 +275,13 @@ struct Config: Codable, Sendable, Equatable {
     var switcherEnabled: Bool
     /// Serialized shortcut (example: "option+tab").
     var switcherHotkey: String
+    var switcherLayoutStyle: SwitcherLayoutStyle
     var providerRuntimeEnabled: Bool
     var providerTimeoutMs: Int
     var providerCircuitBreakerThreshold: Int
 
     init(
-        taskbarHeight: Int = 30,
+        taskbarHeight: Int = 32,
         iconSize: Int = 20,
         fontSize: Int = 11,
         maxItemWidth: Int = 150,
@@ -288,11 +311,13 @@ struct Config: Codable, Sendable, Equatable {
         customItems: [CustomItem] = [],
         centerItems: Bool = false,
         hideDock: Bool = false,
+        showMenuBarIcon: Bool = true,
         hiddenWindowMode: HiddenWindowMode = .inPlace,
         minimizedWindowMode: HiddenWindowMode = .inPlace,
         barStyle: BarStyle = .flush,
         glassStyle: GlassStyle = .publicRegular,
         hoverIntensity: HoverIntensity = .subtle,
+        visualDepth: VisualDepth = .balanced,
         focusIndicatorStyle: FocusIndicatorStyle = .tile,
         appGroupStackStyle: AppGroupStackStyle = .filled,
         appGroupStackGeometry: AppGroupStackGeometry = .subtle,
@@ -308,7 +333,7 @@ struct Config: Codable, Sendable, Equatable {
         previewMode: PreviewMode = .staticImage,
         previewHoverDelayMs: Int = 0,
         performanceLoggingEnabled: Bool = false,
-        performanceGpuTimingEnabled: Bool = true,
+        performanceGpuTimingEnabled: Bool = false,
         performanceLogIntervalMs: Int = 1000,
         windowTabGroupsEnabled: Bool = false,
         tabGroupHoverExpandDelayMs: Int = 1000,
@@ -317,6 +342,7 @@ struct Config: Codable, Sendable, Equatable {
         disabledPluginIds: [String] = [],
         switcherEnabled: Bool = false,
         switcherHotkey: String = "option+tab",
+        switcherLayoutStyle: SwitcherLayoutStyle = .heroCarousel,
         providerRuntimeEnabled: Bool = true,
         providerTimeoutMs: Int = 900,
         providerCircuitBreakerThreshold: Int = 3
@@ -351,11 +377,13 @@ struct Config: Codable, Sendable, Equatable {
         self.customItems = customItems
         self.centerItems = centerItems
         self.hideDock = hideDock
+        self.showMenuBarIcon = showMenuBarIcon
         self.hiddenWindowMode = hiddenWindowMode
         self.minimizedWindowMode = minimizedWindowMode
         self.barStyle = barStyle
         self.glassStyle = glassStyle
         self.hoverIntensity = hoverIntensity
+        self.visualDepth = visualDepth
         self.focusIndicatorStyle = focusIndicatorStyle
         self.appGroupStackStyle = appGroupStackStyle
         self.appGroupStackGeometry = appGroupStackGeometry
@@ -380,6 +408,7 @@ struct Config: Codable, Sendable, Equatable {
         self.disabledPluginIds = disabledPluginIds
         self.switcherEnabled = switcherEnabled
         self.switcherHotkey = switcherHotkey
+        self.switcherLayoutStyle = switcherLayoutStyle
         self.providerRuntimeEnabled = providerRuntimeEnabled
         self.providerTimeoutMs = providerTimeoutMs
         self.providerCircuitBreakerThreshold = providerCircuitBreakerThreshold
@@ -419,11 +448,13 @@ struct Config: Codable, Sendable, Equatable {
         customItems = try c.decodeIfPresent([CustomItem].self, forKey: .customItems) ?? []
         centerItems = try c.decode(Bool.self, forKey: .centerItems)
         hideDock = try c.decode(Bool.self, forKey: .hideDock)
+        showMenuBarIcon = try c.decodeIfPresent(Bool.self, forKey: .showMenuBarIcon) ?? true
         hiddenWindowMode = try c.decodeIfPresent(HiddenWindowMode.self, forKey: .hiddenWindowMode) ?? .inPlace
         minimizedWindowMode = try c.decodeIfPresent(HiddenWindowMode.self, forKey: .minimizedWindowMode) ?? hiddenWindowMode
         barStyle = try c.decodeIfPresent(BarStyle.self, forKey: .barStyle) ?? .flush
         glassStyle = try c.decodeIfPresent(GlassStyle.self, forKey: .glassStyle) ?? .publicRegular
         hoverIntensity = try c.decodeIfPresent(HoverIntensity.self, forKey: .hoverIntensity) ?? .subtle
+        visualDepth = try c.decodeIfPresent(VisualDepth.self, forKey: .visualDepth) ?? .balanced
         focusIndicatorStyle = try c.decodeIfPresent(FocusIndicatorStyle.self, forKey: .focusIndicatorStyle) ?? .tile
         appGroupStackStyle = try c.decodeIfPresent(AppGroupStackStyle.self, forKey: .appGroupStackStyle) ?? .filled
         appGroupStackGeometry = try c.decodeIfPresent(AppGroupStackGeometry.self, forKey: .appGroupStackGeometry) ?? .subtle
@@ -439,7 +470,7 @@ struct Config: Codable, Sendable, Equatable {
         previewMode = try c.decodeIfPresent(PreviewMode.self, forKey: .previewMode) ?? .staticImage
         previewHoverDelayMs = try c.decodeIfPresent(Int.self, forKey: .previewHoverDelayMs) ?? 0
         performanceLoggingEnabled = try c.decodeIfPresent(Bool.self, forKey: .performanceLoggingEnabled) ?? false
-        performanceGpuTimingEnabled = try c.decodeIfPresent(Bool.self, forKey: .performanceGpuTimingEnabled) ?? true
+        performanceGpuTimingEnabled = try c.decodeIfPresent(Bool.self, forKey: .performanceGpuTimingEnabled) ?? false
         performanceLogIntervalMs = try c.decodeIfPresent(Int.self, forKey: .performanceLogIntervalMs) ?? 1000
         windowTabGroupsEnabled = try c.decodeIfPresent(Bool.self, forKey: .windowTabGroupsEnabled) ?? false
         tabGroupHoverExpandDelayMs = try c.decodeIfPresent(Int.self, forKey: .tabGroupHoverExpandDelayMs) ?? 1000
@@ -448,6 +479,7 @@ struct Config: Codable, Sendable, Equatable {
         disabledPluginIds = try c.decodeIfPresent([String].self, forKey: .disabledPluginIds) ?? []
         switcherEnabled = try c.decodeIfPresent(Bool.self, forKey: .switcherEnabled) ?? false
         switcherHotkey = try c.decodeIfPresent(String.self, forKey: .switcherHotkey) ?? "option+tab"
+        switcherLayoutStyle = try c.decodeIfPresent(SwitcherLayoutStyle.self, forKey: .switcherLayoutStyle) ?? .heroCarousel
         providerRuntimeEnabled = try c.decodeIfPresent(Bool.self, forKey: .providerRuntimeEnabled) ?? true
         providerTimeoutMs = try c.decodeIfPresent(Int.self, forKey: .providerTimeoutMs) ?? 900
         providerCircuitBreakerThreshold = try c.decodeIfPresent(Int.self, forKey: .providerCircuitBreakerThreshold) ?? 3
@@ -537,6 +569,10 @@ struct Config: Codable, Sendable, Equatable {
         previewHoverDelayMs = previewHoverDelayMs.clamped(to: 0...2000)
         hoverDelayMs = hoverDelayMs.clamped(to: 0...2000)
         performanceLogIntervalMs = performanceLogIntervalMs.clamped(to: 250...10000)
+        performanceGpuTimingEnabled = false
+        if previewMode == .liveLowFps {
+            previewMode = .staticImage
+        }
         tabGroupHoverExpandDelayMs = tabGroupHoverExpandDelayMs.clamped(to: 100...5000)
         providerTimeoutMs = providerTimeoutMs.clamped(to: 150...5000)
         providerCircuitBreakerThreshold = providerCircuitBreakerThreshold.clamped(to: 1...20)
@@ -561,6 +597,10 @@ struct Config: Codable, Sendable, Equatable {
         }
 
         // Keep disabled plugins deterministic.
+        var seenBlacklistedApps = Set<String>()
+        blacklistedApps = blacklistedApps.filter { seenBlacklistedApps.insert($0).inserted }
+        var seenPinnedApps = Set<String>()
+        pinnedApps = pinnedApps.filter { seenPinnedApps.insert($0).inserted }
         disabledPluginIds = Array(Set(disabledPluginIds)).sorted()
     }
 
@@ -574,13 +614,22 @@ struct Config: Codable, Sendable, Equatable {
         pinnedApps.contains(bundleId)
     }
 
+    /// Runtime bar thickness for horizontal taskbars.
+    ///
+    /// `taskbarHeight` remains the user's preferred minimum. Icons can grow
+    /// independently until they fill that space; only then does the runtime
+    /// panel grow to keep the requested icon size visible.
+    var effectiveTaskbarHeight: Int {
+        max(taskbarHeight, iconSize)
+    }
+
     /// Returns true when a config transition requires destroying/recreating panel windows
     /// instead of an in-place data/render refresh.
     ///
     /// This is intentionally conservative and only tracks window-host-affecting fields.
     /// Non-visual runtime settings (e.g. `secondClickAction`) should not trigger panel churn.
     func requiresPanelRebuild(comparedTo previous: Config) -> Bool {
-        taskbarHeight != previous.taskbarHeight ||
+        effectiveTaskbarHeight != previous.effectiveTaskbarHeight ||
         taskbarPosition != previous.taskbarPosition ||
         barStyle != previous.barStyle ||
         theme != previous.theme ||

@@ -116,6 +116,24 @@ final class PerformanceMonitor {
         flushIfNeeded(now: CACurrentMediaTime())
     }
 
+    func recordSwitcherAction(
+        action: String,
+        durationMs: Double,
+        count: Int,
+        direction: Int,
+        entries: Int,
+        selectedIndex: Int,
+        success: Bool
+    ) {
+        guard enabled else { return }
+        let safeAction = action.filter { $0.isLetter || $0.isNumber || $0 == "_" || $0 == "-" }
+        let actionName = safeAction.isEmpty ? "unknown" : safeAction
+        let successInt = success ? 1 : 0
+        Log.perf.info(
+            "switcher action=\(actionName, privacy: .public) duration_ms=\(Self.fmt2(max(0, durationMs)), privacy: .public) count=\(max(0, count), privacy: .public) direction=\(direction, privacy: .public) entries=\(max(0, entries), privacy: .public) selected=\(max(-1, selectedIndex), privacy: .public) success=\(successInt, privacy: .public)"
+        )
+    }
+
     private func flushIfNeeded(now: CFTimeInterval) {
         guard enabled else { return }
         let elapsed = now - intervalStart

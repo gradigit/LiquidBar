@@ -68,6 +68,7 @@ struct NativeDecoration {
     var cornerRadius: CGFloat
     var color: NSColor
     var alpha: Float
+    var visualDepth: VisualDepth = .balanced
 }
 
 struct NativeBarItemPresentation {
@@ -159,13 +160,14 @@ enum LayoutConstants {
     static let groupBadgeTextGap: Float = 5
     static let groupBadgeRightInset: Float = 2
     static let groupBadgeYOffset: Float = 0
+    static let groupCompoundHorizontalPadding: Float = 7
     static let pinIndicatorWidth: Float = 16
     static let pinIndicatorHeight: Float = 2.5
     static let dragThreshold: Float = 6
 }
 
 private enum StackTokens {
-    static let maxPlates = 30
+    static let maxVisiblePlates = 4
     static let plateOffsetXSubtle: Float = 4.0
     static let plateOffsetXStrong: Float = 6.0
     static let hoverSpreadMultiplier: Float = 1.75
@@ -377,27 +379,38 @@ final class NativeBarRenderer {
         rebuildSnapshot(displayId: displayId)
     }
 
-    func setHoveredItemIndex(_ index: Int?, for displayId: CGDirectDisplayID) {
-        hoveredItemIndexByDisplay[displayId] = index ?? -1
-        rebuildSnapshot(displayId: displayId)
+    @discardableResult
+    func setHoveredItemIndex(_ index: Int?, for displayId: CGDirectDisplayID) -> Bool {
+        let next = index ?? -1
+        guard hoveredItemIndexByDisplay[displayId] != next else { return false }
+        hoveredItemIndexByDisplay[displayId] = next
+        return true
     }
 
-    func setCursorPosition(_ point: SIMD2<Float>?, for displayId: CGDirectDisplayID) {
+    @discardableResult
+    func setCursorPosition(_ point: SIMD2<Float>?, for displayId: CGDirectDisplayID) -> Bool {
         if let point {
+            guard cursorPositions[displayId] != point else { return false }
             cursorPositions[displayId] = point
         } else {
+            guard cursorPositions[displayId] != nil else { return false }
             cursorPositions.removeValue(forKey: displayId)
         }
-        rebuildSnapshot(displayId: displayId)
+        return true
     }
 
-    func setHoverRect(_ rect: NSRect?, for displayId: CGDirectDisplayID) {
+    @discardableResult
+    func setHoverRect(_ rect: NSRect?, for displayId: CGDirectDisplayID) -> Bool {
         if let rect {
-            hoverRects[displayId] = snapRectToBackingPixels(rect, displayId: displayId)
+            let snapped = snapRectToBackingPixels(rect, displayId: displayId)
+            guard hoverRects[displayId] != snapped else { return false }
+            hoverRects[displayId] = snapped
         } else {
+            guard hoverRects[displayId] != nil else { return false }
             hoverRects.removeValue(forKey: displayId)
         }
         rebuildSnapshot(displayId: displayId)
+        return true
     }
 
     func debugHoverRect(displayId: CGDirectDisplayID) -> NSRect? {
@@ -577,11 +590,14 @@ final class NativeBarRenderer {
         var decorations: [NativeDecoration] = []
         presentations.reserveCapacity(items.count)
 
+        let visualDepth = config.visualDepth
+        let hoverAlpha = 0.12 + 0.10 * config.hoverIntensity.floatValue
+
         if let hover = hoverRects[displayId] {
-            decorations.append(NativeDecoration(kind: .hover, rect: hover, cornerRadius: CGFloat(LayoutConstants.hoverCornerRadius), color: .white, alpha: 0.18))
+            decorations.append(NativeDecoration(kind: .hover, rect: hover, cornerRadius: CGFloat(LayoutConstants.hoverCornerRadius), color: .white, alpha: hoverAlpha, visualDepth: visualDepth))
         }
         if let focus = focusRects[displayId] {
-            decorations.append(NativeDecoration(kind: .focus, rect: focus, cornerRadius: CGFloat(LayoutConstants.focusCornerRadius), color: NSColor(calibratedRed: 0.45, green: 0.68, blue: 1.0, alpha: 1), alpha: 0.32))
+            decorations.append(NativeDecoration(kind: .focus, rect: focus, cornerRadius: CGFloat(LayoutConstants.focusCornerRadius), color: NSColor(calibratedRed: 0.45, green: 0.68, blue: 1.0, alpha: 1), alpha: 0.30, visualDepth: visualDepth))
         }
 
         for (index, item) in items.enumerated() {
@@ -590,7 +606,16 @@ final class NativeBarRenderer {
             let title = item.displayTitle(iconsOnly: displayIconsOnly || (partitionIndex[displayId] != nil && index >= partitionIndex[displayId]!))
             let alpha: Float = item.isDimmed ? 0.5 : 1.0
             let icon: NSImage? = item.iconKey.flatMap { iconCache.getIcon(bundleId: $0) }
-            let iconRect = iconRectForItem(rect: rect, title: title, iconSize: iconSize, position: position, sidebarExpanded: sidebarExpanded)
+            let iconRect = iconRectForItem(
+                rect: rect,
+                item: item,
+                title: title,
+                iconSize: iconSize,
+                config: config,
+                position: position,
+                sidebarExpanded: sidebarExpanded,
+                isHovered: hoveredItemIndexByDisplay[displayId] == index
+            )
             let titleRect = titleRectForItem(rect: rect, iconRect: iconRect, title: title, position: position)
 
             presentations.append(NativeBarItemPresentation(
@@ -619,7 +644,18 @@ final class NativeBarRenderer {
                 ))
             }
 
-            appendDecorations(for: item, rect: rect, title: title, iconRect: iconRect, config: config, alpha: alpha, into: &decorations)
+            appendDecorations(
+                for: item,
+                index: index,
+                displayId: displayId,
+                rect: rect,
+                title: title,
+                iconRect: iconRect,
+                config: config,
+                alpha: alpha,
+                into: &decorations,
+                textItems: &textItems
+            )
         }
 
         if let sepX = separatorX[displayId] {
@@ -629,7 +665,8 @@ final class NativeBarRenderer {
                     rect: NSRect(x: Double(crossLength * 0.15), y: Double(sepX + 3), width: Double(crossLength * 0.7), height: 1.5),
                     cornerRadius: 0.75,
                     color: .white,
-                    alpha: 0.15
+                    alpha: 0.15,
+                    visualDepth: visualDepth
                 ))
             } else {
                 decorations.append(NativeDecoration(
@@ -637,7 +674,8 @@ final class NativeBarRenderer {
                     rect: NSRect(x: Double(sepX + 3), y: Double(crossLength * 0.15), width: 1.5, height: Double(crossLength * 0.7)),
                     cornerRadius: 0.75,
                     color: .white,
-                    alpha: 0.15
+                    alpha: 0.15,
+                    visualDepth: visualDepth
                 ))
             }
         }
@@ -672,6 +710,7 @@ final class NativeBarRenderer {
             dragTextCount[displayId] = 0
             return
         }
+        let visualDepth = panelConfigs[displayId]?.visualDepth ?? .balanced
 
         for index in presentations.indices where index != anim.sourceIndex {
             let dx = CGFloat(anim.springs[index].current - layouts[index].x)
@@ -692,13 +731,14 @@ final class NativeBarRenderer {
             rect: presentations[anim.sourceIndex].rect.insetBy(dx: 1, dy: 1),
             cornerRadius: CGFloat(LayoutConstants.hoverCornerRadius),
             color: .white,
-            alpha: 0.16
+            alpha: 0.16,
+            visualDepth: visualDepth
         ))
 
         if anim.shadowAlpha > 0.005 {
             var shadow = presentations[anim.sourceIndex].rect.insetBy(dx: -1.5, dy: -1)
             shadow.origin.y += 1
-            decorations.append(NativeDecoration(kind: .dragShadow, rect: shadow, cornerRadius: CGFloat(LayoutConstants.hoverCornerRadius + 1), color: .black, alpha: anim.shadowAlpha * 0.55))
+            decorations.append(NativeDecoration(kind: .dragShadow, rect: shadow, cornerRadius: CGFloat(LayoutConstants.hoverCornerRadius + 1), color: .black, alpha: anim.shadowAlpha * 0.55, visualDepth: visualDepth))
         }
 
         dragDecorationCount[displayId] = decorations.count
@@ -708,12 +748,15 @@ final class NativeBarRenderer {
 
     private func appendDecorations(
         for item: TaskbarItem,
+        index: Int,
+        displayId: CGDirectDisplayID,
         rect: NSRect,
         title: String,
         iconRect: NSRect,
         config: Config,
         alpha: Float,
-        into decorations: inout [NativeDecoration]
+        into decorations: inout [NativeDecoration],
+        textItems: inout [NativeTextOverlayItem]
     ) {
         if case .pinnedApp = item {
             let pinRect: NSRect
@@ -727,19 +770,101 @@ final class NativeBarRenderer {
                 let h = CGFloat(LayoutConstants.pinIndicatorHeight)
                 pinRect = NSRect(x: rect.minX + (rect.width - w) / 2, y: rect.maxY - h - 2, width: w, height: h)
             }
-            decorations.append(NativeDecoration(kind: .pin, rect: pinRect, cornerRadius: min(pinRect.width, pinRect.height) / 2, color: NSColor(calibratedRed: 0.4, green: 0.6, blue: 1.0, alpha: 1), alpha: 0.8))
+            decorations.append(NativeDecoration(kind: .pin, rect: pinRect, cornerRadius: min(pinRect.width, pinRect.height) / 2, color: NSColor(calibratedRed: 0.4, green: 0.6, blue: 1.0, alpha: 1), alpha: 0.8, visualDepth: config.visualDepth))
+        }
+
+        if !config.taskbarPosition.isVertical,
+           config.groupByApp,
+           case .appGroup(_, _, let windowCount, _, _, _, _) = item,
+           windowCount > 1 {
+            let plateCount = min(windowCount, StackTokens.maxVisiblePlates)
+            let baseOffset = config.appGroupStackGeometry == .strong ? StackTokens.plateOffsetXStrong : StackTokens.plateOffsetXSubtle
+            let isHovered = hoveredItemIndexByDisplay[displayId] == index
+            let spreadOffset = config.appGroupStackHoverSpreadEnabled && isHovered
+                ? baseOffset * StackTokens.hoverSpreadMultiplier
+                : baseOffset
+            let plateAlpha: Float = {
+                switch config.appGroupStackStyle {
+                case .filled:
+                    return 0.16 * alpha
+                case .outline:
+                    return 0.08 * alpha
+                }
+            }()
+            if plateCount > 1 {
+                for plateIndex in stride(from: plateCount - 1, through: 1, by: -1) {
+                    let inset = CGFloat(plateIndex) * 0.7
+                    let plateRect = NSRect(
+                        x: iconRect.minX + CGFloat(spreadOffset * Float(plateIndex)),
+                        y: iconRect.minY + inset,
+                        width: max(4, iconRect.width - inset),
+                        height: max(4, iconRect.height - inset * 2)
+                    )
+                    decorations.append(NativeDecoration(
+                        kind: .stackPlate,
+                        rect: plateRect,
+                        cornerRadius: min(6, plateRect.height / 2),
+                        color: .white,
+                        alpha: plateAlpha,
+                        visualDepth: config.visualDepth
+                    ))
+                }
+            }
         }
 
         if !config.taskbarPosition.isVertical,
            config.appGroupCountBadgeInIconsOnly,
+           title.isEmpty,
            case .appGroup(_, _, let windowCount, _, _, _, _) = item,
            windowCount > 1 {
-            let badgeText = "\(windowCount)"
-            let width = CGFloat(max(12, Float(badgeText.count) * 7 + 8))
-            let height: CGFloat = title.isEmpty ? 12 : 14
-            let x = min(iconRect.maxX + CGFloat(LayoutConstants.groupBadgeIconGap), rect.maxX - width - CGFloat(LayoutConstants.groupBadgeRightInset))
-            let badgeRect = NSRect(x: x, y: rect.minY + (rect.height - height) / 2, width: width, height: height)
-            decorations.append(NativeDecoration(kind: .badge, rect: badgeRect, cornerRadius: min(6, height / 2), color: .white, alpha: 0.22 * alpha))
+            let metrics = appGroupBadgeMetrics(
+                windowCount: windowCount,
+                titleIsEmpty: title.isEmpty,
+                style: config.appGroupCountBadgeStyle,
+                alpha: alpha
+            )
+            let stackExtension = CGFloat(appGroupStackExtension(
+                windowCount: windowCount,
+                config: config,
+                isHovered: hoveredItemIndexByDisplay[displayId] == index
+            ))
+            let preferredX = iconRect.maxX + stackExtension + CGFloat(LayoutConstants.groupBadgeIconGap)
+            let maxX = rect.maxX - metrics.width - CGFloat(LayoutConstants.groupBadgeRightInset)
+            let x = min(preferredX, maxX)
+            let badgeRect = NSRect(
+                x: x,
+                y: rect.minY + (rect.height - metrics.height) / 2,
+                width: metrics.width,
+                height: metrics.height
+            )
+            if config.appGroupCountBadgeStyle == .separator {
+                decorations.append(NativeDecoration(
+                    kind: .separator,
+                    rect: NSRect(x: badgeRect.minX - 3, y: badgeRect.minY + 2, width: 1.5, height: max(4, badgeRect.height - 4)),
+                    cornerRadius: 0.75,
+                    color: .white,
+                    alpha: 0.18 * alpha,
+                    visualDepth: config.visualDepth
+                ))
+            } else {
+                decorations.append(NativeDecoration(
+                    kind: .badge,
+                    rect: badgeRect,
+                    cornerRadius: metrics.cornerRadius,
+                    color: .white,
+                    alpha: metrics.alpha,
+                    visualDepth: config.visualDepth
+                ))
+            }
+            textItems.append(NativeTextOverlayItem(
+                itemIndex: index,
+                title: metrics.text,
+                x: Float(badgeRect.minX + max(2, (badgeRect.width - metrics.textWidth) / 2)),
+                maxWidth: Float(max(4, metrics.textWidth + 1)),
+                isDimmed: item.isDimmed,
+                nativeY: nil,
+                slotHeight: nil
+            ))
         }
 
         if case .pluginTile(_, _, _, _, let visualState, _) = item {
@@ -747,10 +872,10 @@ final class NativeBarRenderer {
             case .idle:
                 break
             case .active:
-                decorations.append(NativeDecoration(kind: .pluginState, rect: rect.insetBy(dx: 4, dy: 4), cornerRadius: 7, color: NSColor(calibratedRed: 0.45, green: 0.78, blue: 1.0, alpha: 1), alpha: 0.18))
+                decorations.append(NativeDecoration(kind: .pluginState, rect: rect.insetBy(dx: 4, dy: 4), cornerRadius: 7, color: NSColor(calibratedRed: 0.45, green: 0.78, blue: 1.0, alpha: 1), alpha: 0.18, visualDepth: config.visualDepth))
             case .attention:
-                decorations.append(NativeDecoration(kind: .pluginState, rect: rect.insetBy(dx: 3, dy: 3), cornerRadius: 8, color: NSColor(calibratedRed: 1.0, green: 0.72, blue: 0.26, alpha: 1), alpha: 0.24))
-                decorations.append(NativeDecoration(kind: .pluginState, rect: NSRect(x: rect.maxX - 10, y: rect.minY + 5, width: 4, height: 4), cornerRadius: 2, color: NSColor(calibratedRed: 1.0, green: 0.82, blue: 0.34, alpha: 1), alpha: 0.88))
+                decorations.append(NativeDecoration(kind: .pluginState, rect: rect.insetBy(dx: 3, dy: 3), cornerRadius: 8, color: NSColor(calibratedRed: 1.0, green: 0.72, blue: 0.26, alpha: 1), alpha: 0.24, visualDepth: config.visualDepth))
+                decorations.append(NativeDecoration(kind: .pluginState, rect: NSRect(x: rect.maxX - 10, y: rect.minY + 5, width: 4, height: 4), cornerRadius: 2, color: NSColor(calibratedRed: 1.0, green: 0.82, blue: 0.34, alpha: 1), alpha: 0.88, visualDepth: config.visualDepth))
             }
         }
     }
@@ -834,9 +959,10 @@ final class NativeBarRenderer {
 
             let forceIconOnly = pIndex != nil && index >= pIndex!
             let tabbedCollapse = shouldCollapseForTabbedTaskbar(item: item, focus: focus, config: config)
-            let title = item.displayTitle(iconsOnly: iconsOnly || forceIconOnly || tabbedCollapse)
+            let alwaysIconOnly = shouldAlwaysUseIconOnlyLayout(item)
+            let title = item.displayTitle(iconsOnly: iconsOnly || forceIconOnly || tabbedCollapse || alwaysIconOnly)
             let width: Float
-            if forceIconOnly || iconsOnly || tabbedCollapse {
+            if forceIconOnly || iconsOnly || tabbedCollapse || alwaysIconOnly {
                 width = iconOnlyWidth(item: item, config: config, iconSize: iconSize)
             } else if uniformSizing {
                 width = uniformWidth
@@ -866,6 +992,11 @@ final class NativeBarRenderer {
         return layouts
     }
 
+    private func shouldAlwaysUseIconOnlyLayout(_ item: TaskbarItem) -> Bool {
+        if case .launcher = item { return true }
+        return false
+    }
+
     private func iconOnlyWidth(item: TaskbarItem, config: Config, iconSize: Float) -> Float {
         let base = max(LayoutConstants.minItemWidth, iconSize + 20)
         guard config.groupByApp,
@@ -873,14 +1004,26 @@ final class NativeBarRenderer {
               windowCount > 1 else {
             return base
         }
-        let plates = min(windowCount, StackTokens.maxPlates)
+        let plates = min(windowCount, StackTokens.maxVisiblePlates)
         let breathing = config.appGroupStackGeometry == .strong ? StackTokens.stackBreathingWidthStrong : StackTokens.stackBreathingWidthSubtle
         let offset = config.appGroupStackGeometry == .strong ? StackTokens.plateOffsetXStrong : StackTokens.plateOffsetXSubtle
         let layoutOffset = config.appGroupStackHoverSpreadEnabled ? offset * StackTokens.hoverSpreadMultiplier : offset
-        return min(base + breathing + Float(plates - 1) * layoutOffset, Float(config.maxItemWidth))
+        let stackWidth = base + breathing + Float(plates - 1) * layoutOffset
+        let clusterWidth = appGroupIconOnlyClusterWidth(windowCount: windowCount, config: config, iconSize: iconSize, isHovered: config.appGroupStackHoverSpreadEnabled)
+        let requiredWidth = clusterWidth + LayoutConstants.groupCompoundHorizontalPadding * 2
+        return max(requiredWidth, min(stackWidth, Float(config.maxItemWidth)))
     }
 
-    private func iconRectForItem(rect: NSRect, title: String, iconSize: Float, position: Position, sidebarExpanded: Bool) -> NSRect {
+    private func iconRectForItem(
+        rect: NSRect,
+        item: TaskbarItem,
+        title: String,
+        iconSize: Float,
+        config: Config,
+        position: Position,
+        sidebarExpanded: Bool,
+        isHovered: Bool
+    ) -> NSRect {
         let size = CGFloat(iconSize)
         let x: CGFloat
         let y: CGFloat
@@ -890,10 +1033,84 @@ final class NativeBarRenderer {
                 : rect.minX + (rect.width - size) / 2
             y = rect.minY + (rect.height - size) / 2
         } else {
-            x = title.isEmpty ? rect.minX + (rect.width - size) / 2 : rect.minX + CGFloat(LayoutConstants.iconLeftMargin)
+            if title.isEmpty,
+               config.groupByApp,
+               config.appGroupCountBadgeInIconsOnly,
+               case .appGroup(_, _, let windowCount, _, _, _, _) = item,
+               windowCount > 1 {
+                let clusterWidth = CGFloat(appGroupIconOnlyClusterWidth(
+                    windowCount: windowCount,
+                    config: config,
+                    iconSize: iconSize,
+                    isHovered: isHovered
+                ))
+                let left = max(
+                    CGFloat(LayoutConstants.groupCompoundHorizontalPadding),
+                    (rect.width - clusterWidth) / 2
+                )
+                x = rect.minX + left
+            } else {
+                x = title.isEmpty ? rect.minX + (rect.width - size) / 2 : rect.minX + CGFloat(LayoutConstants.iconLeftMargin)
+            }
             y = rect.minY + (rect.height - size) / 2
         }
         return NSRect(x: x, y: y, width: size, height: size)
+    }
+
+    private func appGroupIconOnlyClusterWidth(
+        windowCount: Int,
+        config: Config,
+        iconSize: Float,
+        isHovered: Bool
+    ) -> Float {
+        guard windowCount > 1 else { return iconSize }
+        var width = iconSize + appGroupStackExtension(windowCount: windowCount, config: config, isHovered: isHovered)
+        guard config.appGroupCountBadgeInIconsOnly else { return width }
+        let metrics = appGroupBadgeMetrics(
+            windowCount: windowCount,
+            titleIsEmpty: true,
+            style: config.appGroupCountBadgeStyle,
+            alpha: 1
+        )
+        width += LayoutConstants.groupBadgeIconGap + Float(metrics.width)
+        return width
+    }
+
+    private func appGroupStackExtension(
+        windowCount: Int,
+        config: Config,
+        isHovered: Bool
+    ) -> Float {
+        let plateCount = min(windowCount, StackTokens.maxVisiblePlates)
+        guard plateCount > 1 else { return 0 }
+        let baseOffset = config.appGroupStackGeometry == .strong ? StackTokens.plateOffsetXStrong : StackTokens.plateOffsetXSubtle
+        let spreadOffset = config.appGroupStackHoverSpreadEnabled && isHovered
+            ? baseOffset * StackTokens.hoverSpreadMultiplier
+            : baseOffset
+        let deepestPlateIndex = Float(plateCount - 1)
+        let inset = deepestPlateIndex * 0.7
+        return max(0, deepestPlateIndex * spreadOffset - inset)
+    }
+
+    private func appGroupBadgeMetrics(
+        windowCount: Int,
+        titleIsEmpty: Bool,
+        style: AppGroupCountBadgeStyle,
+        alpha: Float
+    ) -> (text: String, textWidth: CGFloat, width: CGFloat, height: CGFloat, alpha: Float, cornerRadius: CGFloat) {
+        let badgeText = "\(windowCount)"
+        let textWidth = CGFloat(max(8, Float(badgeText.count) * 7))
+        switch style {
+        case .minimal, .compactDot:
+            let height: CGFloat = titleIsEmpty ? 12 : 14
+            return (badgeText, textWidth, max(14, textWidth + 8), height, 0.22 * alpha, min(6, height / 2))
+        case .pill:
+            let height: CGFloat = titleIsEmpty ? 15 : 16
+            return (badgeText, textWidth, max(20, textWidth + 14), height, 0.30 * alpha, height / 2)
+        case .separator:
+            let height: CGFloat = titleIsEmpty ? 13 : 14
+            return (badgeText, textWidth, max(12, textWidth + 6), height, 0.0, min(6, height / 2))
+        }
     }
 
     private func titleRectForItem(rect: NSRect, iconRect: NSRect, title: String, position: Position) -> NSRect {

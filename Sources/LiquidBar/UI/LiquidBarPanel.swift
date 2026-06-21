@@ -639,6 +639,7 @@ final class LiquidBarPanel: NSPanel {
         barView?.onItemClicked = nil
         barView?.onItemReordered = nil
         barView?.onContextAction = nil
+        barView?.onAppContextAction = nil
         barView?.onHoverChanged = nil
         barView?.onCursorMoved = nil
         barView?.onDragStateChanged = nil

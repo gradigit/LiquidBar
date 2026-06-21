@@ -125,4 +125,10 @@ struct SidebarRuntimeEvaluatorTests {
         #expect(compact <= expanded)
         #expect(expanded >= CGFloat(config.maxItemWidth))
     }
+
+    @Test
+    func testCompactThicknessTracksEffectiveIconSize() {
+        #expect(SidebarRuntimeEvaluator.barThickness(for: .compact, config: Config(taskbarHeight: 32, iconSize: 28)) == 32)
+        #expect(SidebarRuntimeEvaluator.barThickness(for: .compact, config: Config(taskbarHeight: 32, iconSize: 40)) == 40)
+    }
 }

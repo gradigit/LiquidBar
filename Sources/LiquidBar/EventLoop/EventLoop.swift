@@ -58,6 +58,7 @@ final class EventLoop {
     // AccessibilityService is all-static, no instance needed
     private var config: Config
     private var userState: UserState
+    var onOpenPreferences: (() -> Void)?
 
     // Space-key cache (per-space pinned apps). Keep private Spaces calls off hot paths.
     private var cachedSpaceKeyByDisplay: [CGDirectDisplayID: String] = [:]
@@ -143,8 +144,12 @@ final class EventLoop {
     private var screenChangeToken: UInt64 = 0
     private var switcherPanel: WindowSwitcherPanel?
     private var switcherEntries: [WindowInfo] = []
+    private var switcherMRUWindowIds: [UInt32] = []
     private var switcherSelectedIndex: Int = 0
     private var switcherCommitWorkItem: DispatchWorkItem?
+    private var switcherThumbnailWorkItem: DispatchWorkItem?
+    private var switcherPrewarmWorkItem: DispatchWorkItem?
+    private var switcherPrewarmSignature: String = ""
     private var switcherSession = SwitcherHotkeySession()
 
     #if DEBUG
@@ -202,6 +207,105 @@ final class EventLoop {
         isNewBarView: Bool
     ) -> Bool {
         isNewBarView || previous != current
+    }
+
+    nonisolated static func makeFocusInfo(
+        frontmostWindowId: UInt32?,
+        windows: [WindowId: WindowInfo],
+        tabGroupId: String?
+    ) -> (info: FocusInfo, displayId: CGDirectDisplayID?) {
+        guard let frontmostWindowId else {
+            return (.none, nil)
+        }
+
+        guard let win = windows[WindowId(frontmostWindowId)] else {
+            return (
+                FocusInfo(windowId: frontmostWindowId, bundleId: nil, tabGroupId: tabGroupId),
+                nil
+            )
+        }
+
+        return (
+            FocusInfo(windowId: frontmostWindowId, bundleId: win.bundleId.raw, tabGroupId: tabGroupId),
+            CGDirectDisplayID(win.monitorId.raw)
+        )
+    }
+
+    nonisolated static func updatedSwitcherMRUOrder(
+        previous: [UInt32],
+        focusedWindowId: UInt32?,
+        liveWindowIds: Set<UInt32>,
+        maxCount: Int = maxWindows
+    ) -> [UInt32] {
+        guard !liveWindowIds.isEmpty, maxCount > 0 else { return [] }
+
+        var result: [UInt32] = []
+        result.reserveCapacity(min(maxCount, liveWindowIds.count))
+        var seen = Set<UInt32>()
+        seen.reserveCapacity(min(maxCount, liveWindowIds.count))
+
+        func append(_ raw: UInt32) {
+            guard result.count < maxCount,
+                  liveWindowIds.contains(raw),
+                  seen.insert(raw).inserted else {
+                return
+            }
+            result.append(raw)
+        }
+
+        if let focusedWindowId {
+            append(focusedWindowId)
+        }
+        for raw in previous {
+            append(raw)
+        }
+        return result
+    }
+
+    nonisolated static func orderedSwitcherWindows(
+        windows: [WindowInfo],
+        mruWindowIds: [UInt32]
+    ) -> [WindowInfo] {
+        guard !windows.isEmpty else { return [] }
+
+        var byId: [UInt32: WindowInfo] = [:]
+        byId.reserveCapacity(windows.count)
+        for window in windows where byId[window.id.raw] == nil {
+            byId[window.id.raw] = window
+        }
+
+        var ordered: [WindowInfo] = []
+        ordered.reserveCapacity(windows.count)
+        var seen = Set<UInt32>()
+        seen.reserveCapacity(windows.count)
+
+        for raw in mruWindowIds {
+            guard let window = byId[raw],
+                  seen.insert(raw).inserted else {
+                continue
+            }
+            ordered.append(window)
+        }
+
+        for window in windows where seen.insert(window.id.raw).inserted {
+            ordered.append(window)
+        }
+
+        return ordered
+    }
+
+    nonisolated static func initialSwitcherSelectedIndex(
+        entries: [WindowInfo],
+        focusedWindowId: UInt32?,
+        initialDirection: Int
+    ) -> Int {
+        guard !entries.isEmpty else { return 0 }
+        let direction = initialDirection < 0 ? -1 : 1
+        if let focusedWindowId,
+           let idx = entries.firstIndex(where: { $0.id.raw == focusedWindowId }) {
+            return (idx + direction + entries.count) % entries.count
+        }
+        return direction < 0 ? entries.count - 1 : 0
     }
 
     nonisolated static let screenChangeRecoveryDelays: [TimeInterval] = [0.05, 0.18, 0.40, 0.85, 1.60]
@@ -316,6 +420,8 @@ final class EventLoop {
         }
         hotkeyMonitor?.unregister()
         hotkeyMonitor = nil
+        switcherPrewarmWorkItem?.cancel()
+        switcherPrewarmWorkItem = nil
         hideSwitcher(commitSelection: false)
         hidePluginCard()
         hideAllTabGroupOverlays()
@@ -504,12 +610,13 @@ final class EventLoop {
             // Keep persisted order pruned/aligned with the current live set.
             userState.updateWindowOrder(windowStateStore.getWindows().map(\.id.raw))
 
-            let focusChanged = updateCachedFocusIfNeeded()
+            let focusChanged = updateCachedFocusIfNeeded(frontmostWindowId: windowManager.lastFrontmostWindowId)
             let shouldRender = changed || restoredOrderChanged || forceRender || focusChanged
 
             if shouldRender {
                 renderUI()
             }
+            scheduleSwitcherPrewarm()
 
             // Update known state
             knownWindowIds = newWindowIds
@@ -794,20 +901,26 @@ final class EventLoop {
             panel.barView.onContextAction = { [weak self] index, action, payload in
                 self?.handleContextAction(displayId: displayId, index: index, action: action, payload: payload)
             }
+            panel.barView.onAppContextAction = { [weak self] action in
+                self?.handleAppContextAction(action)
+            }
             panel.barView.onHoverChanged = { [weak self] index in
                 guard let self else { return }
                 self.renderer.setHoveredItemIndex(index, for: displayId)
+                let hoverRectChanged: Bool
                 if let index = index,
                    index >= 0,
                    index < panel.barView.visualItemRects.count {
                     // Hover highlight should match what we draw.
                     let rect = panel.barView.visualItemRects[index]
-                    self.renderer.setHoverRect(rect, for: displayId)
+                    hoverRectChanged = self.renderer.setHoverRect(rect, for: displayId)
                 } else {
-                    self.renderer.setHoverRect(nil, for: displayId)
+                    hoverRectChanged = self.renderer.setHoverRect(nil, for: displayId)
                 }
                 self.handlePreviewHover(displayId: displayId, hoverIndex: index, panel: panel)
-                self.panelManager.resumeDisplayLink(for: displayId)
+                if hoverRectChanged {
+                    self.panelManager.resumeDisplayLink(for: displayId)
+                }
             }
             panel.barView.onCursorMoved = { [weak self] metalPoint in
                 guard let self else { return }
@@ -819,7 +932,6 @@ final class EventLoop {
                 } else {
                     self.renderer.setCursorPosition(nil, for: displayId)
                 }
-                self.panelManager.resumeDisplayLink(for: displayId)
             }
             panel.barView.onDragStateChanged = { [weak self] state in
                 guard let self else { return }
@@ -901,24 +1013,25 @@ final class EventLoop {
 
     /// Updates cached focus info. Returns true when focus changes in a way that should
     /// cause a redraw (tabbed taskbar widths and focused-item indicator depend on focus).
-    private func updateCachedFocusIfNeeded() -> Bool {
+    private func updateCachedFocusIfNeeded(frontmostWindowId enumeratedFrontmostWindowId: UInt32?) -> Bool {
         let previousInfo = cachedFocusInfo
         let previousDisplay = cachedFocusDisplayId
 
-        let windowId = AccessibilityService.focusedWindowId()
-            ?? AccessibilityService.frontmostWindowIdForFrontmostApp()
+        let windowId = enumeratedFrontmostWindowId ?? AccessibilityService.focusedWindowId()
         let tabGroupId = windowId.flatMap { userState.tabGroupId(containing: $0) }
+        let focus = Self.makeFocusInfo(
+            frontmostWindowId: windowId,
+            windows: windowStateStore.windows,
+            tabGroupId: tabGroupId
+        )
 
-        let bundleId: String?
-        if let windowId,
-           let win = windowStateStore.windows[WindowId(windowId)] {
-            bundleId = win.bundleId.raw
-            cachedFocusDisplayId = CGDirectDisplayID(win.monitorId.raw)
-        } else {
-            bundleId = nil
-            cachedFocusDisplayId = nil
-        }
-        cachedFocusInfo = FocusInfo(windowId: windowId, bundleId: bundleId, tabGroupId: tabGroupId)
+        cachedFocusInfo = focus.info
+        cachedFocusDisplayId = focus.displayId
+        switcherMRUWindowIds = Self.updatedSwitcherMRUOrder(
+            previous: switcherMRUWindowIds,
+            focusedWindowId: focus.info.windowId,
+            liveWindowIds: Set(windowStateStore.windows.keys.map(\.raw))
+        )
 
         let changed = cachedFocusInfo != previousInfo || cachedFocusDisplayId != previousDisplay
         return changed
@@ -1208,6 +1321,17 @@ final class EventLoop {
 
     // MARK: - Context Action Handling
 
+    private func handleAppContextAction(_ action: AppContextAction) {
+        switch action {
+        case .openPreferences:
+            onOpenPreferences?()
+        case .reloadConfig:
+            reloadConfig()
+        case .quit:
+            NSApp.terminate(nil)
+        }
+    }
+
     private func handleContextAction(displayId: CGDirectDisplayID, index: Int, action: ContextAction, payload: String?) {
         let items = itemsForDisplay(displayId)
         guard index >= 0 && index < items.count else { return }
@@ -1261,8 +1385,10 @@ final class EventLoop {
             }
             renderUI()
         case .blacklist:
-            config.blacklistedApps.append(bundleId)
-            config.save()
+            if !config.blacklistedApps.contains(bundleId) {
+                config.blacklistedApps.append(bundleId)
+                config.save()
+            }
             renderUI()
 
         case .createTabGroup:
@@ -1661,30 +1787,14 @@ final class EventLoop {
     // MARK: - Launcher
 
     private func handleLauncherClick() {
-        switch config.launcherAction {
-        case .spotlight:
-            guard ensureAccessibilityTrusted() else { return }
-            AccessibilityService.openSpotlight()
-
-        case .raycast:
-            if let url = URL(string: "raycast://") {
-                NSWorkspace.shared.open(url)
-            } else {
-                AccessibilityService.launchApp(bundleId: "com.raycast.macos")
-            }
-
-        case .alfred:
-            if let url = URL(string: "alfred://") {
-                NSWorkspace.shared.open(url)
-            } else {
-                AccessibilityService.launchApp(bundleId: "com.runningwithcrayons.Alfred")
-            }
-
-        case .customUrl:
-            guard let raw = config.launcherCustomUrl?.trimmingCharacters(in: .whitespacesAndNewlines),
-                  !raw.isEmpty,
-                  let url = URL(string: raw) else { return }
+        switch LauncherActionResolver.target(for: config) {
+        case .application(let bundleId):
+            AccessibilityService.launchApp(bundleId: bundleId)
+        case .url(let raw):
+            guard let url = URL(string: raw) else { return }
             NSWorkspace.shared.open(url)
+        case .none:
+            return
         }
     }
 
@@ -1714,10 +1824,10 @@ final class EventLoop {
                 return MainActor.assumeIsolated {
                     self.shouldHandleSwitcherHotkeyPressFastPath()
                 }
-            }, onPress: { [weak self] in
+            }, onPress: { [weak self] context in
                 guard let self else { return false }
                 return MainActor.assumeIsolated {
-                    self.handleSwitcherHotkeyPressed()
+                    self.handleSwitcherHotkeyPressed(direction: context.isReverse ? -1 : 1)
                 }
             }, onRelease: { [weak self] in
                 guard let self else { return }
@@ -1727,6 +1837,7 @@ final class EventLoop {
             })
         }
         hotkeyMonitor?.register(shortcut: shortcut)
+        _ = ensureSwitcherPanel()
     }
 
     private func shouldHandleSwitcherHotkeyPressFastPath() -> Bool {
@@ -1737,30 +1848,72 @@ final class EventLoop {
         return !windowStateStore.getWindows().isEmpty
     }
 
-    private func handleSwitcherHotkeyPressed() -> Bool {
+    private func handleSwitcherHotkeyPressed(direction: Int = 1) -> Bool {
         guard config.switcherEnabled else { return false }
+        let start = CACurrentMediaTime()
         if switcherPanel?.isVisible == true, !switcherEntries.isEmpty {
             _ = switcherSession.noteVisiblePress(hasEntries: !switcherEntries.isEmpty)
-            cycleSwitcherSelection(direction: 1)
+            cycleSwitcherSelection(direction: direction)
             scheduleSwitcherCommit(primary: switcherSession.shouldSchedulePrimaryCommit)
+            recordLiveSwitcherAction(
+                action: "cycle",
+                startedAt: start,
+                count: 1,
+                direction: direction,
+                success: true
+            )
             return true
         }
-        return beginSwitcherSession()
+        let success = beginSwitcherSession(initialDirection: direction)
+        recordLiveSwitcherAction(
+            action: "open",
+            startedAt: start,
+            count: 1,
+            direction: direction,
+            success: success
+        )
+        return success
     }
 
     private func handleSwitcherHotkeyReleased() {
         guard switcherSession.canCommitOnRelease() else { return }
+        let start = CACurrentMediaTime()
+        let entries = switcherEntries.count
+        let selectedIndex = switcherSelectedIndex
         hideSwitcher(commitSelection: true)
+        recordLiveSwitcherAction(
+            action: "commit",
+            startedAt: start,
+            count: 1,
+            direction: 0,
+            entries: entries,
+            selectedIndex: selectedIndex,
+            success: true
+        )
     }
 
-    private func beginSwitcherSession() -> Bool {
-        hideAllPreviews()
-        hideAllTabGroupOverlays()
-        hidePluginCard()
+    private func recordLiveSwitcherAction(
+        action: String,
+        startedAt: CFTimeInterval,
+        count: Int,
+        direction: Int,
+        entries: Int? = nil,
+        selectedIndex: Int? = nil,
+        success: Bool
+    ) {
+        PerformanceMonitor.shared.recordSwitcherAction(
+            action: action,
+            durationMs: (CACurrentMediaTime() - startedAt) * 1000.0,
+            count: count,
+            direction: direction,
+            entries: entries ?? switcherEntries.count,
+            selectedIndex: selectedIndex ?? switcherSelectedIndex,
+            success: success
+        )
+    }
 
+    private func currentSwitcherCandidateWindows() -> [WindowInfo] {
         var windows = windowStateStore.getWindows()
-        if windows.isEmpty { return false }
-
         if config.windowDisplayMode == .perDisplay,
            let focusDisplay = cachedFocusDisplayId {
             let filtered = windows.filter { $0.monitorId.raw == focusDisplay }
@@ -1769,23 +1922,116 @@ final class EventLoop {
             }
         }
 
-        // Deterministic de-dupe by window id in case the source list contains duplicates.
         var seen = Set<UInt32>()
-        windows = windows.filter { seen.insert($0.id.raw).inserted }
-        guard !windows.isEmpty else { return false }
+        return windows.filter { seen.insert($0.id.raw).inserted }
+    }
 
-        switcherEntries = windows
+    private func makeSwitcherPanelEntries(
+        windows: [WindowInfo],
+        selectedIndex: Int
+    ) -> [WindowSwitcherPanel.Entry] {
+        windows.enumerated().map { index, info in
+            let aspectRatio = WindowSwitcherPanel.aspectRatio(for: info.bounds)
+            let targetSize = WindowSwitcherPanel.thumbnailTargetSize(
+                layoutStyle: config.switcherLayoutStyle,
+                selected: index == selectedIndex,
+                aspectRatio: aspectRatio
+            )
+            return WindowSwitcherPanel.Entry(
+                windowId: info.id.raw,
+                title: info.title.isEmpty ? info.appName : info.title,
+                appName: info.appName,
+                icon: iconCache.getIcon(bundleId: info.bundleId.raw),
+                thumbnail: thumbnailService.cachedThumbnail(
+                    windowId: CGWindowID(info.id.raw),
+                    targetSizePoints: targetSize,
+                    maxAge: 8.0,
+                    includeLastGood: true
+                ),
+                aspectRatio: aspectRatio,
+                isDimmed: info.isHidden || info.isMinimized
+            )
+        }
+    }
+
+    private func makeSwitcherPrewarmSignature(windows: [WindowInfo], selectedIndex: Int) -> String {
+        let ids = windows.map { info in
+            let width = Int(info.bounds.width.rounded())
+            let height = Int(info.bounds.height.rounded())
+            return "\(info.id.raw):\(width)x\(height)"
+        }.joined(separator: ",")
+        return "\(config.switcherLayoutStyle.rawValue)|\(config.glassStyle.rawValue)|\(selectedIndex)|\(ids)"
+    }
+
+    private func scheduleSwitcherPrewarm() {
+        guard config.switcherEnabled, switcherPanel?.isVisible != true else { return }
+        switcherPrewarmWorkItem?.cancel()
+        var work: DispatchWorkItem?
+        work = DispatchWorkItem { [weak self] in
+            guard let self, let work else { return }
+            guard !work.isCancelled, self.switcherPrewarmWorkItem === work else { return }
+            self.prewarmSwitcherPanelIfNeeded()
+        }
+        switcherPrewarmWorkItem = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.05, execute: work!)
+    }
+
+    private func prewarmSwitcherPanelIfNeeded() {
+        guard config.switcherEnabled, switcherPanel?.isVisible != true else { return }
+        let windows = Self.orderedSwitcherWindows(
+            windows: currentSwitcherCandidateWindows(),
+            mruWindowIds: switcherMRUWindowIds
+        )
+        guard !windows.isEmpty else { return }
+
+        let focusedId = cachedFocusInfo.windowId ?? windowManager.lastFrontmostWindowId
+        let selected = Self.initialSwitcherSelectedIndex(
+            entries: windows,
+            focusedWindowId: focusedId,
+            initialDirection: 1
+        )
+        let signature = makeSwitcherPrewarmSignature(windows: windows, selectedIndex: selected)
+        guard signature != switcherPrewarmSignature else { return }
+
+        let panel = ensureSwitcherPanel()
+        panel.setAnimationProfile(config.animationProfile)
+        panel.prewarm(
+            entries: makeSwitcherPanelEntries(windows: windows, selectedIndex: selected),
+            selectedIndex: selected,
+            on: targetScreenForSwitcherSelection(entries: windows, selectedIndex: selected)
+        )
+        switcherPrewarmSignature = signature
+    }
+
+    private func beginSwitcherSession(initialDirection: Int = 1, scheduleCommit: Bool = true) -> Bool {
+        hideAllPreviews()
+        hideAllTabGroupOverlays()
+        hidePluginCard()
+
+        let windows = currentSwitcherCandidateWindows()
+        if windows.isEmpty { return false }
 
         let focusedId = AccessibilityService.focusedWindowId() ?? AccessibilityService.frontmostWindowIdForFrontmostApp()
-        if let focusedId, let idx = switcherEntries.firstIndex(where: { $0.id.raw == focusedId }) {
-            switcherSelectedIndex = (idx + 1) % switcherEntries.count
-        } else {
-            switcherSelectedIndex = 0
-        }
+        switcherMRUWindowIds = Self.updatedSwitcherMRUOrder(
+            previous: switcherMRUWindowIds,
+            focusedWindowId: focusedId,
+            liveWindowIds: Set(windows.map(\.id.raw))
+        )
+        switcherEntries = Self.orderedSwitcherWindows(
+            windows: windows,
+            mruWindowIds: switcherMRUWindowIds
+        )
+        switcherSelectedIndex = Self.initialSwitcherSelectedIndex(
+            entries: switcherEntries,
+            focusedWindowId: focusedId,
+            initialDirection: initialDirection
+        )
 
         let sessionToken = switcherSession.beginSession()
         refreshSwitcherPanel(sessionToken: sessionToken)
-        scheduleSwitcherCommit(primary: switcherSession.shouldSchedulePrimaryCommit)
+        if scheduleCommit {
+            scheduleSwitcherCommit(primary: switcherSession.shouldSchedulePrimaryCommit)
+        }
         return true
     }
 
@@ -1794,6 +2040,7 @@ final class EventLoop {
         let count = switcherEntries.count
         switcherSelectedIndex = (switcherSelectedIndex + direction + count) % count
         switcherPanel?.setSelectedIndex(switcherSelectedIndex)
+        scheduleSwitcherThumbnailCapture(sessionToken: switcherSession.token)
     }
 
     private func scheduleSwitcherCommit(primary: Bool = true) {
@@ -1805,43 +2052,84 @@ final class EventLoop {
         // Keep keyboard switcher commit snappy by default; still allow extra time
         // when users configure a non-zero hover delay.
         let delay = min(0.32, max(0.16, hoverDerived + 0.18))
-        let work = DispatchWorkItem { [weak self] in
-            guard let self else { return }
+        var work: DispatchWorkItem?
+        work = DispatchWorkItem { [weak self] in
+            guard let self, let work else { return }
+            guard !work.isCancelled, self.switcherCommitWorkItem === work else { return }
             self.hideSwitcher(commitSelection: true)
         }
         switcherCommitWorkItem = work
-        DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: work)
+        DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: work!)
     }
 
     private func refreshSwitcherPanel(sessionToken: UInt64) {
         guard !switcherEntries.isEmpty else { return }
         guard switcherSelectedIndex >= 0 && switcherSelectedIndex < switcherEntries.count else { return }
 
-        let preferredTheme = panelManager.allPanels.first?.theme ?? config.theme
-        if switcherPanel == nil {
-            switcherPanel = WindowSwitcherPanel(theme: preferredTheme, glassStyle: config.glassStyle)
-        }
-        switcherPanel?.setAnimationProfile(config.animationProfile)
+        let panel = ensureSwitcherPanel()
+        panel.setAnimationProfile(config.animationProfile)
 
-        let entries: [WindowSwitcherPanel.Entry] = switcherEntries.map { info in
-            WindowSwitcherPanel.Entry(
-                windowId: info.id.raw,
-                title: info.title.isEmpty ? info.appName : info.title,
-                appName: info.appName,
-                icon: iconCache.getIcon(bundleId: info.bundleId.raw),
-                thumbnail: nil,
-                isDimmed: info.isHidden || info.isMinimized
+        let targetScreen = targetScreenForSwitcherSelection()
+        panel.update(
+            entries: makeSwitcherPanelEntries(windows: switcherEntries, selectedIndex: switcherSelectedIndex),
+            selectedIndex: switcherSelectedIndex,
+            ensureSelectedVisible: false
+        )
+
+        panel.show(on: targetScreen)
+
+        switcherThumbnailWorkItem?.cancel()
+        switcherThumbnailWorkItem = nil
+        scheduleSwitcherThumbnailCapture(sessionToken: sessionToken)
+    }
+
+    private func ensureSwitcherPanel() -> WindowSwitcherPanel {
+        if let panel = switcherPanel, panel.layoutStyle != config.switcherLayoutStyle {
+            panel.close()
+            switcherPanel = nil
+        }
+        if switcherPanel == nil {
+            let preferredTheme = panelManager.allPanels.first?.theme ?? config.theme
+            switcherPanel = WindowSwitcherPanel(
+                theme: preferredTheme,
+                glassStyle: config.glassStyle,
+                layoutStyle: config.switcherLayoutStyle
             )
         }
-        switcherPanel?.update(entries: entries, selectedIndex: switcherSelectedIndex)
+        let panel = switcherPanel!
+        panel.onEntryClick = { [weak self] windowId in
+            MainActor.assumeIsolated {
+                self?.handleSwitcherEntryClick(windowId: windowId)
+            }
+        }
+        panel.setAnimationProfile(config.animationProfile)
+        return panel
+    }
 
-        let selected = switcherEntries[switcherSelectedIndex]
-        let targetScreen = NSScreen.screens.first { $0.displayId == selected.monitorId.raw }
-        switcherPanel?.show(on: targetScreen)
+    private func targetScreenForSwitcherSelection() -> NSScreen? {
+        targetScreenForSwitcherSelection(entries: switcherEntries, selectedIndex: switcherSelectedIndex)
+    }
 
+    private func targetScreenForSwitcherSelection(entries: [WindowInfo], selectedIndex: Int) -> NSScreen? {
+        guard entries.indices.contains(selectedIndex) else { return nil }
+        let selected = entries[selectedIndex]
+        return NSScreen.screens.first { $0.displayId == selected.monitorId.raw }
+    }
+
+    private func captureSwitcherThumbnails(sessionToken: UInt64, targetScreen: NSScreen?) {
         let fallbackScale = targetScreen?.backingScaleFactor ?? 2.0
-        for info in switcherEntries.prefix(12) {
-            let targetSize = CGSize(width: 160, height: 92)
+        let indices = Self.switcherThumbnailIndices(
+            count: switcherEntries.count,
+            selectedIndex: switcherSelectedIndex
+        )
+        for index in indices {
+            guard switcherEntries.indices.contains(index) else { continue }
+            let info = switcherEntries[index]
+            let targetSize = WindowSwitcherPanel.thumbnailTargetSize(
+                layoutStyle: config.switcherLayoutStyle,
+                selected: index == switcherSelectedIndex,
+                aspectRatio: WindowSwitcherPanel.aspectRatio(for: info.bounds)
+            )
             thumbnailService.captureWindowThumbnail(
                 windowId: CGWindowID(info.id.raw),
                 targetSizePoints: targetSize,
@@ -1856,9 +2144,76 @@ final class EventLoop {
         }
     }
 
+    private func scheduleSwitcherThumbnailCapture(sessionToken: UInt64) {
+        switcherThumbnailWorkItem?.cancel()
+        var work: DispatchWorkItem?
+        work = DispatchWorkItem { [weak self] in
+            guard let self, let work else { return }
+            guard !work.isCancelled, self.switcherThumbnailWorkItem === work else { return }
+            guard self.switcherSession.isCurrentToken(sessionToken),
+                  self.switcherPanel?.isVisible == true else {
+                return
+            }
+            self.captureSwitcherThumbnails(
+                sessionToken: sessionToken,
+                targetScreen: self.targetScreenForSwitcherSelection()
+            )
+        }
+        switcherThumbnailWorkItem = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.025, execute: work!)
+    }
+
+    nonisolated static func switcherThumbnailIndices(
+        count: Int,
+        selectedIndex: Int,
+        leadingCount: Int = 8,
+        neighborRadius: Int = 3,
+        maxCount: Int = 12
+    ) -> [Int] {
+        guard count > 0, maxCount > 0 else { return [] }
+
+        let selected = min(max(selectedIndex, 0), count - 1)
+        var result: [Int] = []
+        result.reserveCapacity(min(maxCount, count))
+        var seen = Set<Int>()
+        seen.reserveCapacity(min(maxCount, count))
+
+        func append(_ index: Int) {
+            guard result.count < maxCount,
+                  index >= 0,
+                  index < count,
+                  seen.insert(index).inserted else {
+                return
+            }
+            result.append(index)
+        }
+
+        append(selected)
+        if neighborRadius > 0 {
+            for offset in 1...neighborRadius {
+                append(selected - offset)
+                append(selected + offset)
+            }
+        }
+
+        for index in 0..<min(max(leadingCount, 0), count) {
+            append(index)
+        }
+
+        var index = 0
+        while result.count < min(maxCount, count), index < count {
+            append(index)
+            index += 1
+        }
+
+        return result
+    }
+
     private func hideSwitcher(commitSelection: Bool) {
         switcherCommitWorkItem?.cancel()
         switcherCommitWorkItem = nil
+        switcherThumbnailWorkItem?.cancel()
+        switcherThumbnailWorkItem = nil
         invalidateThumbnailRequests(for: ThumbnailCaptureContext.switcher.producer)
 
         if commitSelection,
@@ -1883,6 +2238,21 @@ final class EventLoop {
         }
         guard ensureAccessibilityTrusted() else { return }
         AccessibilityService.focusWindow(windowId: info.id.raw)
+        switcherMRUWindowIds = Self.updatedSwitcherMRUOrder(
+            previous: switcherMRUWindowIds,
+            focusedWindowId: info.id.raw,
+            liveWindowIds: Set(windowStateStore.windows.keys.map(\.raw))
+        )
+    }
+
+    private func handleSwitcherEntryClick(windowId: UInt32) {
+        guard switcherPanel?.isVisible == true,
+              let idx = switcherEntries.firstIndex(where: { $0.id.raw == windowId }) else {
+            return
+        }
+        switcherSelectedIndex = idx
+        switcherPanel?.setSelectedIndex(idx)
+        hideSwitcher(commitSelection: true)
     }
 
     private func handleSwitcherLocalEvent(_ event: NSEvent) -> Bool {
@@ -1924,7 +2294,7 @@ final class EventLoop {
         case .leftMouseDown, .rightMouseDown, .otherMouseDown:
             let point = screenPointForEvent(event)
             if switcherPanel?.frame.contains(point) == true {
-                return true
+                return false
             }
             hideSwitcher(commitSelection: false)
             return false
@@ -3373,7 +3743,71 @@ final class EventLoop {
                 guard let self else { return }
                 for panel in self.panelManager.allPanels {
                     self.renderer.setCursorPosition(point, for: panel.displayId)
-                    self.panelManager.resumeDisplayLink(for: panel.displayId)
+                }
+            }
+        })
+
+        testControlObservers.append(center.addObserver(
+            forName: Notification.Name("com.liquidbar.testcontrol.dragState"),
+            object: nil,
+            queue: .main
+        ) { [weak self] note in
+            let raw = (note.object as? String)?
+                .split(separator: ",")
+                .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            MainActor.assumeIsolated {
+                guard let self, let raw, let command = raw.first else { return }
+                switch command {
+                case "start":
+                    guard raw.count >= 4,
+                          let sourceIndex = Int(raw[1]),
+                          let cursorPrimary = Float(raw[2]),
+                          let cursorOffset = Float(raw[3]) else { return }
+                    MouseTracker.setDragging(true)
+                    for panel in self.panelManager.allPanels {
+                        self.renderer.startDrag(
+                            sourceIndex: sourceIndex,
+                            cursorX: cursorPrimary,
+                            cursorOffsetInItem: cursorOffset,
+                            config: self.config,
+                            displayId: panel.displayId
+                        )
+                        if raw.count >= 5, let insertionIndex = Int(raw[4]) {
+                            self.renderer.updateDragCursor(
+                                cursorX: cursorPrimary,
+                                insertionIndex: insertionIndex,
+                                displayId: panel.displayId
+                            )
+                        }
+                        self.panelManager.resumeDisplayLink(for: panel.displayId)
+                    }
+                case "update":
+                    guard raw.count >= 3,
+                          let cursorPrimary = Float(raw[1]),
+                          let insertionIndex = Int(raw[2]) else { return }
+                    MouseTracker.setDragging(true)
+                    for panel in self.panelManager.allPanels {
+                        self.renderer.updateDragCursor(
+                            cursorX: cursorPrimary,
+                            insertionIndex: insertionIndex,
+                            displayId: panel.displayId
+                        )
+                        self.panelManager.resumeDisplayLink(for: panel.displayId)
+                    }
+                case "end":
+                    MouseTracker.setDragging(false)
+                    for panel in self.panelManager.allPanels {
+                        self.renderer.endDrag(displayId: panel.displayId)
+                        self.panelManager.resumeDisplayLink(for: panel.displayId)
+                    }
+                case "cancel":
+                    MouseTracker.setDragging(false)
+                    for panel in self.panelManager.allPanels {
+                        self.renderer.cancelDrag(displayId: panel.displayId)
+                        self.panelManager.resumeDisplayLink(for: panel.displayId)
+                    }
+                default:
+                    return
                 }
             }
         })
@@ -3409,6 +3843,17 @@ final class EventLoop {
         })
 
         testControlObservers.append(center.addObserver(
+            forName: Notification.Name("com.liquidbar.testcontrol.switcher"),
+            object: nil,
+            queue: .main
+        ) { [weak self] note in
+            let raw = note.object as? String
+            MainActor.assumeIsolated {
+                self?.handleSwitcherTestControl(raw)
+            }
+        })
+
+        testControlObservers.append(center.addObserver(
             forName: Notification.Name("com.liquidbar.testcontrol.dumpSnapshot"),
             object: nil,
             queue: .main
@@ -3419,6 +3864,72 @@ final class EventLoop {
                 self.dumpDebugSnapshot(to: path)
             }
         })
+    }
+
+    private func handleSwitcherTestControl(_ raw: String?) {
+        let parts = (raw ?? "open")
+            .split(separator: ",")
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+        let command = parts.first?.lowercased() ?? "open"
+        let start = CACurrentMediaTime()
+        let previousEntries = switcherEntries.count
+        var count = 1
+        var direction = 0
+        var success = false
+
+        switch command {
+        case "open", "begin":
+            direction = Self.testControlDirection(parts.dropFirst().first)
+            success = beginSwitcherSession(initialDirection: direction == 0 ? 1 : direction, scheduleCommit: false)
+
+        case "cycle":
+            guard switcherPanel?.isVisible == true, !switcherEntries.isEmpty else {
+                break
+            }
+            count = max(1, parts.dropFirst().first.flatMap(Int.init) ?? 1)
+            direction = Self.testControlDirection(parts.dropFirst(2).first)
+            if direction == 0 { direction = 1 }
+            for _ in 0..<count {
+                cycleSwitcherSelection(direction: direction)
+            }
+            success = true
+
+        case "close", "cancel":
+            hideSwitcher(commitSelection: false)
+            success = true
+
+        case "commit":
+            hideSwitcher(commitSelection: true)
+            success = true
+
+        default:
+            success = false
+        }
+
+        let durationMs = (CACurrentMediaTime() - start) * 1000.0
+        let entries = switcherEntries.isEmpty ? previousEntries : switcherEntries.count
+        PerformanceMonitor.shared.recordSwitcherAction(
+            action: command,
+            durationMs: durationMs,
+            count: count,
+            direction: direction,
+            entries: entries,
+            selectedIndex: switcherSelectedIndex,
+            success: success
+        )
+    }
+
+    private nonisolated static func testControlDirection(_ raw: String?) -> Int {
+        guard let raw else { return 0 }
+        switch raw.lowercased() {
+        case "-1", "reverse", "backward", "backwards":
+            return -1
+        case "1", "+1", "forward", "forwards":
+            return 1
+        default:
+            return Int(raw) ?? 0
+        }
     }
 
     private func dumpDebugSnapshot(to path: String) {

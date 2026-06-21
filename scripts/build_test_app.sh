@@ -41,6 +41,8 @@ cat > "${APP_PATH}/Contents/Info.plist" <<'PLIST'
   <string>LiquidBar</string>
   <key>CFBundleIdentifier</key>
   <string>com.liquidbar.test</string>
+  <key>CFBundleIconFile</key>
+  <string>LiquidBar</string>
   <key>CFBundleInfoDictionaryVersion</key>
   <string>6.0</string>
   <key>CFBundleName</key>
@@ -66,6 +68,9 @@ cat > "${APP_PATH}/Contents/Info.plist" <<'PLIST'
 PLIST
 
 cp -f "$BIN_PATH" "${APP_PATH}/Contents/MacOS/LiquidBar"
+cp -f "${ROOT_DIR}/Assets/AppIcon/LiquidBar.icns" "${APP_PATH}/Contents/Resources/LiquidBar.icns"
+cp -f "${ROOT_DIR}/Assets/MenuBar/liquidbar-menubar-template.png" "${APP_PATH}/Contents/Resources/liquidbar-menubar-template.png"
+cp -f "${ROOT_DIR}/Assets/Brand/liquidbar-brand-bar-transparent.png" "${APP_PATH}/Contents/Resources/liquidbar-brand-bar-transparent.png"
 
 # Ensure the bundle is runnable and stable for System Settings -> Privacy panes.
 codesign --force --deep --sign "$SIGN_IDENTITY" "$APP_PATH" >/dev/null
