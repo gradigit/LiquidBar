@@ -297,6 +297,11 @@ struct Config: Codable, Sendable, Equatable {
     var systemIndicatorGpuVisualMode: SystemIndicatorVisualMode
     var systemIndicatorRamVisualMode: SystemIndicatorVisualMode
     var systemIndicatorThermalVisualMode: SystemIndicatorVisualMode
+    /// Optional per-metric accent colors. `nil` keeps the built-in metric palette.
+    var systemIndicatorCpuColorHex: String?
+    var systemIndicatorGpuColorHex: String?
+    var systemIndicatorRamColorHex: String?
+    var systemIndicatorThermalColorHex: String?
     var systemIndicatorTemperatureUnit: SystemIndicatorTemperatureUnit
     var systemIndicatorChipPreset: SystemIndicatorChipPreset
     var systemIndicatorAppearance: SystemIndicatorAppearance
@@ -407,6 +412,10 @@ struct Config: Codable, Sendable, Equatable {
         systemIndicatorGpuVisualMode: SystemIndicatorVisualMode = .percentage,
         systemIndicatorRamVisualMode: SystemIndicatorVisualMode = .percentage,
         systemIndicatorThermalVisualMode: SystemIndicatorVisualMode = .percentage,
+        systemIndicatorCpuColorHex: String? = nil,
+        systemIndicatorGpuColorHex: String? = nil,
+        systemIndicatorRamColorHex: String? = nil,
+        systemIndicatorThermalColorHex: String? = nil,
         systemIndicatorTemperatureUnit: SystemIndicatorTemperatureUnit = .celsius,
         systemIndicatorChipPreset: SystemIndicatorChipPreset = .compact,
         systemIndicatorAppearance: SystemIndicatorAppearance = .glass,
@@ -492,6 +501,10 @@ struct Config: Codable, Sendable, Equatable {
         self.systemIndicatorGpuVisualMode = systemIndicatorGpuVisualMode
         self.systemIndicatorRamVisualMode = systemIndicatorRamVisualMode
         self.systemIndicatorThermalVisualMode = systemIndicatorThermalVisualMode
+        self.systemIndicatorCpuColorHex = systemIndicatorCpuColorHex
+        self.systemIndicatorGpuColorHex = systemIndicatorGpuColorHex
+        self.systemIndicatorRamColorHex = systemIndicatorRamColorHex
+        self.systemIndicatorThermalColorHex = systemIndicatorThermalColorHex
         self.systemIndicatorTemperatureUnit = systemIndicatorTemperatureUnit
         self.systemIndicatorChipPreset = systemIndicatorChipPreset
         self.systemIndicatorAppearance = systemIndicatorAppearance
@@ -582,6 +595,10 @@ struct Config: Codable, Sendable, Equatable {
         systemIndicatorGpuVisualMode = try c.decodeIfPresent(SystemIndicatorVisualMode.self, forKey: .systemIndicatorGpuVisualMode) ?? .percentage
         systemIndicatorRamVisualMode = try c.decodeIfPresent(SystemIndicatorVisualMode.self, forKey: .systemIndicatorRamVisualMode) ?? .percentage
         systemIndicatorThermalVisualMode = try c.decodeIfPresent(SystemIndicatorVisualMode.self, forKey: .systemIndicatorThermalVisualMode) ?? .percentage
+        systemIndicatorCpuColorHex = try c.decodeIfPresent(String.self, forKey: .systemIndicatorCpuColorHex)
+        systemIndicatorGpuColorHex = try c.decodeIfPresent(String.self, forKey: .systemIndicatorGpuColorHex)
+        systemIndicatorRamColorHex = try c.decodeIfPresent(String.self, forKey: .systemIndicatorRamColorHex)
+        systemIndicatorThermalColorHex = try c.decodeIfPresent(String.self, forKey: .systemIndicatorThermalColorHex)
         systemIndicatorTemperatureUnit = try c.decodeIfPresent(SystemIndicatorTemperatureUnit.self, forKey: .systemIndicatorTemperatureUnit) ?? .celsius
         systemIndicatorChipPreset = try c.decodeIfPresent(SystemIndicatorChipPreset.self, forKey: .systemIndicatorChipPreset) ?? .compact
         systemIndicatorAppearance = try c.decodeIfPresent(SystemIndicatorAppearance.self, forKey: .systemIndicatorAppearance) ?? .glass
@@ -712,6 +729,10 @@ struct Config: Codable, Sendable, Equatable {
         hoverDelayMs = hoverDelayMs.clamped(to: 0...2000)
         systemIndicatorRefreshIntervalMs = systemIndicatorRefreshIntervalMs.clamped(to: 250...10000)
         systemIndicatorGraphSamples = systemIndicatorGraphSamples.clamped(to: 4...32)
+        systemIndicatorCpuColorHex = PresentationColorPalette.normalizedHex(systemIndicatorCpuColorHex)
+        systemIndicatorGpuColorHex = PresentationColorPalette.normalizedHex(systemIndicatorGpuColorHex)
+        systemIndicatorRamColorHex = PresentationColorPalette.normalizedHex(systemIndicatorRamColorHex)
+        systemIndicatorThermalColorHex = PresentationColorPalette.normalizedHex(systemIndicatorThermalColorHex)
         performanceLogIntervalMs = performanceLogIntervalMs.clamped(to: 250...10000)
         performanceGpuTimingEnabled = false
         if previewMode == .liveLowFps {

@@ -759,10 +759,6 @@ final class WindowThumbnailService {
     }
 
     nonisolated static func captureResolution(for request: CaptureRequest) -> SCCaptureResolutionType {
-        if (request.producer == .switcher || request.producer == .prewarm),
-           request.key.tier == .large {
-            return .best
-        }
         return .nominal
     }
 

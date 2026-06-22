@@ -150,7 +150,7 @@ struct WindowThumbnailServicePolicyTests {
         #expect(keys.contains(WindowThumbnailService.requestKey(windowId: 13, targetSizePoints: CGSize(width: 260, height: 160))))
     }
 
-    @Test func switcherLargeCapturesUseBestResolution() {
+    @Test func switcherCapturesUseNominalResolution() {
         let largeKey = WindowThumbnailService.requestKey(
             windowId: 21,
             targetSizePoints: CGSize(width: 390, height: 220)
@@ -184,9 +184,9 @@ struct WindowThumbnailServicePolicyTests {
             generation: 0
         )
 
-        #expect(WindowThumbnailService.captureResolution(for: largeSwitcher) == .best)
+        #expect(WindowThumbnailService.captureResolution(for: largeSwitcher) == .nominal)
         #expect(WindowThumbnailService.captureResolution(for: tinySwitcher) == .nominal)
-        #expect(WindowThumbnailService.captureResolution(for: largePrewarm) == .best)
+        #expect(WindowThumbnailService.captureResolution(for: largePrewarm) == .nominal)
     }
 
     @Test func switcherAndPrewarmThumbnailsStayFreshLongerThanInteractivePreviews() {

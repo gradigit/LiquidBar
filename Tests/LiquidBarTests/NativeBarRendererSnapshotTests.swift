@@ -355,6 +355,31 @@ struct NativeBarRendererSnapshotTests {
         renderer.shutdown()
     }
 
+    @Test func customSystemIndicatorColorTintsMetricFill() throws {
+        let renderer = NativeBarRenderer()
+        renderer.registerPanel(displayId: 1, barWidth: 300, barHeight: 32, scale: 2)
+        let items: [TaskbarItem] = [
+            .customText(id: "system.cpu", text: "CPU 55%", screenId: 1),
+        ]
+        var config = Config(itemSizing: .auto, systemIndicatorCpuColorHex: "#AF52DE")
+        config.systemIndicatorAppearance = .underline
+        renderer.updateItems(
+            items,
+            config: config,
+            iconCache: IconCache(),
+            displayId: 1,
+            systemIndicatorVisuals: [
+                "system.cpu": systemVisual(metric: .cpu, mode: .bar, valueText: "55%", value: 55, history: [])
+            ]
+        )
+
+        let snapshot = try #require(renderer.snapshot(displayId: 1))
+        let fill = try #require(snapshot.decorations.first { $0.kind == .systemMetricFill })
+        let expected = try #require(PresentationColorPalette.color(from: "#AF52DE", alpha: 1))
+        #expect(PresentationColorPalette.hexString(from: fill.color) == PresentationColorPalette.hexString(from: expected))
+        renderer.shutdown()
+    }
+
     @Test func flatSystemIndicatorAppearanceUsesNonGlassPlate() throws {
         let renderer = NativeBarRenderer()
         renderer.registerPanel(displayId: 1, barWidth: 300, barHeight: 32, scale: 2)

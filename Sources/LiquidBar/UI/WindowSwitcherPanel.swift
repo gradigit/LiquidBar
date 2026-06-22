@@ -735,7 +735,7 @@ final class WindowSwitcherPanel: NSPanel {
         guard isVisible else { return }
         pendingSpringScrollTarget = nil
         springScrollDispatchScheduled = false
-        finishScrollAnimation(success: false)
+        finishScrollAnimationForExpectedCancellation()
         if SystemAccessibilityPreferences.reduceMotion {
             orderOut(nil)
             return
@@ -1224,8 +1224,18 @@ final class WindowSwitcherPanel: NSPanel {
 
     private func startLegacyScrollProbe(to targetOrigin: NSPoint) {
         let now = CACurrentMediaTime()
-        finishScrollAnimation(success: false)
         let currentX = scrollView.contentView.bounds.origin.x
+        if var state = scrollAnimation, state.kind == "legacy_scroll", !state.drivesScroll {
+            state.targetOrigin = targetOrigin
+            state.retargetCount += 1
+            state.distancePoints += abs(targetOrigin.x - currentX)
+            state.deadline = now + 0.24
+            scrollAnimation = state
+            ensureScrollDisplayLink()
+            return
+        }
+
+        finishScrollAnimation(success: false)
         scrollAnimation = ScrollAnimationState(
             kind: "legacy_scroll",
             targetOrigin: targetOrigin,
@@ -1359,12 +1369,23 @@ final class WindowSwitcherPanel: NSPanel {
         )
     }
 
+    private func finishScrollAnimationForExpectedCancellation() {
+        guard let state = scrollAnimation else { return }
+        let hasFrameSample = !state.frameIntervalsMs.isEmpty
+        let isNativeProbe = state.kind == "legacy_scroll" || state.kind == "system_scroll"
+        finishScrollAnimation(success: hasFrameSample || isNativeProbe)
+    }
+
     private static var usesLegacySwitcherScrollAnimation: Bool {
         let env = ProcessInfo.processInfo.environment
         if envBool("LIQUIDBAR_DISABLE_SWITCHER_SPRING_SCROLL") {
             return true
         }
-        return env["LIQUIDBAR_SWITCHER_SCROLL_ANIMATION"]?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() == "legacy"
+        let mode = env["LIQUIDBAR_SWITCHER_SCROLL_ANIMATION"]?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased()
+        guard let mode, !mode.isEmpty else { return true }
+        return mode == "legacy" || mode == "native" || mode == "native_scroll"
     }
 
     private static var usesDisplayLinkSpringScrollAnimation: Bool {

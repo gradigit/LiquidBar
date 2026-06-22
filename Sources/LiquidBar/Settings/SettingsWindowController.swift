@@ -175,12 +175,16 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTe
     private var systemIndicatorRefreshField: NSTextField!
     private var systemIndicatorCpuCheckbox: NSButton!
     private var systemIndicatorCpuModePopup: NSPopUpButton!
+    private var systemIndicatorCpuColorWell: NSColorWell!
     private var systemIndicatorGpuCheckbox: NSButton!
     private var systemIndicatorGpuModePopup: NSPopUpButton!
+    private var systemIndicatorGpuColorWell: NSColorWell!
     private var systemIndicatorRamCheckbox: NSButton!
     private var systemIndicatorRamModePopup: NSPopUpButton!
+    private var systemIndicatorRamColorWell: NSColorWell!
     private var systemIndicatorThermalCheckbox: NSButton!
     private var systemIndicatorThermalModePopup: NSPopUpButton!
+    private var systemIndicatorThermalColorWell: NSColorWell!
     private var systemIndicatorGraphSamplesSlider: NSSlider!
     private var systemIndicatorGraphSamplesLabel: NSTextField!
 
@@ -981,12 +985,16 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTe
 
         y -= 34
 
+        let indicatorColorX = controlX + 162
+
         systemIndicatorCpuCheckbox = makeCheckbox("CPU", at: NSPoint(x: 15, y: y))
         systemIndicatorCpuCheckbox.target = self
         systemIndicatorCpuCheckbox.action = #selector(controlChanged(_:))
         view.addSubview(systemIndicatorCpuCheckbox)
         systemIndicatorCpuModePopup = makeSystemIndicatorModePopup(at: NSPoint(x: controlX, y: y - 2))
         view.addSubview(systemIndicatorCpuModePopup)
+        systemIndicatorCpuColorWell = makeSystemIndicatorColorWell(metric: .cpu, at: NSPoint(x: indicatorColorX, y: y - 1))
+        view.addSubview(systemIndicatorCpuColorWell)
 
         y -= 30
 
@@ -996,6 +1004,8 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTe
         view.addSubview(systemIndicatorGpuCheckbox)
         systemIndicatorGpuModePopup = makeSystemIndicatorModePopup(at: NSPoint(x: controlX, y: y - 2))
         view.addSubview(systemIndicatorGpuModePopup)
+        systemIndicatorGpuColorWell = makeSystemIndicatorColorWell(metric: .gpu, at: NSPoint(x: indicatorColorX, y: y - 1))
+        view.addSubview(systemIndicatorGpuColorWell)
 
         y -= 30
 
@@ -1005,6 +1015,8 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTe
         view.addSubview(systemIndicatorRamCheckbox)
         systemIndicatorRamModePopup = makeSystemIndicatorModePopup(at: NSPoint(x: controlX, y: y - 2))
         view.addSubview(systemIndicatorRamModePopup)
+        systemIndicatorRamColorWell = makeSystemIndicatorColorWell(metric: .ram, at: NSPoint(x: indicatorColorX, y: y - 1))
+        view.addSubview(systemIndicatorRamColorWell)
 
         y -= 30
 
@@ -1014,6 +1026,8 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTe
         view.addSubview(systemIndicatorThermalCheckbox)
         systemIndicatorThermalModePopup = makeSystemIndicatorModePopup(at: NSPoint(x: controlX, y: y - 2))
         view.addSubview(systemIndicatorThermalModePopup)
+        systemIndicatorThermalColorWell = makeSystemIndicatorColorWell(metric: .thermal, at: NSPoint(x: indicatorColorX, y: y - 1))
+        view.addSubview(systemIndicatorThermalColorWell)
 
         y -= 36
 
@@ -1580,12 +1594,16 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTe
         systemIndicatorRefreshField.stringValue = "\(config.systemIndicatorRefreshIntervalMs)"
         systemIndicatorCpuCheckbox.state = config.systemIndicatorCpuEnabled ? .on : .off
         selectSystemIndicatorMode(config.systemIndicatorCpuVisualMode, in: systemIndicatorCpuModePopup)
+        systemIndicatorCpuColorWell.color = systemIndicatorColor(hex: config.systemIndicatorCpuColorHex, metric: .cpu)
         systemIndicatorGpuCheckbox.state = config.systemIndicatorGpuEnabled ? .on : .off
         selectSystemIndicatorMode(config.systemIndicatorGpuVisualMode, in: systemIndicatorGpuModePopup)
+        systemIndicatorGpuColorWell.color = systemIndicatorColor(hex: config.systemIndicatorGpuColorHex, metric: .gpu)
         systemIndicatorRamCheckbox.state = config.systemIndicatorRamEnabled ? .on : .off
         selectSystemIndicatorMode(config.systemIndicatorRamVisualMode, in: systemIndicatorRamModePopup)
+        systemIndicatorRamColorWell.color = systemIndicatorColor(hex: config.systemIndicatorRamColorHex, metric: .ram)
         systemIndicatorThermalCheckbox.state = config.systemIndicatorThermalEnabled ? .on : .off
         selectSystemIndicatorMode(config.systemIndicatorThermalVisualMode, in: systemIndicatorThermalModePopup)
+        systemIndicatorThermalColorWell.color = systemIndicatorColor(hex: config.systemIndicatorThermalColorHex, metric: .thermal)
         systemIndicatorGraphSamplesSlider.integerValue = config.systemIndicatorGraphSamples
         systemIndicatorGraphSamplesLabel.stringValue = "\(config.systemIndicatorGraphSamples)"
 
@@ -1764,6 +1782,10 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTe
             config.systemIndicatorGpuVisualMode = defaults.systemIndicatorGpuVisualMode
             config.systemIndicatorRamVisualMode = defaults.systemIndicatorRamVisualMode
             config.systemIndicatorThermalVisualMode = defaults.systemIndicatorThermalVisualMode
+            config.systemIndicatorCpuColorHex = defaults.systemIndicatorCpuColorHex
+            config.systemIndicatorGpuColorHex = defaults.systemIndicatorGpuColorHex
+            config.systemIndicatorRamColorHex = defaults.systemIndicatorRamColorHex
+            config.systemIndicatorThermalColorHex = defaults.systemIndicatorThermalColorHex
             config.systemIndicatorTemperatureUnit = defaults.systemIndicatorTemperatureUnit
             config.systemIndicatorChipPreset = defaults.systemIndicatorChipPreset
             config.systemIndicatorAppearance = defaults.systemIndicatorAppearance
@@ -1878,6 +1900,10 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTe
         systemIndicatorGpuModePopup?.isEnabled = enabled && systemIndicatorGpuCheckbox.state == .on
         systemIndicatorRamModePopup?.isEnabled = enabled && systemIndicatorRamCheckbox.state == .on
         systemIndicatorThermalModePopup?.isEnabled = enabled && systemIndicatorThermalCheckbox.state == .on
+        systemIndicatorCpuColorWell?.isEnabled = enabled && systemIndicatorCpuCheckbox.state == .on
+        systemIndicatorGpuColorWell?.isEnabled = enabled && systemIndicatorGpuCheckbox.state == .on
+        systemIndicatorRamColorWell?.isEnabled = enabled && systemIndicatorRamCheckbox.state == .on
+        systemIndicatorThermalColorWell?.isEnabled = enabled && systemIndicatorThermalCheckbox.state == .on
         systemIndicatorGraphSamplesSlider?.isEnabled = enabled
     }
 
@@ -1939,6 +1965,16 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTe
         case 2: return .graph
         default: return .percentage
         }
+    }
+
+    private func systemIndicatorColor(hex: String?, metric: SystemIndicatorMetric) -> NSColor {
+        PresentationColorPalette.color(from: hex, alpha: 1)
+            ?? SystemIndicatorColorPalette.defaultColor(for: metric, severity: 0.2)
+    }
+
+    private func systemIndicatorColorHex(from well: NSColorWell, metric: SystemIndicatorMetric) -> String? {
+        guard let hex = PresentationColorPalette.hexString(from: well.color) else { return nil }
+        return hex == SystemIndicatorColorPalette.defaultHex(for: metric) ? nil : hex
     }
 
     private func updateAppearancePreview() {
@@ -2212,6 +2248,10 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTe
         config.systemIndicatorGpuVisualMode = systemIndicatorMode(from: systemIndicatorGpuModePopup)
         config.systemIndicatorRamVisualMode = systemIndicatorMode(from: systemIndicatorRamModePopup)
         config.systemIndicatorThermalVisualMode = systemIndicatorMode(from: systemIndicatorThermalModePopup)
+        config.systemIndicatorCpuColorHex = systemIndicatorColorHex(from: systemIndicatorCpuColorWell, metric: .cpu)
+        config.systemIndicatorGpuColorHex = systemIndicatorColorHex(from: systemIndicatorGpuColorWell, metric: .gpu)
+        config.systemIndicatorRamColorHex = systemIndicatorColorHex(from: systemIndicatorRamColorWell, metric: .ram)
+        config.systemIndicatorThermalColorHex = systemIndicatorColorHex(from: systemIndicatorThermalColorWell, metric: .thermal)
         config.systemIndicatorGraphSamples = systemIndicatorGraphSamplesSlider.integerValue
 
         config.performanceLoggingEnabled = perfLoggingCheckbox.state == .on
@@ -2480,6 +2520,16 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTe
         popup.target = self
         popup.action = #selector(controlChanged(_:))
         return popup
+    }
+
+    private func makeSystemIndicatorColorWell(metric: SystemIndicatorMetric, at point: NSPoint) -> NSColorWell {
+        let well = NSColorWell(frame: NSRect(x: point.x, y: point.y, width: 44, height: 24))
+        well.color = SystemIndicatorColorPalette.defaultColor(for: metric, severity: 0.2)
+        well.target = self
+        well.action = #selector(controlChanged(_:))
+        well.toolTip = "\(metric.label) color"
+        well.setAccessibilityLabel("\(metric.label) color")
+        return well
     }
 
     private func scrollSelectedTabToTop() {

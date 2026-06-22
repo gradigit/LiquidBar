@@ -53,6 +53,10 @@ struct ConfigTests {
         #expect(config.systemIndicatorGpuVisualMode == .percentage)
         #expect(config.systemIndicatorRamVisualMode == .percentage)
         #expect(config.systemIndicatorThermalVisualMode == .percentage)
+        #expect(config.systemIndicatorCpuColorHex == nil)
+        #expect(config.systemIndicatorGpuColorHex == nil)
+        #expect(config.systemIndicatorRamColorHex == nil)
+        #expect(config.systemIndicatorThermalColorHex == nil)
         #expect(config.systemIndicatorTemperatureUnit == .celsius)
         #expect(config.systemIndicatorChipPreset == .compact)
         #expect(config.systemIndicatorAppearance == .glass)
@@ -112,6 +116,10 @@ struct ConfigTests {
             blacklistedApps: ["com.test.blocked"],
             pinnedApps: ["com.test.pinned"],
             pinnedAppsScope: .global,
+            systemIndicatorCpuColorHex: "#AF52DE",
+            systemIndicatorGpuColorHex: "#FF9F0A",
+            systemIndicatorRamColorHex: "#34C759",
+            systemIndicatorThermalColorHex: "#FFD166",
             hoverIntensity: .medium,
             visualDepth: .rich
         )
@@ -128,7 +136,12 @@ struct ConfigTests {
     }
 
     @Test func testSnakeCaseKeys() throws {
-        let config = Config()
+        let config = Config(
+            systemIndicatorCpuColorHex: "#AF52DE",
+            systemIndicatorGpuColorHex: "#FF9F0A",
+            systemIndicatorRamColorHex: "#34C759",
+            systemIndicatorThermalColorHex: "#FFD166"
+        )
         let encoder = JSONEncoder()
         encoder.keyEncodingStrategy = .convertToSnakeCase
         let data = try encoder.encode(config)
@@ -171,6 +184,10 @@ struct ConfigTests {
         #expect(json.contains("system_indicator_gpu_visual_mode"))
         #expect(json.contains("system_indicator_ram_visual_mode"))
         #expect(json.contains("system_indicator_thermal_visual_mode"))
+        #expect(json.contains("system_indicator_cpu_color_hex"))
+        #expect(json.contains("system_indicator_gpu_color_hex"))
+        #expect(json.contains("system_indicator_ram_color_hex"))
+        #expect(json.contains("system_indicator_thermal_color_hex"))
         #expect(json.contains("system_indicator_temperature_unit"))
         #expect(json.contains("system_indicator_chip_preset"))
         #expect(json.contains("system_indicator_graph_samples"))
@@ -223,6 +240,10 @@ struct ConfigTests {
         #expect(config.systemIndicatorGpuEnabled == true)
         #expect(config.systemIndicatorRamEnabled == true)
         #expect(config.systemIndicatorThermalEnabled == false)
+        #expect(config.systemIndicatorCpuColorHex == nil)
+        #expect(config.systemIndicatorGpuColorHex == nil)
+        #expect(config.systemIndicatorRamColorHex == nil)
+        #expect(config.systemIndicatorThermalColorHex == nil)
         #expect(config.systemIndicatorTemperatureUnit == .celsius)
         #expect(config.systemIndicatorChipPreset == .compact)
         #expect(config.systemIndicatorAppearance == .glass)
@@ -262,6 +283,10 @@ struct ConfigTests {
         var config = Config(
             blacklistedApps: ["com.blocked.app", "com.blocked.app", "com.other.app"],
             pinnedApps: ["com.pinned.app", "com.pinned.app"],
+            systemIndicatorCpuColorHex: "af52de",
+            systemIndicatorGpuColorHex: "#nothex",
+            systemIndicatorRamColorHex: "#34c759",
+            systemIndicatorThermalColorHex: "",
             previewsEnabled: true,
             previewMode: .liveLowFps,
             performanceGpuTimingEnabled: true
@@ -272,6 +297,10 @@ struct ConfigTests {
         #expect(config.pinnedApps == ["com.pinned.app"])
         #expect(config.previewMode == .staticImage)
         #expect(config.performanceGpuTimingEnabled == false)
+        #expect(config.systemIndicatorCpuColorHex == "#AF52DE")
+        #expect(config.systemIndicatorGpuColorHex == nil)
+        #expect(config.systemIndicatorRamColorHex == "#34C759")
+        #expect(config.systemIndicatorThermalColorHex == nil)
     }
 
     @Test func testValidationClampsSystemIndicatorRefreshInterval() {

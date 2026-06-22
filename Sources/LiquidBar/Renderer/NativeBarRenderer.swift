@@ -952,7 +952,11 @@ final class NativeBarRenderer {
     ) {
         guard config.taskbarPosition.isHorizontal else { return }
         let layout = metricChipLayout(for: config.systemIndicatorChipPreset)
-        let accent = systemIndicatorAccentColor(metricVisual.metric, severity: metricVisual.severity)
+        let accent = SystemIndicatorColorPalette.accentColor(
+            for: metricVisual.metric,
+            severity: metricVisual.severity,
+            config: config
+        )
 
         if config.systemIndicatorChipPreset == .micro {
             appendMicroSystemIndicatorDecorations(
@@ -1244,25 +1248,6 @@ final class NativeBarRenderer {
                 alpha: 0.82 * alpha,
                 visualDepth: visualDepth
             ))
-        }
-    }
-
-    private func systemIndicatorAccentColor(_ metric: SystemIndicatorMetric, severity: Float) -> NSColor {
-        switch metric {
-        case .cpu:
-            return NSColor(calibratedRed: 0.36, green: 0.68, blue: 1.0, alpha: 1)
-        case .gpu:
-            return NSColor(calibratedRed: 1.0, green: 0.62, blue: 0.35, alpha: 1)
-        case .ram:
-            return NSColor(calibratedRed: 0.38, green: 0.84, blue: 0.58, alpha: 1)
-        case .thermal:
-            let heat = CGFloat(min(max(severity, 0), 1))
-            return NSColor(
-                calibratedRed: 0.82 + 0.18 * heat,
-                green: 0.72 - 0.38 * heat,
-                blue: 0.32 - 0.16 * heat,
-                alpha: 1
-            )
         }
     }
 

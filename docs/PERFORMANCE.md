@@ -207,8 +207,9 @@ thumbnails can contain private user content; keep this cache memory-only.
 ### Switcher Scroll Animation A/B
 
 The switcher scroll animation can be compared in the same built app by toggling
-the animation mode at launch. Use the legacy path as the baseline and the spring
-path as the candidate:
+the animation mode at launch. The default product path is the native/legacy
+`NSAnimationContext` scroll path because it has been the most stable in live
+switcher runs. Use it as the baseline before testing experimental candidates:
 
 ```sh
 LIQUIDBAR_SWITCHER_APP_SETTLE_SECONDS=8 \
@@ -229,13 +230,13 @@ LIQUIDBAR_SWITCHER_RUN_ID=<candidate-run-id> \
   --markdown-out build/artifacts/perf/<candidate-run-id>/ab-comparison.md
 ```
 
-`spring` is the production candidate: it coalesces rapid selected-window changes
-onto the next main-actor turn, snaps the scroll position to the selected item,
-then animates the document layer back into place with a compositor transform.
-`legacy` keeps the old immediate `NSAnimationContext` behavior for baseline
-comparisons. `appkit_scroll` is available for the short AppKit clip-view
-animation path, and `displaylink_spring` is available as an explicit
-experimental mode for manual display-link spring tuning.
+`legacy`, `native`, and `native_scroll` use the production AppKit clip-view
+animation path. `spring` coalesces rapid selected-window changes onto the next
+main-actor turn, snaps the scroll position to the selected item, then animates
+the document layer back into place with a compositor transform. Keep it
+experimental until it beats the native path on both synthetic and live hotkey
+A/B runs. `displaylink_spring` is available as an explicit experimental mode
+for manual display-link spring tuning.
 
 The 8-second settle window gives switcher thumbnail prewarm time to populate
 memory caches before the timed interaction begins; keep it for scroll-only A/B

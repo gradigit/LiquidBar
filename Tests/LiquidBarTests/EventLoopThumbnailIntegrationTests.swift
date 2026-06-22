@@ -24,10 +24,10 @@ struct EventLoopThumbnailIntegrationTests {
         let indices = EventLoop.switcherThumbnailIndices(count: 40, selectedIndex: 20)
 
         #expect(indices.first == 20)
-        #expect(indices.contains(17))
-        #expect(indices.contains(23))
+        #expect(indices.contains(18))
+        #expect(indices.contains(22))
         #expect(indices.contains(0))
-        #expect(indices.count <= 12)
+        #expect(indices.count <= 8)
         #expect(Set(indices).count == indices.count)
     }
 

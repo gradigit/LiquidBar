@@ -87,6 +87,30 @@ struct SettingsWindowControllerTests {
     }
 
     @MainActor
+    @Test func appearanceTabShowsSystemIndicatorColorWells() throws {
+        let controller = SettingsWindowController(
+            configOverride: Config(
+                systemIndicatorCpuColorHex: "#AF52DE",
+                systemIndicatorGpuColorHex: "#FF9F0A",
+                systemIndicatorRamColorHex: "#34C759",
+                systemIndicatorThermalColorHex: "#FFD166"
+            )
+        )
+        defer { controller.close() }
+
+        let window = try #require(controller.window)
+        let tabController = try #require(window.contentViewController as? NSTabViewController)
+        tabController.selectedTabViewItemIndex = 1
+        RunLoop.main.run(until: Date(timeIntervalSinceNow: 0.1))
+
+        let contentView = try #require(window.contentView)
+        #expect(PresentationColorPalette.hexString(from: try findColorWell(toolTip: "CPU color", in: contentView).color) == "#AF52DE")
+        #expect(PresentationColorPalette.hexString(from: try findColorWell(toolTip: "GPU color", in: contentView).color) == "#FF9F0A")
+        #expect(PresentationColorPalette.hexString(from: try findColorWell(toolTip: "RAM color", in: contentView).color) == "#34C759")
+        #expect(PresentationColorPalette.hexString(from: try findColorWell(toolTip: "TEMP color", in: contentView).color) == "#FFD166")
+    }
+
+    @MainActor
     @Test func changingIconSizeDoesNotMoveConfiguredBarHeightSlider() throws {
         let controller = SettingsWindowController(
             configOverride: Config(taskbarHeight: 32, iconSize: 20)
@@ -287,6 +311,12 @@ struct SettingsWindowControllerTests {
         return try #require(popups.first { popup in
             popup.itemArray.map(\.title) == titles
         })
+    }
+
+    @MainActor
+    private func findColorWell(toolTip: String, in view: NSView) throws -> NSColorWell {
+        let wells = recursiveSubviews(of: view).compactMap { $0 as? NSColorWell }
+        return try #require(wells.first { $0.toolTip == toolTip })
     }
 
     @MainActor

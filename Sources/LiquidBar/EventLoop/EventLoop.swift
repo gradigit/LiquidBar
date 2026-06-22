@@ -154,7 +154,12 @@ final class EventLoop {
     private var switcherThumbnailWorkItem: DispatchWorkItem?
     private var switcherPrewarmWorkItem: DispatchWorkItem?
     private var switcherPrewarmSignature: String = ""
+    private var switcherSelectionVisualUpdateScheduled = false
+    private var pendingSwitcherSelectionVisualUpdate: (index: Int, token: UInt64)?
     private var switcherSession = SwitcherHotkeySession()
+    // Keep ScreenCaptureKit refreshes out of quick Cmd-Tab traversal; cached/prewarmed
+    // thumbnails are used immediately, and held sessions refresh after the overlay settles.
+    private let switcherThumbnailStableDelay: TimeInterval = 0.45
 
     #if DEBUG
     private var testControlObservers: [NSObjectProtocol] = []
@@ -2486,8 +2491,29 @@ final class EventLoop {
         guard !switcherEntries.isEmpty else { return }
         let count = switcherEntries.count
         switcherSelectedIndex = (switcherSelectedIndex + direction + count) % count
-        switcherPanel?.setSelectedIndex(switcherSelectedIndex)
-        scheduleSwitcherThumbnailCapture(sessionToken: switcherSession.token)
+        scheduleSwitcherSelectionVisualUpdate(sessionToken: switcherSession.token)
+    }
+
+    private func scheduleSwitcherSelectionVisualUpdate(sessionToken: UInt64) {
+        pendingSwitcherSelectionVisualUpdate = (switcherSelectedIndex, sessionToken)
+        guard !switcherSelectionVisualUpdateScheduled else { return }
+        switcherSelectionVisualUpdateScheduled = true
+
+        DispatchQueue.main.async { [weak self] in
+            guard let self else { return }
+            self.switcherSelectionVisualUpdateScheduled = false
+
+            guard let pending = self.pendingSwitcherSelectionVisualUpdate else { return }
+            self.pendingSwitcherSelectionVisualUpdate = nil
+            guard self.switcherSession.isCurrentToken(pending.token),
+                  self.switcherPanel?.isVisible == true,
+                  self.switcherEntries.indices.contains(pending.index) else {
+                return
+            }
+
+            self.switcherPanel?.setSelectedIndex(pending.index)
+            self.scheduleSwitcherThumbnailCapture(sessionToken: pending.token)
+        }
     }
 
     private func scheduleSwitcherCommit(primary: Bool = true) {
@@ -2626,7 +2652,8 @@ final class EventLoop {
             guard let self, let work else { return }
             guard !work.isCancelled, self.switcherThumbnailWorkItem === work else { return }
             guard self.switcherSession.isCurrentToken(sessionToken),
-                  self.switcherPanel?.isVisible == true else {
+                  self.switcherPanel?.isVisible == true,
+                  !self.switcherSession.canCommitOnRelease() else {
                 return
             }
             self.captureSwitcherThumbnails(
@@ -2635,15 +2662,15 @@ final class EventLoop {
             )
         }
         switcherThumbnailWorkItem = work
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.025, execute: work!)
+        DispatchQueue.main.asyncAfter(deadline: .now() + switcherThumbnailStableDelay, execute: work!)
     }
 
     nonisolated static func switcherThumbnailIndices(
         count: Int,
         selectedIndex: Int,
-        leadingCount: Int = 8,
-        neighborRadius: Int = 3,
-        maxCount: Int = 12
+        leadingCount: Int = 6,
+        neighborRadius: Int = 2,
+        maxCount: Int = 8
     ) -> [Int] {
         guard count > 0, maxCount > 0 else { return [] }
 
@@ -2702,6 +2729,8 @@ final class EventLoop {
         switcherCommitWorkItem = nil
         switcherThumbnailWorkItem?.cancel()
         switcherThumbnailWorkItem = nil
+        pendingSwitcherSelectionVisualUpdate = nil
+        switcherSelectionVisualUpdateScheduled = false
         invalidateThumbnailRequests(for: ThumbnailCaptureContext.switcher.producer)
 
         if commitSelection,
