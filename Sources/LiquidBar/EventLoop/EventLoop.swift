@@ -20,6 +20,7 @@ final class EventLoop {
         let windowOrder: [UInt32]
         let appOrder: [String]
         let pinnedOrder: [String]
+        let itemOrder: [String]
     }
 
     enum ThumbnailCaptureContext {
@@ -54,6 +55,7 @@ final class EventLoop {
     private let axObserverService: AXObserverService
     private let pluginManager: PluginManager
     private let providerRuntime: ProviderRuntime
+    private let systemMetricsProvider: SystemMetricsProvider
     private let thumbnailService: WindowThumbnailService
     // AccessibilityService is all-static, no instance needed
     private var config: Config
@@ -73,6 +75,7 @@ final class EventLoop {
     private var loadedPlugins: [PluginManager.LoadedPlugin] = []
     private var pluginCustomItems: [CustomItem] = []
     private var pluginTiles: [PluginManager.LoadedPluginTile] = []
+    private var windowPresentationKeyByWindowId: [UInt32: String] = [:]
     private var pluginCardPanel: PluginControlCardPanel?
     private var pluginCardTileId: String?
     private var pluginCardProviderId: String?
@@ -104,6 +107,7 @@ final class EventLoop {
     private var lastAXObserverStateCheck: CFAbsoluteTime = 0
     private var isAXObserverActive: Bool = false
     private let isAXQueriesDisabledByEnv: Bool = ProcessInfo.processInfo.environment["LIQUIDBAR_DISABLE_AX_QUERIES"] == "1"
+    private let isSwitcherThumbnailPrewarmDisabledByEnv: Bool = EventLoop.envBool("LIQUIDBAR_DISABLE_SWITCHER_THUMBNAIL_PREWARM")
     private var axObserverRefreshWorkItem: DispatchWorkItem?
 
     // Focus cache (tabbed taskbar)
@@ -201,6 +205,19 @@ final class EventLoop {
         )
     }
 
+    private nonisolated static func envBool(_ key: String) -> Bool {
+        guard let raw = ProcessInfo.processInfo.environment[key]?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !raw.isEmpty else {
+            return false
+        }
+        switch raw.lowercased() {
+        case "1", "true", "yes", "y", "on":
+            return true
+        default:
+            return false
+        }
+    }
+
     nonisolated static func shouldSynchronizeBarViewData(
         previous: BarViewDataSnapshot?,
         current: BarViewDataSnapshot,
@@ -294,6 +311,28 @@ final class EventLoop {
         return ordered
     }
 
+    nonisolated static func switcherCandidateWindows(
+        windows: [WindowInfo],
+        scope: SwitcherWindowScope,
+        focusDisplayId: CGDirectDisplayID?
+    ) -> [WindowInfo] {
+        let scoped: [WindowInfo]
+        switch scope {
+        case .allDisplays:
+            scoped = windows
+        case .focusedDisplay:
+            if let focusDisplayId {
+                let filtered = windows.filter { $0.monitorId.raw == focusDisplayId }
+                scoped = filtered.isEmpty ? windows : filtered
+            } else {
+                scoped = windows
+            }
+        }
+
+        var seen = Set<UInt32>()
+        return scoped.filter { seen.insert($0.id.raw).inserted }
+    }
+
     nonisolated static func initialSwitcherSelectedIndex(
         entries: [WindowInfo],
         focusedWindowId: UInt32?,
@@ -309,6 +348,7 @@ final class EventLoop {
     }
 
     nonisolated static let screenChangeRecoveryDelays: [TimeInterval] = [0.05, 0.18, 0.40, 0.85, 1.60]
+    nonisolated static let spaceChangeRecoveryDelays: [TimeInterval] = [0.15, 0.45, 1.00]
 
     init(
         config: Config,
@@ -326,6 +366,7 @@ final class EventLoop {
         self.axObserverService = AXObserverService()
         self.pluginManager = PluginManager()
         self.providerRuntime = ProviderRuntime()
+        self.systemMetricsProvider = SystemMetricsProvider()
         self.thumbnailService = WindowThumbnailService()
         self.userState = UserState.load()
         self.groupPreviewOrderByKey = self.userState.groupPreviewOrderByKey
@@ -347,7 +388,7 @@ final class EventLoop {
         }
         startPollTimer(interval: idlePollInterval)
         lastAXObserverStateCheck = CFAbsoluteTimeGetCurrent()
-        scheduleAXObserverRefresh(delay: 0.80)
+        scheduleAXObserverRefresh(delay: 1.50)
 
         reloadPlugins()
 
@@ -484,7 +525,7 @@ final class EventLoop {
                     guard let self else { return }
                     self.markWindowRefreshNeeded(invalidateCaches: true)
                     if self.isAXObserverActive {
-                        self.axObserverService.refreshObservedApps()
+                        self.refreshAXObserversMeasured()
                     }
                     self.scheduleWorkspaceRefresh()
                 }
@@ -509,7 +550,7 @@ final class EventLoop {
 
         let work = DispatchWorkItem { [weak self] in
             guard let self else { return }
-            self.pollAndUpdate(forceRender: true)
+            self.pollAndUpdate(forceRender: false)
             self.panelManager.resumeAllDisplayLinks()
         }
 
@@ -559,16 +600,19 @@ final class EventLoop {
                 panelManager.resumeAllDisplayLinks()
             }
             if now - lastAXObserverStateCheck > axObserverFallbackRefreshInterval {
-                scheduleAXObserverRefresh(delay: 0.0)
+                scheduleAXObserverRefresh(delay: 0.20)
                 lastAXObserverStateCheck = now
             }
             if now - lastSpaceChangeAt < 0.12 {
                 maybeCheckMemory(now: now)
-                PerformanceMonitor.shared.recordPoll(
-                    durationMs: (CACurrentMediaTime() - pollStart) * 1000.0,
+                recordPollResult(
+                    pollStart: pollStart,
+                    now: now,
                     enumerated: false,
                     reason: "space_guard",
-                    windowCount: currentItems.count
+                    windowCount: currentItems.count,
+                    forceRender: forceRender,
+                    isDragging: isDragging
                 )
                 return
             }
@@ -577,12 +621,20 @@ final class EventLoop {
             let eventDrivenDue = needsWindowRefresh
             let shouldEnumerate = forceRender || isDragging || eventDrivenDue || fallbackDue
             if !shouldEnumerate {
+                let metricsRefreshed = refreshSystemMetricsIfNeeded(now: now)
+                if metricsRefreshed {
+                    renderUI()
+                    panelManager.resumeAllDisplayLinks()
+                }
                 maybeCheckMemory(now: now)
-                PerformanceMonitor.shared.recordPoll(
-                    durationMs: (CACurrentMediaTime() - pollStart) * 1000.0,
+                recordPollResult(
+                    pollStart: pollStart,
+                    now: now,
                     enumerated: false,
-                    reason: "idle_skip",
-                    windowCount: currentItems.count
+                    reason: metricsRefreshed ? "metrics" : "idle_skip",
+                    windowCount: currentItems.count,
+                    forceRender: forceRender,
+                    isDragging: isDragging
                 )
                 return
             }
@@ -591,11 +643,16 @@ final class EventLoop {
             lastWindowEnumerationAt = now
 
             // Enumerate windows
-            let windows = windowListStabilizer.stabilize(observed: windowManager.enumerate(
-                config: config,
-                currentSpaceKeysByDisplay: cachedSpaceKeyByDisplay,
-                spacesService: spacesService
-            ))
+            let windows = PerformanceMonitor.shared.measureSegment(
+                "window_enumeration",
+                thresholdMs: 80.0
+            ) {
+                windowListStabilizer.stabilize(observed: windowManager.enumerate(
+                    config: config,
+                    currentSpaceKeysByDisplay: cachedSpaceKeyByDisplay,
+                    spacesService: spacesService
+                ))
+            }
 
             // Detect new and moved windows
             let newWindowIds = Set(windows.map { $0.id.raw })
@@ -604,14 +661,20 @@ final class EventLoop {
             syncThumbnailLifecycleToLiveWindowIds(newWindowIds)
 
             // Update state
-            let changed = windowStateStore.update(windows: windows, config: config)
-            // Restore persisted item/window ordering across app restarts.
-            let restoredOrderChanged = windowStateStore.applyPreferredWindowOrder(preferredWindowOrderForCurrentWindows())
-            // Keep persisted order pruned/aligned with the current live set.
-            userState.updateWindowOrder(windowStateStore.getWindows().map(\.id.raw))
+            let (changed, restoredOrderChanged) = PerformanceMonitor.shared.measureSegment(
+                "window_state_update"
+            ) {
+                let changed = windowStateStore.update(windows: windows, config: config)
+                // Restore persisted item/window ordering across app restarts.
+                let restoredOrderChanged = windowStateStore.applyPreferredWindowOrder(preferredWindowOrderForCurrentWindows())
+                // Keep persisted order pruned/aligned with the current live set.
+                userState.updateWindowOrder(windowStateStore.getWindows().map(\.id.raw))
+                return (changed, restoredOrderChanged)
+            }
 
             let focusChanged = updateCachedFocusIfNeeded(frontmostWindowId: windowManager.lastFrontmostWindowId)
-            let shouldRender = changed || restoredOrderChanged || forceRender || focusChanged
+            let metricsRefreshed = refreshSystemMetricsIfNeeded(now: now)
+            let shouldRender = changed || restoredOrderChanged || forceRender || focusChanged || metricsRefreshed
 
             if shouldRender {
                 renderUI()
@@ -632,26 +695,99 @@ final class EventLoop {
                     && (now - lastSpaceChangeAt > 0.6)
                     && !windows.isEmpty
                 if shouldAdjust {
-                    adjustWindows()
+                    PerformanceMonitor.shared.measureSegment(
+                        "adjust_windows",
+                        thresholdMs: 120.0
+                    ) {
+                        adjustWindows()
+                    }
                     lastAdjustCheck = now
                     pendingAXWindowAdjustmentCheck = false
                 }
             }
 
             maybeCheckMemory(now: now)
-            PerformanceMonitor.shared.recordPoll(
-                durationMs: (CACurrentMediaTime() - pollStart) * 1000.0,
+            recordPollResult(
+                pollStart: pollStart,
+                now: now,
                 enumerated: true,
                 reason: forceRender ? "force" : (isDragging ? "drag" : (eventDrivenDue ? "event" : "fallback")),
-                windowCount: windows.count
+                windowCount: windows.count,
+                forceRender: forceRender,
+                isDragging: isDragging
             )
+        }
+    }
+
+    private func recordPollResult(
+        pollStart: CFTimeInterval,
+        now: CFAbsoluteTime,
+        enumerated: Bool,
+        reason: String,
+        windowCount: Int,
+        forceRender: Bool,
+        isDragging: Bool
+    ) {
+        let durationMs = (CACurrentMediaTime() - pollStart) * 1000.0
+        recordPollDiagnostic(
+            now: now,
+            durationMs: durationMs,
+            enumerated: enumerated,
+            reason: reason,
+            windowCount: windowCount,
+            forceRender: forceRender,
+            isDragging: isDragging
+        )
+        PerformanceMonitor.shared.recordPoll(
+            durationMs: durationMs,
+            enumerated: enumerated,
+            reason: reason,
+            windowCount: windowCount
+        )
+    }
+
+    private func recordPollDiagnostic(
+        now: CFAbsoluteTime,
+        durationMs: Double,
+        enumerated: Bool,
+        reason: String,
+        windowCount: Int,
+        forceRender: Bool,
+        isDragging: Bool
+    ) {
+        guard PerformanceMonitor.shared.isDevDiagnosticsEnabled else { return }
+
+        let spaceAgeMs: Double = lastSpaceChangeAt > 0
+            ? max(0, (now - lastSpaceChangeAt) * 1000.0)
+            : -1
+        PerformanceMonitor.shared.recordDiagnosticSnapshot(
+            "poll_state"
+        ) {
+            let rss = MemoryMonitor.getRSSBytes()
+            let axTrusted = AXIsProcessTrusted()
+            return "reason=\(reason) duration_ms=\(Self.fmt2(durationMs)) enumerated=\(enumerated ? 1 : 0) force=\(forceRender ? 1 : 0) dragging=\(isDragging ? 1 : 0) windows=\(max(0, windowCount)) items=\(currentItems.count) displays=\(panelManager.allPanels.count) poll_interval_ms=\(Self.fmt2(currentPollInterval * 1000.0)) space_age_ms=\(Self.fmt2(spaceAgeMs)) ax_active=\(isAXObserverActive ? 1 : 0) ax_trusted=\(axTrusted ? 1 : 0) metrics=\(config.systemIndicatorsEnabled ? 1 : 0) adjust=\(config.adjustWindowsForTaskbar ? 1 : 0) rss=\(rss)"
         }
     }
 
     private func maybeCheckMemory(now: CFAbsoluteTime) {
         guard now - lastMemoryCheck > 30 else { return }
-        MemoryMonitor.checkMemoryHealth(baseline: memoryBaseline)
+        PerformanceMonitor.shared.measureSegment("memory_check", thresholdMs: 25.0) {
+            MemoryMonitor.checkMemoryHealth(baseline: memoryBaseline)
+        }
         lastMemoryCheck = now
+    }
+
+    @discardableResult
+    private func refreshSystemMetricsIfNeeded(now: CFAbsoluteTime) -> Bool {
+        guard systemMetricsProvider.needsRefresh(now: now, config: config) else { return false }
+        PerformanceMonitor.shared.measureSegment("system_metrics_sample", thresholdMs: 25.0) {
+            systemMetricsProvider.refreshIfNeeded(config: config, now: now)
+        }
+        return true
+    }
+
+    private static func fmt2(_ value: Double) -> String {
+        String(format: "%.2f", value)
     }
 
     /// Preferred persisted window order for the current live set.
@@ -688,6 +824,16 @@ final class EventLoop {
     // MARK: - Render UI
 
     private func renderUI() {
+        PerformanceMonitor.shared.measureSegment(
+            "render_ui",
+            thresholdMs: 80.0,
+            details: "items=\(currentItems.count) displays=\(panelManager.allPanels.count)"
+        ) {
+            renderUIBody()
+        }
+    }
+
+    private func renderUIBody() {
         let displayIds = panelManager.allDisplayIds
 
         let focusByDisplay: [CGDirectDisplayID: FocusInfo] = {
@@ -732,7 +878,10 @@ final class EventLoop {
             // Tab groups operate on individual windows, so disable app grouping for the render pass.
             renderConfig.groupByApp = false
         }
-        let baseWindowItems = UIRenderer.render(from: windowStateStore, config: renderConfig)
+        rebuildWindowPresentationKeyIndex()
+        let baseWindowItems = applyWindowPresentationOverrides(
+            to: UIRenderer.render(from: windowStateStore, config: renderConfig)
+        )
         let (windowItems, windowIdToGroupId) = config.windowTabGroupsEnabled
             ? applyTabGroups(windowItems: baseWindowItems, displayIds: displayIds)
             : (baseWindowItems, [:])
@@ -744,8 +893,21 @@ final class EventLoop {
 
         // Custom items (spacers/labels/links/folders). These are global by default and
         // appear on every display unless a future per-display option is added.
+        let systemIndicatorPayload = systemMetricsProvider.payload(
+            config: config,
+            screenId: systemIndicatorScreenId(displayIds: displayIds),
+            refresh: false
+        )
+        let systemIndicatorItems = Self.applyPreferredSystemIndicatorOrder(
+            systemIndicatorPayload.items,
+            preferred: userState.systemIndicatorOrder
+        )
+        let systemIndicatorsInFreeFlow = config.systemIndicatorPlacement == .free
         let allCustomItems = config.customItems + pluginCustomItems
-        if !allCustomItems.isEmpty {
+        let placeSystemIndicatorsAfterPinnedApps =
+            config.systemIndicatorPlacement == .trailing ||
+            config.systemIndicatorPlacement == .rightCorner
+        if (!systemIndicatorItems.isEmpty && (!placeSystemIndicatorsAfterPinnedApps || systemIndicatorsInFreeFlow)) || !allCustomItems.isEmpty {
             let custom: [TaskbarItem] = allCustomItems.map { item in
                 switch item {
                 case .spacer(let id, let width):
@@ -758,7 +920,13 @@ final class EventLoop {
                     return .customFolder(id: id, title: title, path: path, icon: icon, screenId: nil)
                 }
             }
-            windowItemsWithExtras = custom + windowItemsWithExtras
+            if systemIndicatorsInFreeFlow {
+                windowItemsWithExtras = custom + systemIndicatorItems + windowItemsWithExtras
+            } else if placeSystemIndicatorsAfterPinnedApps {
+                windowItemsWithExtras = custom + windowItemsWithExtras
+            } else {
+                windowItemsWithExtras = systemIndicatorItems + custom + windowItemsWithExtras
+            }
         }
 
         // Sidebar plugin tile zone (Dia-style).
@@ -834,8 +1002,15 @@ final class EventLoop {
             windowDisplayMode: config.windowDisplayMode,
             openBundleIdsByDisplay: openBundleIdsByDisplay
         )
-        currentItems = composed.items
+        currentItems = {
+            let items = placeSystemIndicatorsAfterPinnedApps && !systemIndicatorsInFreeFlow
+                ? composed.items + systemIndicatorItems
+                : composed.items
+            guard systemIndicatorsInFreeFlow else { return items }
+            return Self.applyPreferredItemOrder(items, preferred: userState.taskbarItemOrder)
+        }()
         pinnedBundleIdsByDisplay = composed.pinnedBundleIdsByDisplay
+        let itemBackgroundColorsByDisplay = presentationBackgroundColorsByDisplay(displayIds: displayIds)
 
         let expandedSidebarDisplays: Set<CGDirectDisplayID> = {
             guard config.sidebarModeEnabled, config.taskbarPosition.isVertical else { return [] }
@@ -857,7 +1032,9 @@ final class EventLoop {
             iconCache: iconCache,
             renderer: renderer,
             focusByDisplay: focusByDisplay,
-            expandedSidebarDisplays: expandedSidebarDisplays
+            expandedSidebarDisplays: expandedSidebarDisplays,
+            systemIndicatorVisuals: systemIndicatorPayload.visuals,
+            itemBackgroundColorsByDisplay: itemBackgroundColorsByDisplay
         )
 
         let sharedBarViewSignature = Self.sharedBarViewDataSignature(
@@ -1009,6 +1186,19 @@ final class EventLoop {
         if !config.tileZoneEnabled || !config.sidebarModeEnabled || !config.taskbarPosition.isVertical {
             hidePluginCard()
         }
+    }
+
+    private func systemIndicatorScreenId(displayIds: [CGDirectDisplayID]) -> UInt32? {
+        guard config.systemIndicatorDisplayScope == .selectedDisplay else { return nil }
+        if let selected = config.systemIndicatorSelectedDisplayId,
+           displayIds.contains(CGDirectDisplayID(selected)) {
+            return selected
+        }
+        if let mainDisplayId = NSScreen.main?.displayId,
+           displayIds.contains(mainDisplayId) {
+            return UInt32(mainDisplayId)
+        }
+        return displayIds.first
     }
 
     /// Updates cached focus info. Returns true when focus changes in a way that should
@@ -1204,6 +1394,17 @@ final class EventLoop {
         // Cancel any in-flight drag animation before rebuilding state
         renderer.cancelDrag(displayId: displayId)
         let panelItems = itemsForDisplay(displayId)
+        let systemIndicatorOrder = Self.systemIndicatorMetricOrderAfterReorder(
+            items: panelItems,
+            from: from,
+            to: to
+        )
+        if config.systemIndicatorPlacement != .free, let systemIndicatorOrder {
+            userState.updateSystemIndicatorOrder(systemIndicatorOrder)
+            renderUI()
+            return
+        }
+
         guard let plan = Self.visibleReorderPlan(
             items: panelItems,
             from: from,
@@ -1214,6 +1415,9 @@ final class EventLoop {
             return
         }
 
+        if let systemIndicatorOrder {
+            userState.updateSystemIndicatorOrder(systemIndicatorOrder)
+        }
         if !plan.windowOrder.isEmpty {
             _ = windowStateStore.applyPreferredWindowOrder(plan.windowOrder)
             userState.updateWindowOrder(windowStateStore.getWindows().map(\.id.raw))
@@ -1222,6 +1426,9 @@ final class EventLoop {
             userState.updateOrder(plan.appOrder)
         }
         applyPinnedReorder(plan.pinnedOrder, displayId: displayId)
+        if config.systemIndicatorPlacement == .free, !plan.itemOrder.isEmpty {
+            userState.updateTaskbarItemOrder(plan.itemOrder)
+        }
         renderUI()
     }
 
@@ -1246,7 +1453,8 @@ final class EventLoop {
             pinnedOrder: deduped(reordered.compactMap { item in
                 if case .pinnedApp(let bundleId, _) = item { return bundleId }
                 return nil
-            })
+            }),
+            itemOrder: deduped(reordered.compactMap(reorderItemIdentity(for:)))
         )
     }
 
@@ -1278,6 +1486,86 @@ final class EventLoop {
         }
     }
 
+    private nonisolated static func reorderItemIdentity(for item: TaskbarItem) -> String? {
+        switch item {
+        case .window(let id, _, _, _, _, _, _):
+            return "window:\(id.raw)"
+        case .appGroup(let bundleId, _, _, _, _, _, let screenId):
+            return "app-group:\(screenId):\(bundleId)"
+        case .pinnedApp(let bundleId, let screenId):
+            return "pinned:\(screenId):\(bundleId)"
+        case .launcher(let screenId):
+            return "launcher:\(screenId)"
+        case .pluginTile(let id, _, _, _, _, let screenId):
+            return "plugin:\(screenId):\(id)"
+        case .tabGroup(let id, _, _, _, _, _, _, let screenId):
+            return "tab-group:\(screenId):\(id)"
+        case .customSpacer(let id, _, let screenId):
+            return "custom-spacer:\(screenId.map(String.init) ?? "all"):\(id)"
+        case .customText(let id, _, let screenId):
+            if id.hasPrefix("system.") {
+                return "system:\(screenId.map(String.init) ?? "all"):\(id)"
+            }
+            return "custom-text:\(screenId.map(String.init) ?? "all"):\(id)"
+        case .customLink(let id, _, _, _, let screenId):
+            return "custom-link:\(screenId.map(String.init) ?? "all"):\(id)"
+        case .customFolder(let id, _, _, _, let screenId):
+            return "custom-folder:\(screenId.map(String.init) ?? "all"):\(id)"
+        }
+    }
+
+    nonisolated static func applyPreferredSystemIndicatorOrder(
+        _ current: [TaskbarItem],
+        preferred: [String]
+    ) -> [TaskbarItem] {
+        guard !current.isEmpty, !preferred.isEmpty else { return current }
+
+        var rankByMetric: [String: Int] = [:]
+        rankByMetric.reserveCapacity(preferred.count)
+        for (rank, metricId) in preferred.enumerated() where rankByMetric[metricId] == nil {
+            rankByMetric[metricId] = rank
+        }
+
+        return current.enumerated()
+            .sorted { lhs, rhs in
+                let lhsRank = systemIndicatorMetricId(for: lhs.element).flatMap { rankByMetric[$0] } ?? Int.max
+                let rhsRank = systemIndicatorMetricId(for: rhs.element).flatMap { rankByMetric[$0] } ?? Int.max
+                if lhsRank != rhsRank { return lhsRank < rhsRank }
+                return lhs.offset < rhs.offset
+            }
+            .map(\.element)
+    }
+
+    nonisolated static func systemIndicatorMetricOrderAfterReorder(
+        items: [TaskbarItem],
+        from: Int,
+        to: Int
+    ) -> [String]? {
+        guard from >= 0, from < items.count, to >= 0, to <= items.count else { return nil }
+        guard to != from, to != from + 1 else { return nil }
+        guard systemIndicatorMetricId(for: items[from]) != nil else { return nil }
+
+        let indicatorIndexes = items.indices.filter { systemIndicatorMetricId(for: items[$0]) != nil }
+        guard let first = indicatorIndexes.first, let last = indicatorIndexes.last else { return nil }
+        guard from >= first, from <= last, to >= first, to <= last + 1 else { return nil }
+        guard (first...last).allSatisfy({ systemIndicatorMetricId(for: items[$0]) != nil }) else { return nil }
+
+        var reordered = items
+        let moved = reordered.remove(at: from)
+        let adjustedInsertionIndex = to > from ? to - 1 : to
+        reordered.insert(moved, at: min(adjustedInsertionIndex, reordered.count))
+
+        let order = deduped(reordered.compactMap(systemIndicatorMetricId(for:)))
+        return order.isEmpty ? nil : order
+    }
+
+    nonisolated static func systemIndicatorMetricId(for item: TaskbarItem) -> String? {
+        if case .customText(let id, _, _) = item, id.hasPrefix("system.") {
+            return id
+        }
+        return nil
+    }
+
     private nonisolated static func deduped<T: Hashable>(_ values: [T]) -> [T] {
         var seen = Set<T>()
         return values.filter { seen.insert($0).inserted }
@@ -1297,6 +1585,28 @@ final class EventLoop {
             result.append(value)
         }
         return result
+    }
+
+    private nonisolated static func applyPreferredItemOrder(
+        _ current: [TaskbarItem],
+        preferred: [String]
+    ) -> [TaskbarItem] {
+        guard !current.isEmpty, !preferred.isEmpty else { return current }
+
+        var rankByIdentity: [String: Int] = [:]
+        rankByIdentity.reserveCapacity(preferred.count)
+        for (rank, identity) in preferred.enumerated() where rankByIdentity[identity] == nil {
+            rankByIdentity[identity] = rank
+        }
+
+        return current.enumerated()
+            .sorted { lhs, rhs in
+                let lhsRank = reorderItemIdentity(for: lhs.element).flatMap { rankByIdentity[$0] } ?? Int.max
+                let rhsRank = reorderItemIdentity(for: rhs.element).flatMap { rankByIdentity[$0] } ?? Int.max
+                if lhsRank != rhsRank { return lhsRank < rhsRank }
+                return lhs.offset < rhs.offset
+            }
+            .map(\.element)
     }
 
     private func applyPinnedReorder(_ pinnedOrder: [String], displayId: CGDirectDisplayID) {
@@ -1330,6 +1640,80 @@ final class EventLoop {
         case .quit:
             NSApp.terminate(nil)
         }
+    }
+
+    private func rebuildWindowPresentationKeyIndex() {
+        let windows = windowStateStore.getWindows()
+        var map: [UInt32: String] = [:]
+        map.reserveCapacity(windows.count)
+        for window in windows {
+            map[window.id.raw] = WindowPresentationKey.make(
+                bundleId: window.bundleId.raw,
+                title: window.title,
+                appName: window.appName
+            )
+        }
+        windowPresentationKeyByWindowId = map
+    }
+
+    private func applyWindowPresentationOverrides(to items: [TaskbarItem]) -> [TaskbarItem] {
+        items.map { item in
+            guard case .window(let id, let bundleId, _, let appName, let isHidden, let isMinimized, let screenId) = item,
+                  let key = windowPresentationKeyByWindowId[id.raw],
+                  let override = userState.presentationOverride(for: key),
+                  let displayTitle = override.title,
+                  !displayTitle.isEmpty else {
+                return item
+            }
+            return .window(
+                id: id,
+                bundleId: bundleId,
+                title: displayTitle,
+                appName: appName,
+                isHidden: isHidden,
+                isMinimized: isMinimized,
+                screenId: screenId
+            )
+        }
+    }
+
+    private func presentationBackgroundColorsByDisplay(
+        displayIds: [CGDirectDisplayID]
+    ) -> [CGDirectDisplayID: [Int: String]] {
+        var result: [CGDirectDisplayID: [Int: String]] = [:]
+        result.reserveCapacity(displayIds.count)
+
+        for displayId in displayIds {
+            let items = itemsForDisplay(displayId)
+            var colors: [Int: String] = [:]
+            colors.reserveCapacity(items.count)
+
+            for (index, item) in items.enumerated() {
+                let hex: String?
+                switch item {
+                case .window(let id, _, _, _, _, _, _):
+                    if let key = windowPresentationKeyByWindowId[id.raw] {
+                        hex = userState.presentationOverride(for: key)?.colorHex
+                    } else {
+                        hex = nil
+                    }
+                case .tabGroup(let groupId, _, _, _, _, _, _, _):
+                    hex = userState.tabGroup(withId: groupId)?.colorHex
+                default:
+                    hex = nil
+                }
+
+                if let normalized = PresentationColorPalette.normalizedHex(hex) {
+                    colors[index] = normalized
+                }
+            }
+
+            if !colors.isEmpty {
+                result[displayId] = colors
+            }
+        }
+
+        return result
     }
 
     private func handleContextAction(displayId: CGDirectDisplayID, index: Int, action: ContextAction, payload: String?) {
@@ -1391,6 +1775,29 @@ final class EventLoop {
             }
             renderUI()
 
+        case .renameWindow:
+            guard case .window(let id, _, let title, let appName, _, _, _) = item else { return }
+            renameWindowFlow(windowId: id.raw, fallbackTitle: title, fallbackAppName: appName)
+
+        case .setWindowColor:
+            guard case .window(let id, _, _, _, _, _, _) = item else { return }
+            guard let key = windowPresentationKeyByWindowId[id.raw],
+                  let colorHex = PresentationColorPalette.normalizedHex(payload) else { return }
+            userState.setWindowColorOverride(key: key, colorHex: colorHex)
+            renderUI()
+
+        case .resetWindowTitle:
+            guard case .window(let id, _, _, _, _, _, _) = item else { return }
+            guard let key = windowPresentationKeyByWindowId[id.raw] else { return }
+            userState.setWindowTitleOverride(key: key, title: nil)
+            renderUI()
+
+        case .resetWindowColor:
+            guard case .window(let id, _, _, _, _, _, _) = item else { return }
+            guard let key = windowPresentationKeyByWindowId[id.raw] else { return }
+            userState.setWindowColorOverride(key: key, colorHex: nil)
+            renderUI()
+
         case .createTabGroup:
             guard config.windowTabGroupsEnabled else { return }
             guard case .window(let id, _, _, _, _, _, _) = item else { return }
@@ -1420,6 +1827,12 @@ final class EventLoop {
             guard let groupId = payload, !groupId.isEmpty else { return }
             userState.deleteTabGroup(id: groupId)
             expandedTabGroupIdByDisplay.removeValue(forKey: displayId)
+            renderUI()
+
+        case .setTabGroupColor:
+            guard config.windowTabGroupsEnabled else { return }
+            guard case .tabGroup(let groupId, _, _, _, _, _, _, _) = item else { return }
+            userState.setTabGroupColor(id: groupId, colorHex: PresentationColorPalette.normalizedHex(payload))
             renderUI()
 
         case .openCustomItem:
@@ -1719,6 +2132,40 @@ final class EventLoop {
         tabGroupHoverCandidateGroupIdByDisplay.removeAll()
     }
 
+    private func renameWindowFlow(windowId: UInt32, fallbackTitle: String, fallbackAppName: String) {
+        guard let key = windowPresentationKeyByWindowId[windowId] else { return }
+
+        let originalTitle: String = {
+            if let window = windowStateStore.getWindows().first(where: { $0.id.raw == windowId }) {
+                return window.title.isEmpty ? window.appName : window.title
+            }
+            return fallbackTitle.isEmpty ? fallbackAppName : fallbackTitle
+        }()
+        let currentTitle = userState.presentationOverride(for: key)?.title ?? originalTitle
+
+        let alert = NSAlert()
+        alert.messageText = "Rename Window"
+        alert.informativeText = "This changes the label shown in LiquidBar only."
+        alert.addButton(withTitle: "Save")
+        alert.addButton(withTitle: "Cancel")
+
+        let nameField = NSTextField(frame: NSRect(x: 0, y: 0, width: 280, height: 22))
+        nameField.stringValue = currentTitle
+        nameField.placeholderString = originalTitle
+        alert.accessoryView = nameField
+
+        let resp = alert.runModal()
+        guard resp == .alertFirstButtonReturn else { return }
+
+        let name = nameField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        if name.isEmpty || name == originalTitle {
+            userState.setWindowTitleOverride(key: key, title: nil)
+        } else {
+            userState.setWindowTitleOverride(key: key, title: name)
+        }
+        renderUI()
+    }
+
     private func createTabGroupFlow(displayId: CGDirectDisplayID, windowId: UInt32) {
         let alert = NSAlert()
         alert.messageText = "Create Tab Group"
@@ -1913,17 +2360,11 @@ final class EventLoop {
     }
 
     private func currentSwitcherCandidateWindows() -> [WindowInfo] {
-        var windows = windowStateStore.getWindows()
-        if config.windowDisplayMode == .perDisplay,
-           let focusDisplay = cachedFocusDisplayId {
-            let filtered = windows.filter { $0.monitorId.raw == focusDisplay }
-            if !filtered.isEmpty {
-                windows = filtered
-            }
-        }
-
-        var seen = Set<UInt32>()
-        return windows.filter { seen.insert($0.id.raw).inserted }
+        Self.switcherCandidateWindows(
+            windows: windowStateStore.getWindows(),
+            scope: config.switcherWindowScope,
+            focusDisplayId: cachedFocusDisplayId
+        )
     }
 
     private func makeSwitcherPanelEntries(
@@ -1964,7 +2405,9 @@ final class EventLoop {
     }
 
     private func scheduleSwitcherPrewarm() {
-        guard config.switcherEnabled, switcherPanel?.isVisible != true else { return }
+        guard config.switcherEnabled,
+              !isSwitcherThumbnailPrewarmDisabledByEnv,
+              switcherPanel?.isVisible != true else { return }
         switcherPrewarmWorkItem?.cancel()
         var work: DispatchWorkItem?
         work = DispatchWorkItem { [weak self] in
@@ -1977,7 +2420,9 @@ final class EventLoop {
     }
 
     private func prewarmSwitcherPanelIfNeeded() {
-        guard config.switcherEnabled, switcherPanel?.isVisible != true else { return }
+        guard config.switcherEnabled,
+              !isSwitcherThumbnailPrewarmDisabledByEnv,
+              switcherPanel?.isVisible != true else { return }
         let windows = Self.orderedSwitcherWindows(
             windows: currentSwitcherCandidateWindows(),
             mruWindowIds: switcherMRUWindowIds
@@ -1995,11 +2440,13 @@ final class EventLoop {
 
         let panel = ensureSwitcherPanel()
         panel.setAnimationProfile(config.animationProfile)
+        let targetScreen = targetScreenForSwitcherSelection(entries: windows, selectedIndex: selected)
         panel.prewarm(
             entries: makeSwitcherPanelEntries(windows: windows, selectedIndex: selected),
             selectedIndex: selected,
-            on: targetScreenForSwitcherSelection(entries: windows, selectedIndex: selected)
+            on: targetScreen
         )
+        prefetchSwitcherThumbnails(windows: windows, selectedIndex: selected, targetScreen: targetScreen)
         switcherPrewarmSignature = signature
     }
 
@@ -2144,6 +2591,34 @@ final class EventLoop {
         }
     }
 
+    private func prefetchSwitcherThumbnails(
+        windows: [WindowInfo],
+        selectedIndex: Int,
+        targetScreen: NSScreen?
+    ) {
+        let fallbackScale = targetScreen?.backingScaleFactor ?? 2.0
+        let indices = Self.switcherPrewarmThumbnailIndices(
+            count: windows.count,
+            selectedIndex: selectedIndex
+        )
+        for index in indices {
+            guard windows.indices.contains(index) else { continue }
+            let info = windows[index]
+            let targetSize = WindowSwitcherPanel.thumbnailTargetSize(
+                layoutStyle: config.switcherLayoutStyle,
+                selected: index == selectedIndex,
+                aspectRatio: WindowSwitcherPanel.aspectRatio(for: info.bounds)
+            )
+            thumbnailService.prefetchWindowThumbnail(
+                windowId: CGWindowID(info.id.raw),
+                targetSizePoints: targetSize,
+                screenScale: fallbackScale,
+                producer: ThumbnailCaptureContext.prewarm.producer,
+                preferCachedImage: info.isHidden || info.isMinimized
+            )
+        }
+    }
+
     private func scheduleSwitcherThumbnailCapture(sessionToken: UInt64) {
         switcherThumbnailWorkItem?.cancel()
         var work: DispatchWorkItem?
@@ -2207,6 +2682,19 @@ final class EventLoop {
         }
 
         return result
+    }
+
+    nonisolated static func switcherPrewarmThumbnailIndices(
+        count: Int,
+        selectedIndex: Int
+    ) -> [Int] {
+        switcherThumbnailIndices(
+            count: count,
+            selectedIndex: selectedIndex,
+            leadingCount: 6,
+            neighborRadius: 2,
+            maxCount: 8
+        )
     }
 
     private func hideSwitcher(commitSelection: Bool) {
@@ -3337,7 +3825,7 @@ final class EventLoop {
         sidebarRevealUntilByDisplay.removeAll()
         sidebarPresentationByDisplay.removeAll()
         configureSwitcherHotkey()
-        scheduleAXObserverRefresh(delay: 0.05)
+        scheduleAXObserverRefresh(delay: 0.25)
         markWindowRefreshNeeded(invalidateCaches: true)
         userState = UserState.load()
         groupPreviewOrderByKey = userState.groupPreviewOrderByKey
@@ -3368,17 +3856,25 @@ final class EventLoop {
         let axEnabled = AXIsProcessTrusted() && !isAXQueriesDisabledByEnv
         if axEnabled {
             if isAXObserverActive {
-                axObserverService.refreshObservedApps()
+                refreshAXObserversMeasured()
             } else {
-                axObserverService.start { [weak self] batch in
-                    guard let self else { return }
-                    self.handleAXEventBatch(batch)
+                PerformanceMonitor.shared.measureSegment("ax_observer_start", thresholdMs: 120.0) {
+                    axObserverService.start { [weak self] batch in
+                        guard let self else { return }
+                        self.handleAXEventBatch(batch)
+                    }
                 }
                 isAXObserverActive = true
             }
         } else if isAXObserverActive {
             axObserverService.stop()
             isAXObserverActive = false
+        }
+    }
+
+    private func refreshAXObserversMeasured() {
+        PerformanceMonitor.shared.measureSegment("ax_observer_refresh", thresholdMs: 120.0) {
+            axObserverService.refreshObservedApps()
         }
     }
 
@@ -3509,9 +4005,9 @@ final class EventLoop {
         panelManager.resumeAllDisplayLinks()
 
         // Burst re-polling: CGWindowList can transiently return 0 windows during
-        // three-finger swipes; retry a few times so the bar repopulates quickly.
-        let delays: [TimeInterval] = [0.05, 0.15, 0.30, 0.60, 1.00]
-        for delay in delays {
+        // three-finger swipes. Keep the recovery burst sparse enough that slow
+        // WindowServer replies do not stack on the main queue during the swipe.
+        for delay in Self.spaceChangeRecoveryDelays {
             DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
                 guard let self else { return }
                 guard self.spaceChangeToken == token else { return }

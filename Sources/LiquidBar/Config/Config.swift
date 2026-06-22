@@ -141,6 +141,60 @@ enum PreviewMode: String, Codable, Sendable, CaseIterable {
     case liveLowFps = "live_low_fps"
 }
 
+enum SystemIndicatorVisualMode: String, Codable, Sendable, CaseIterable {
+    /// Numeric label such as "CPU 42%".
+    case percentage
+    /// Numeric label plus a subtle inline progress track.
+    case bar
+    /// Numeric label plus a bounded recent-history graph.
+    case graph
+}
+
+enum SystemIndicatorChipPreset: String, Codable, Sendable, CaseIterable {
+    /// Legacy label-forward chip kept for config compatibility.
+    case full
+    /// Default labeled chip with enough width for names and values.
+    case compact
+    /// Numeric-only footprint for dense taskbars.
+    case dense
+    /// Smallest footprint; renders a tiny chart instead of text.
+    case micro
+}
+
+enum SystemIndicatorAppearance: String, Codable, Sendable, CaseIterable {
+    /// Current layered glass capsule treatment.
+    case glass
+    /// Low-depth capsule without layered glass highlights.
+    case flat
+    /// Text-forward treatment with only a small baseline indicator.
+    case underline
+    /// Bare text/letter with a tiny metric accent.
+    case minimal
+}
+
+enum SystemIndicatorPlacement: String, Codable, Sendable, CaseIterable {
+    /// Normal taskbar flow; drag reorder can place indicators among other items.
+    case free
+    /// Flow before custom/window items.
+    case leading
+    /// Flow after pinned/window items.
+    case trailing
+    /// Affixed to the physical left edge of the bar.
+    case leftCorner = "left_corner"
+    /// Affixed to the physical right edge of the bar.
+    case rightCorner = "right_corner"
+}
+
+enum SystemIndicatorTemperatureUnit: String, Codable, Sendable, CaseIterable {
+    case celsius
+    case fahrenheit
+}
+
+enum SystemIndicatorDisplayScope: String, Codable, Sendable, CaseIterable {
+    case allDisplays = "all_displays"
+    case selectedDisplay = "selected_display"
+}
+
 enum FocusIndicatorStyle: String, Codable, Sendable, CaseIterable {
     /// Focused item is indicated by a full-tile liquid glass highlight.
     case tile
@@ -151,6 +205,11 @@ enum FocusIndicatorStyle: String, Codable, Sendable, CaseIterable {
 enum SwitcherLayoutStyle: String, Codable, Sendable, CaseIterable {
     case compactShelf = "compact_shelf"
     case heroCarousel = "hero_carousel"
+}
+
+enum SwitcherWindowScope: String, Codable, Sendable, CaseIterable {
+    case allDisplays = "all_displays"
+    case focusedDisplay = "focused_display"
 }
 
 enum AppGroupStackStyle: String, Codable, Sendable, CaseIterable {
@@ -220,6 +279,29 @@ struct Config: Codable, Sendable, Equatable {
     var pinnedAppsScope: PinnedAppsScope
     /// Custom user-defined items (spacers, text, links, folders).
     var customItems: [CustomItem]
+    /// Built-in CPU/GPU/RAM labels shown before window items.
+    var systemIndicatorsEnabled: Bool
+    /// Minimum interval for refreshing system indicator labels.
+    var systemIndicatorRefreshIntervalMs: Int
+    /// Where built-in system indicators are placed relative to app/window items.
+    var systemIndicatorPlacement: SystemIndicatorPlacement
+    /// Whether built-in system indicators appear on every LiquidBar display or one selected display.
+    var systemIndicatorDisplayScope: SystemIndicatorDisplayScope
+    /// Selected display for system indicators when `systemIndicatorDisplayScope == .selectedDisplay`.
+    var systemIndicatorSelectedDisplayId: UInt32?
+    var systemIndicatorCpuEnabled: Bool
+    var systemIndicatorGpuEnabled: Bool
+    var systemIndicatorRamEnabled: Bool
+    var systemIndicatorThermalEnabled: Bool
+    var systemIndicatorCpuVisualMode: SystemIndicatorVisualMode
+    var systemIndicatorGpuVisualMode: SystemIndicatorVisualMode
+    var systemIndicatorRamVisualMode: SystemIndicatorVisualMode
+    var systemIndicatorThermalVisualMode: SystemIndicatorVisualMode
+    var systemIndicatorTemperatureUnit: SystemIndicatorTemperatureUnit
+    var systemIndicatorChipPreset: SystemIndicatorChipPreset
+    var systemIndicatorAppearance: SystemIndicatorAppearance
+    /// Number of bounded samples retained for graph mode.
+    var systemIndicatorGraphSamples: Int
     var centerItems: Bool
     var hideDock: Bool
     var showMenuBarIcon: Bool
@@ -257,6 +339,8 @@ struct Config: Codable, Sendable, Equatable {
     var previewHoverDelayMs: Int
     /// Enable interval-based FPS/frame/poll performance logs (`Log.perf`).
     var performanceLoggingEnabled: Bool
+    /// Enable extra local diagnostics for investigating hangs and lag.
+    var performanceHangDiagnosticsEnabled: Bool
     /// Legacy compatibility flag for detailed renderer timing. The native retained
     /// renderer does not emit GPU commit feedback.
     var performanceGpuTimingEnabled: Bool
@@ -276,6 +360,7 @@ struct Config: Codable, Sendable, Equatable {
     /// Serialized shortcut (example: "option+tab").
     var switcherHotkey: String
     var switcherLayoutStyle: SwitcherLayoutStyle
+    var switcherWindowScope: SwitcherWindowScope
     var providerRuntimeEnabled: Bool
     var providerTimeoutMs: Int
     var providerCircuitBreakerThreshold: Int
@@ -309,6 +394,23 @@ struct Config: Codable, Sendable, Equatable {
         pinnedApps: [String] = [],
         pinnedAppsScope: PinnedAppsScope = .perSpace,
         customItems: [CustomItem] = [],
+        systemIndicatorsEnabled: Bool = true,
+        systemIndicatorRefreshIntervalMs: Int = 1000,
+        systemIndicatorPlacement: SystemIndicatorPlacement = .leading,
+        systemIndicatorDisplayScope: SystemIndicatorDisplayScope = .allDisplays,
+        systemIndicatorSelectedDisplayId: UInt32? = nil,
+        systemIndicatorCpuEnabled: Bool = true,
+        systemIndicatorGpuEnabled: Bool = true,
+        systemIndicatorRamEnabled: Bool = true,
+        systemIndicatorThermalEnabled: Bool = false,
+        systemIndicatorCpuVisualMode: SystemIndicatorVisualMode = .percentage,
+        systemIndicatorGpuVisualMode: SystemIndicatorVisualMode = .percentage,
+        systemIndicatorRamVisualMode: SystemIndicatorVisualMode = .percentage,
+        systemIndicatorThermalVisualMode: SystemIndicatorVisualMode = .percentage,
+        systemIndicatorTemperatureUnit: SystemIndicatorTemperatureUnit = .celsius,
+        systemIndicatorChipPreset: SystemIndicatorChipPreset = .compact,
+        systemIndicatorAppearance: SystemIndicatorAppearance = .glass,
+        systemIndicatorGraphSamples: Int = 16,
         centerItems: Bool = false,
         hideDock: Bool = false,
         showMenuBarIcon: Bool = true,
@@ -333,6 +435,7 @@ struct Config: Codable, Sendable, Equatable {
         previewMode: PreviewMode = .staticImage,
         previewHoverDelayMs: Int = 0,
         performanceLoggingEnabled: Bool = false,
+        performanceHangDiagnosticsEnabled: Bool = false,
         performanceGpuTimingEnabled: Bool = false,
         performanceLogIntervalMs: Int = 1000,
         windowTabGroupsEnabled: Bool = false,
@@ -343,6 +446,7 @@ struct Config: Codable, Sendable, Equatable {
         switcherEnabled: Bool = false,
         switcherHotkey: String = "option+tab",
         switcherLayoutStyle: SwitcherLayoutStyle = .heroCarousel,
+        switcherWindowScope: SwitcherWindowScope = .allDisplays,
         providerRuntimeEnabled: Bool = true,
         providerTimeoutMs: Int = 900,
         providerCircuitBreakerThreshold: Int = 3
@@ -375,6 +479,23 @@ struct Config: Codable, Sendable, Equatable {
         self.pinnedApps = pinnedApps
         self.pinnedAppsScope = pinnedAppsScope
         self.customItems = customItems
+        self.systemIndicatorsEnabled = systemIndicatorsEnabled
+        self.systemIndicatorRefreshIntervalMs = systemIndicatorRefreshIntervalMs
+        self.systemIndicatorPlacement = systemIndicatorPlacement
+        self.systemIndicatorDisplayScope = systemIndicatorDisplayScope
+        self.systemIndicatorSelectedDisplayId = systemIndicatorSelectedDisplayId
+        self.systemIndicatorCpuEnabled = systemIndicatorCpuEnabled
+        self.systemIndicatorGpuEnabled = systemIndicatorGpuEnabled
+        self.systemIndicatorRamEnabled = systemIndicatorRamEnabled
+        self.systemIndicatorThermalEnabled = systemIndicatorThermalEnabled
+        self.systemIndicatorCpuVisualMode = systemIndicatorCpuVisualMode
+        self.systemIndicatorGpuVisualMode = systemIndicatorGpuVisualMode
+        self.systemIndicatorRamVisualMode = systemIndicatorRamVisualMode
+        self.systemIndicatorThermalVisualMode = systemIndicatorThermalVisualMode
+        self.systemIndicatorTemperatureUnit = systemIndicatorTemperatureUnit
+        self.systemIndicatorChipPreset = systemIndicatorChipPreset
+        self.systemIndicatorAppearance = systemIndicatorAppearance
+        self.systemIndicatorGraphSamples = systemIndicatorGraphSamples
         self.centerItems = centerItems
         self.hideDock = hideDock
         self.showMenuBarIcon = showMenuBarIcon
@@ -399,6 +520,7 @@ struct Config: Codable, Sendable, Equatable {
         self.previewMode = previewMode
         self.previewHoverDelayMs = previewHoverDelayMs
         self.performanceLoggingEnabled = performanceLoggingEnabled
+        self.performanceHangDiagnosticsEnabled = performanceHangDiagnosticsEnabled
         self.performanceGpuTimingEnabled = performanceGpuTimingEnabled
         self.performanceLogIntervalMs = performanceLogIntervalMs
         self.windowTabGroupsEnabled = windowTabGroupsEnabled
@@ -409,6 +531,7 @@ struct Config: Codable, Sendable, Equatable {
         self.switcherEnabled = switcherEnabled
         self.switcherHotkey = switcherHotkey
         self.switcherLayoutStyle = switcherLayoutStyle
+        self.switcherWindowScope = switcherWindowScope
         self.providerRuntimeEnabled = providerRuntimeEnabled
         self.providerTimeoutMs = providerTimeoutMs
         self.providerCircuitBreakerThreshold = providerCircuitBreakerThreshold
@@ -446,6 +569,23 @@ struct Config: Codable, Sendable, Equatable {
         pinnedApps = try c.decode([String].self, forKey: .pinnedApps)
         pinnedAppsScope = try c.decodeIfPresent(PinnedAppsScope.self, forKey: .pinnedAppsScope) ?? .perSpace
         customItems = try c.decodeIfPresent([CustomItem].self, forKey: .customItems) ?? []
+        systemIndicatorsEnabled = try c.decodeIfPresent(Bool.self, forKey: .systemIndicatorsEnabled) ?? true
+        systemIndicatorRefreshIntervalMs = try c.decodeIfPresent(Int.self, forKey: .systemIndicatorRefreshIntervalMs) ?? 1000
+        systemIndicatorPlacement = try c.decodeIfPresent(SystemIndicatorPlacement.self, forKey: .systemIndicatorPlacement) ?? .leading
+        systemIndicatorDisplayScope = try c.decodeIfPresent(SystemIndicatorDisplayScope.self, forKey: .systemIndicatorDisplayScope) ?? .allDisplays
+        systemIndicatorSelectedDisplayId = try c.decodeIfPresent(UInt32.self, forKey: .systemIndicatorSelectedDisplayId)
+        systemIndicatorCpuEnabled = try c.decodeIfPresent(Bool.self, forKey: .systemIndicatorCpuEnabled) ?? true
+        systemIndicatorGpuEnabled = try c.decodeIfPresent(Bool.self, forKey: .systemIndicatorGpuEnabled) ?? true
+        systemIndicatorRamEnabled = try c.decodeIfPresent(Bool.self, forKey: .systemIndicatorRamEnabled) ?? true
+        systemIndicatorThermalEnabled = try c.decodeIfPresent(Bool.self, forKey: .systemIndicatorThermalEnabled) ?? false
+        systemIndicatorCpuVisualMode = try c.decodeIfPresent(SystemIndicatorVisualMode.self, forKey: .systemIndicatorCpuVisualMode) ?? .percentage
+        systemIndicatorGpuVisualMode = try c.decodeIfPresent(SystemIndicatorVisualMode.self, forKey: .systemIndicatorGpuVisualMode) ?? .percentage
+        systemIndicatorRamVisualMode = try c.decodeIfPresent(SystemIndicatorVisualMode.self, forKey: .systemIndicatorRamVisualMode) ?? .percentage
+        systemIndicatorThermalVisualMode = try c.decodeIfPresent(SystemIndicatorVisualMode.self, forKey: .systemIndicatorThermalVisualMode) ?? .percentage
+        systemIndicatorTemperatureUnit = try c.decodeIfPresent(SystemIndicatorTemperatureUnit.self, forKey: .systemIndicatorTemperatureUnit) ?? .celsius
+        systemIndicatorChipPreset = try c.decodeIfPresent(SystemIndicatorChipPreset.self, forKey: .systemIndicatorChipPreset) ?? .compact
+        systemIndicatorAppearance = try c.decodeIfPresent(SystemIndicatorAppearance.self, forKey: .systemIndicatorAppearance) ?? .glass
+        systemIndicatorGraphSamples = try c.decodeIfPresent(Int.self, forKey: .systemIndicatorGraphSamples) ?? 16
         centerItems = try c.decode(Bool.self, forKey: .centerItems)
         hideDock = try c.decode(Bool.self, forKey: .hideDock)
         showMenuBarIcon = try c.decodeIfPresent(Bool.self, forKey: .showMenuBarIcon) ?? true
@@ -470,6 +610,7 @@ struct Config: Codable, Sendable, Equatable {
         previewMode = try c.decodeIfPresent(PreviewMode.self, forKey: .previewMode) ?? .staticImage
         previewHoverDelayMs = try c.decodeIfPresent(Int.self, forKey: .previewHoverDelayMs) ?? 0
         performanceLoggingEnabled = try c.decodeIfPresent(Bool.self, forKey: .performanceLoggingEnabled) ?? false
+        performanceHangDiagnosticsEnabled = try c.decodeIfPresent(Bool.self, forKey: .performanceHangDiagnosticsEnabled) ?? false
         performanceGpuTimingEnabled = try c.decodeIfPresent(Bool.self, forKey: .performanceGpuTimingEnabled) ?? false
         performanceLogIntervalMs = try c.decodeIfPresent(Int.self, forKey: .performanceLogIntervalMs) ?? 1000
         windowTabGroupsEnabled = try c.decodeIfPresent(Bool.self, forKey: .windowTabGroupsEnabled) ?? false
@@ -480,6 +621,7 @@ struct Config: Codable, Sendable, Equatable {
         switcherEnabled = try c.decodeIfPresent(Bool.self, forKey: .switcherEnabled) ?? false
         switcherHotkey = try c.decodeIfPresent(String.self, forKey: .switcherHotkey) ?? "option+tab"
         switcherLayoutStyle = try c.decodeIfPresent(SwitcherLayoutStyle.self, forKey: .switcherLayoutStyle) ?? .heroCarousel
+        switcherWindowScope = try c.decodeIfPresent(SwitcherWindowScope.self, forKey: .switcherWindowScope) ?? .allDisplays
         providerRuntimeEnabled = try c.decodeIfPresent(Bool.self, forKey: .providerRuntimeEnabled) ?? true
         providerTimeoutMs = try c.decodeIfPresent(Int.self, forKey: .providerTimeoutMs) ?? 900
         providerCircuitBreakerThreshold = try c.decodeIfPresent(Int.self, forKey: .providerCircuitBreakerThreshold) ?? 3
@@ -568,6 +710,8 @@ struct Config: Codable, Sendable, Equatable {
         maxTitleWidth = maxTitleWidth.clamped(to: 20...240)
         previewHoverDelayMs = previewHoverDelayMs.clamped(to: 0...2000)
         hoverDelayMs = hoverDelayMs.clamped(to: 0...2000)
+        systemIndicatorRefreshIntervalMs = systemIndicatorRefreshIntervalMs.clamped(to: 250...10000)
+        systemIndicatorGraphSamples = systemIndicatorGraphSamples.clamped(to: 4...32)
         performanceLogIntervalMs = performanceLogIntervalMs.clamped(to: 250...10000)
         performanceGpuTimingEnabled = false
         if previewMode == .liveLowFps {

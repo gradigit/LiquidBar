@@ -121,6 +121,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTe
     private var hoverIntentGuardCheckbox: NSButton!
     private var switcherEnabledCheckbox: NSButton!
     private var switcherHotkeyField: NSTextField!
+    private var switcherScopePopup: NSPopUpButton!
     private var iconsOnlyCheckbox: NSButton!
     private var groupByAppCheckbox: NSButton!
     private var tabbedTaskbarCheckbox: NSButton!
@@ -164,6 +165,24 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTe
     private var stackCountBadgeCheckbox: NSButton!
     private var stackCountBadgeStylePopup: NSPopUpButton!
     private var animationProfilePopup: NSPopUpButton!
+    private var systemIndicatorsCheckbox: NSButton!
+    private var systemIndicatorPlacementPopup: NSPopUpButton!
+    private var systemIndicatorDisplayScopePopup: NSPopUpButton!
+    private var systemIndicatorSelectedDisplayPopup: NSPopUpButton!
+    private var systemIndicatorChipPresetPopup: NSPopUpButton!
+    private var systemIndicatorAppearancePopup: NSPopUpButton!
+    private var systemIndicatorTemperatureUnitPopup: NSPopUpButton!
+    private var systemIndicatorRefreshField: NSTextField!
+    private var systemIndicatorCpuCheckbox: NSButton!
+    private var systemIndicatorCpuModePopup: NSPopUpButton!
+    private var systemIndicatorGpuCheckbox: NSButton!
+    private var systemIndicatorGpuModePopup: NSPopUpButton!
+    private var systemIndicatorRamCheckbox: NSButton!
+    private var systemIndicatorRamModePopup: NSPopUpButton!
+    private var systemIndicatorThermalCheckbox: NSButton!
+    private var systemIndicatorThermalModePopup: NSPopUpButton!
+    private var systemIndicatorGraphSamplesSlider: NSSlider!
+    private var systemIndicatorGraphSamplesLabel: NSTextField!
 
     // Apps tab controls
     private var blacklistField: NSTextField!
@@ -181,6 +200,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTe
     private var providerTimeoutField: NSTextField!
     private var providerCircuitBreakerField: NSTextField!
     private var perfLoggingCheckbox: NSButton!
+    private var perfHangDiagnosticsCheckbox: NSButton!
     private var perfLogIntervalField: NSTextField!
     private var pluginsEnabledCheckbox: NSButton!
     private var windowTabGroupsCheckbox: NSButton!
@@ -570,6 +590,15 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTe
 
         y -= 32
 
+        addLabel("Switcher Windows:", at: NSPoint(x: 15, y: y + 2), width: labelW, to: view)
+        switcherScopePopup = NSPopUpButton(frame: NSRect(x: controlX, y: y - 2, width: 210, height: 26), pullsDown: false)
+        switcherScopePopup.addItems(withTitles: ["All displays", "Focused display"])
+        switcherScopePopup.target = self
+        switcherScopePopup.action = #selector(controlChanged(_:))
+        view.addSubview(switcherScopePopup)
+
+        y -= 32
+
         addLabel("Scroll Wheel:", at: NSPoint(x: 15, y: y + 2), width: labelW, to: view)
         scrollWheelPopup = NSPopUpButton(frame: NSRect(x: controlX, y: y - 2, width: 210, height: 26), pullsDown: false)
         scrollWheelPopup.addItems(withTitles: ["Cycle Windows", "Hide / Show Bar", "System Volume", "Off"])
@@ -715,7 +744,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTe
     }
 
     private func buildAppearanceTab() -> NSView {
-        let view = NSView(frame: NSRect(x: 0, y: 0, width: 540, height: 820))
+        let view = NSView(frame: NSRect(x: 0, y: 0, width: 540, height: 1200))
         var y: CGFloat = view.bounds.height - 36
         let labelW: CGFloat = 160
         let controlX: CGFloat = 180
@@ -877,6 +906,130 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTe
         stackCountBadgeStylePopup.target = self
         stackCountBadgeStylePopup.action = #selector(controlChanged(_:))
         view.addSubview(stackCountBadgeStylePopup)
+
+        y -= 42
+
+        addSectionHeader("System Indicators", at: NSPoint(x: 15, y: y), width: 500, to: view)
+        y -= 30
+
+        systemIndicatorsCheckbox = makeCheckbox("Show system indicators", at: NSPoint(x: 15, y: y))
+        systemIndicatorsCheckbox.target = self
+        systemIndicatorsCheckbox.action = #selector(controlChanged(_:))
+        view.addSubview(systemIndicatorsCheckbox)
+
+        y -= 32
+
+        addLabel("Placement:", at: NSPoint(x: 15, y: y + 2), width: labelW, to: view)
+        systemIndicatorPlacementPopup = NSPopUpButton(frame: NSRect(x: controlX, y: y - 2, width: 180, height: 26), pullsDown: false)
+        systemIndicatorPlacementPopup.addItems(withTitles: ["Free", "Leading", "Trailing", "Pinned Left", "Pinned Right"])
+        systemIndicatorPlacementPopup.target = self
+        systemIndicatorPlacementPopup.action = #selector(controlChanged(_:))
+        view.addSubview(systemIndicatorPlacementPopup)
+
+        y -= 36
+
+        addLabel("Display:", at: NSPoint(x: 15, y: y + 2), width: labelW, to: view)
+        systemIndicatorDisplayScopePopup = NSPopUpButton(frame: NSRect(x: controlX, y: y - 2, width: 180, height: 26), pullsDown: false)
+        systemIndicatorDisplayScopePopup.addItems(withTitles: ["Every Display", "Selected Display"])
+        systemIndicatorDisplayScopePopup.target = self
+        systemIndicatorDisplayScopePopup.action = #selector(controlChanged(_:))
+        view.addSubview(systemIndicatorDisplayScopePopup)
+
+        systemIndicatorSelectedDisplayPopup = NSPopUpButton(frame: NSRect(x: controlX + 190, y: y - 2, width: 138, height: 26), pullsDown: false)
+        systemIndicatorSelectedDisplayPopup.target = self
+        systemIndicatorSelectedDisplayPopup.action = #selector(controlChanged(_:))
+        view.addSubview(systemIndicatorSelectedDisplayPopup)
+
+        y -= 36
+
+        addLabel("Chip Size:", at: NSPoint(x: 15, y: y + 2), width: labelW, to: view)
+        systemIndicatorChipPresetPopup = NSPopUpButton(frame: NSRect(x: controlX, y: y - 2, width: 180, height: 26), pullsDown: false)
+        systemIndicatorChipPresetPopup.addItems(withTitles: ["Compact", "Dense", "Micro"])
+        systemIndicatorChipPresetPopup.target = self
+        systemIndicatorChipPresetPopup.action = #selector(controlChanged(_:))
+        view.addSubview(systemIndicatorChipPresetPopup)
+
+        y -= 36
+
+        addLabel("Appearance:", at: NSPoint(x: 15, y: y + 2), width: labelW, to: view)
+        systemIndicatorAppearancePopup = NSPopUpButton(frame: NSRect(x: controlX, y: y - 2, width: 180, height: 26), pullsDown: false)
+        systemIndicatorAppearancePopup.addItems(withTitles: ["Glass", "Flat", "Underline", "Minimal"])
+        systemIndicatorAppearancePopup.target = self
+        systemIndicatorAppearancePopup.action = #selector(controlChanged(_:))
+        view.addSubview(systemIndicatorAppearancePopup)
+
+        y -= 36
+
+        addLabel("Temperature:", at: NSPoint(x: 15, y: y + 2), width: labelW, to: view)
+        systemIndicatorTemperatureUnitPopup = NSPopUpButton(frame: NSRect(x: controlX, y: y - 2, width: 180, height: 26), pullsDown: false)
+        systemIndicatorTemperatureUnitPopup.addItems(withTitles: ["Celsius", "Fahrenheit"])
+        systemIndicatorTemperatureUnitPopup.target = self
+        systemIndicatorTemperatureUnitPopup.action = #selector(controlChanged(_:))
+        view.addSubview(systemIndicatorTemperatureUnitPopup)
+
+        y -= 36
+
+        addLabel("Refresh:", at: NSPoint(x: 15, y: y + 2), width: labelW, to: view)
+        systemIndicatorRefreshField = makeNumberField(frame: NSRect(x: controlX, y: y - 1, width: 80, height: 22), min: 250, max: 10000)
+        systemIndicatorRefreshField.delegate = self
+        systemIndicatorRefreshField.target = self
+        systemIndicatorRefreshField.action = #selector(controlChanged(_:))
+        view.addSubview(systemIndicatorRefreshField)
+        let indicatorRefreshSuffix = makeLabel("ms", at: NSPoint(x: controlX + 86, y: y + 2), width: 30)
+        indicatorRefreshSuffix.textColor = .secondaryLabelColor
+        view.addSubview(indicatorRefreshSuffix)
+
+        y -= 34
+
+        systemIndicatorCpuCheckbox = makeCheckbox("CPU", at: NSPoint(x: 15, y: y))
+        systemIndicatorCpuCheckbox.target = self
+        systemIndicatorCpuCheckbox.action = #selector(controlChanged(_:))
+        view.addSubview(systemIndicatorCpuCheckbox)
+        systemIndicatorCpuModePopup = makeSystemIndicatorModePopup(at: NSPoint(x: controlX, y: y - 2))
+        view.addSubview(systemIndicatorCpuModePopup)
+
+        y -= 30
+
+        systemIndicatorGpuCheckbox = makeCheckbox("GPU", at: NSPoint(x: 15, y: y))
+        systemIndicatorGpuCheckbox.target = self
+        systemIndicatorGpuCheckbox.action = #selector(controlChanged(_:))
+        view.addSubview(systemIndicatorGpuCheckbox)
+        systemIndicatorGpuModePopup = makeSystemIndicatorModePopup(at: NSPoint(x: controlX, y: y - 2))
+        view.addSubview(systemIndicatorGpuModePopup)
+
+        y -= 30
+
+        systemIndicatorRamCheckbox = makeCheckbox("RAM", at: NSPoint(x: 15, y: y))
+        systemIndicatorRamCheckbox.target = self
+        systemIndicatorRamCheckbox.action = #selector(controlChanged(_:))
+        view.addSubview(systemIndicatorRamCheckbox)
+        systemIndicatorRamModePopup = makeSystemIndicatorModePopup(at: NSPoint(x: controlX, y: y - 2))
+        view.addSubview(systemIndicatorRamModePopup)
+
+        y -= 30
+
+        systemIndicatorThermalCheckbox = makeCheckbox("Temperature", at: NSPoint(x: 15, y: y))
+        systemIndicatorThermalCheckbox.target = self
+        systemIndicatorThermalCheckbox.action = #selector(controlChanged(_:))
+        view.addSubview(systemIndicatorThermalCheckbox)
+        systemIndicatorThermalModePopup = makeSystemIndicatorModePopup(at: NSPoint(x: controlX, y: y - 2))
+        view.addSubview(systemIndicatorThermalModePopup)
+
+        y -= 36
+
+        addLabel("Graph Samples:", at: NSPoint(x: 15, y: y + 2), width: labelW, to: view)
+        systemIndicatorGraphSamplesSlider = NSSlider(frame: NSRect(x: controlX, y: y, width: 210, height: 22))
+        systemIndicatorGraphSamplesSlider.minValue = 4
+        systemIndicatorGraphSamplesSlider.maxValue = 32
+        systemIndicatorGraphSamplesSlider.numberOfTickMarks = 8
+        systemIndicatorGraphSamplesSlider.allowsTickMarkValuesOnly = false
+        systemIndicatorGraphSamplesSlider.target = self
+        systemIndicatorGraphSamplesSlider.action = #selector(systemIndicatorGraphSamplesChanged(_:))
+        view.addSubview(systemIndicatorGraphSamplesSlider)
+
+        systemIndicatorGraphSamplesLabel = makeLabel("", at: NSPoint(x: controlX + 220, y: y + 2), width: 55)
+        systemIndicatorGraphSamplesLabel.textColor = .secondaryLabelColor
+        view.addSubview(systemIndicatorGraphSamplesLabel)
 
         return view
     }
@@ -1116,6 +1269,13 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTe
 
         y -= 34
 
+        perfHangDiagnosticsCheckbox = makeCheckbox("Hang diagnostics", at: NSPoint(x: 15, y: y))
+        perfHangDiagnosticsCheckbox.target = self
+        perfHangDiagnosticsCheckbox.action = #selector(controlChanged(_:))
+        view.addSubview(perfHangDiagnosticsCheckbox)
+
+        y -= 34
+
         addLabel("Log Interval:", at: NSPoint(x: 15, y: y + 2), width: labelW, to: view)
         perfLogIntervalField = makeNumberField(frame: NSRect(x: controlX, y: y - 1, width: 80, height: 22), min: 250, max: 10000)
         perfLogIntervalField.delegate = self
@@ -1296,6 +1456,10 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTe
         hoverIntentGuardCheckbox.state = config.hoverIntentGuardEnabled ? .on : .off
         switcherEnabledCheckbox.state = config.switcherEnabled ? .on : .off
         switcherHotkeyField.stringValue = config.switcherHotkey
+        switch config.switcherWindowScope {
+        case .allDisplays: switcherScopePopup.selectItem(at: 0)
+        case .focusedDisplay: switcherScopePopup.selectItem(at: 1)
+        }
         switch config.scrollWheelMode {
         case .cycleWindows: scrollWheelPopup.selectItem(at: 0)
         case .hideShow: scrollWheelPopup.selectItem(at: 1)
@@ -1385,6 +1549,45 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTe
         case .compactDot: stackCountBadgeStylePopup.selectItem(at: 0)
         case .separator: stackCountBadgeStylePopup.selectItem(at: 2)
         }
+        systemIndicatorsCheckbox.state = config.systemIndicatorsEnabled ? .on : .off
+        switch config.systemIndicatorPlacement {
+        case .free: systemIndicatorPlacementPopup.selectItem(at: 0)
+        case .leading: systemIndicatorPlacementPopup.selectItem(at: 1)
+        case .trailing: systemIndicatorPlacementPopup.selectItem(at: 2)
+        case .leftCorner: systemIndicatorPlacementPopup.selectItem(at: 3)
+        case .rightCorner: systemIndicatorPlacementPopup.selectItem(at: 4)
+        }
+        switch config.systemIndicatorDisplayScope {
+        case .allDisplays: systemIndicatorDisplayScopePopup.selectItem(at: 0)
+        case .selectedDisplay: systemIndicatorDisplayScopePopup.selectItem(at: 1)
+        }
+        populateSystemIndicatorSelectedDisplayPopup(selectedDisplayId: config.systemIndicatorSelectedDisplayId)
+        switch config.systemIndicatorChipPreset {
+        case .full, .compact: systemIndicatorChipPresetPopup.selectItem(at: 0)
+        case .dense: systemIndicatorChipPresetPopup.selectItem(at: 1)
+        case .micro: systemIndicatorChipPresetPopup.selectItem(at: 2)
+        }
+        switch config.systemIndicatorAppearance {
+        case .glass: systemIndicatorAppearancePopup.selectItem(at: 0)
+        case .flat: systemIndicatorAppearancePopup.selectItem(at: 1)
+        case .underline: systemIndicatorAppearancePopup.selectItem(at: 2)
+        case .minimal: systemIndicatorAppearancePopup.selectItem(at: 3)
+        }
+        switch config.systemIndicatorTemperatureUnit {
+        case .celsius: systemIndicatorTemperatureUnitPopup.selectItem(at: 0)
+        case .fahrenheit: systemIndicatorTemperatureUnitPopup.selectItem(at: 1)
+        }
+        systemIndicatorRefreshField.stringValue = "\(config.systemIndicatorRefreshIntervalMs)"
+        systemIndicatorCpuCheckbox.state = config.systemIndicatorCpuEnabled ? .on : .off
+        selectSystemIndicatorMode(config.systemIndicatorCpuVisualMode, in: systemIndicatorCpuModePopup)
+        systemIndicatorGpuCheckbox.state = config.systemIndicatorGpuEnabled ? .on : .off
+        selectSystemIndicatorMode(config.systemIndicatorGpuVisualMode, in: systemIndicatorGpuModePopup)
+        systemIndicatorRamCheckbox.state = config.systemIndicatorRamEnabled ? .on : .off
+        selectSystemIndicatorMode(config.systemIndicatorRamVisualMode, in: systemIndicatorRamModePopup)
+        systemIndicatorThermalCheckbox.state = config.systemIndicatorThermalEnabled ? .on : .off
+        selectSystemIndicatorMode(config.systemIndicatorThermalVisualMode, in: systemIndicatorThermalModePopup)
+        systemIndicatorGraphSamplesSlider.integerValue = config.systemIndicatorGraphSamples
+        systemIndicatorGraphSamplesLabel.stringValue = "\(config.systemIndicatorGraphSamples)"
 
         blacklistField.stringValue = Self.uniquePreservingOrder(config.blacklistedApps).joined(separator: ", ")
         pendingPinnedApps = nil
@@ -1400,6 +1603,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTe
         providerTimeoutField.stringValue = "\(config.providerTimeoutMs)"
         providerCircuitBreakerField.stringValue = "\(config.providerCircuitBreakerThreshold)"
         perfLoggingCheckbox.state = config.performanceLoggingEnabled ? .on : .off
+        perfHangDiagnosticsCheckbox.state = config.performanceHangDiagnosticsEnabled ? .on : .off
         perfLogIntervalField.stringValue = "\(config.performanceLogIntervalMs)"
         pluginsEnabledCheckbox.state = config.pluginsEnabled ? .on : .off
         windowTabGroupsCheckbox.state = config.windowTabGroupsEnabled ? .on : .off
@@ -1415,6 +1619,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTe
         updatePreviewControlsEnabledState()
         updateProviderControlsEnabledState()
         updatePerfControlsEnabledState()
+        updateSystemIndicatorControlsEnabledState()
         updateTabGroupControlsEnabledState()
         refreshPermissionStatus()
         updateAppearancePreview()
@@ -1452,6 +1657,11 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTe
         scheduleAutoApply()
     }
 
+    @objc private func systemIndicatorGraphSamplesChanged(_ sender: NSSlider) {
+        systemIndicatorGraphSamplesLabel.stringValue = "\(sender.integerValue)"
+        scheduleAutoApply()
+    }
+
     @objc private func controlChanged(_ sender: Any) {
         updatePerfControlsEnabledState()
         updateCountBadgeControlsEnabledState()
@@ -1461,6 +1671,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTe
         updateLauncherControlsEnabledState()
         updatePreviewControlsEnabledState()
         updateProviderControlsEnabledState()
+        updateSystemIndicatorControlsEnabledState()
         updateTabGroupControlsEnabledState()
         updateAppearancePreview()
         scheduleAutoApply()
@@ -1509,6 +1720,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTe
             config.hoverIntentGuardEnabled = defaults.hoverIntentGuardEnabled
             config.switcherEnabled = defaults.switcherEnabled
             config.switcherHotkey = defaults.switcherHotkey
+            config.switcherWindowScope = defaults.switcherWindowScope
             config.scrollWheelMode = defaults.scrollWheelMode
             config.launcherEnabled = defaults.launcherEnabled
             config.launcherAction = defaults.launcherAction
@@ -1539,6 +1751,23 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTe
             config.appGroupStackHoverSpreadEnabled = defaults.appGroupStackHoverSpreadEnabled
             config.appGroupCountBadgeInIconsOnly = defaults.appGroupCountBadgeInIconsOnly
             config.appGroupCountBadgeStyle = defaults.appGroupCountBadgeStyle
+            config.systemIndicatorsEnabled = defaults.systemIndicatorsEnabled
+            config.systemIndicatorRefreshIntervalMs = defaults.systemIndicatorRefreshIntervalMs
+            config.systemIndicatorPlacement = defaults.systemIndicatorPlacement
+            config.systemIndicatorDisplayScope = defaults.systemIndicatorDisplayScope
+            config.systemIndicatorSelectedDisplayId = defaults.systemIndicatorSelectedDisplayId
+            config.systemIndicatorCpuEnabled = defaults.systemIndicatorCpuEnabled
+            config.systemIndicatorGpuEnabled = defaults.systemIndicatorGpuEnabled
+            config.systemIndicatorRamEnabled = defaults.systemIndicatorRamEnabled
+            config.systemIndicatorThermalEnabled = defaults.systemIndicatorThermalEnabled
+            config.systemIndicatorCpuVisualMode = defaults.systemIndicatorCpuVisualMode
+            config.systemIndicatorGpuVisualMode = defaults.systemIndicatorGpuVisualMode
+            config.systemIndicatorRamVisualMode = defaults.systemIndicatorRamVisualMode
+            config.systemIndicatorThermalVisualMode = defaults.systemIndicatorThermalVisualMode
+            config.systemIndicatorTemperatureUnit = defaults.systemIndicatorTemperatureUnit
+            config.systemIndicatorChipPreset = defaults.systemIndicatorChipPreset
+            config.systemIndicatorAppearance = defaults.systemIndicatorAppearance
+            config.systemIndicatorGraphSamples = defaults.systemIndicatorGraphSamples
         case 2:
             config.blacklistedApps = defaults.blacklistedApps
             config.pinnedApps = defaults.pinnedApps
@@ -1551,6 +1780,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTe
             config.providerTimeoutMs = defaults.providerTimeoutMs
             config.providerCircuitBreakerThreshold = defaults.providerCircuitBreakerThreshold
             config.performanceLoggingEnabled = defaults.performanceLoggingEnabled
+            config.performanceHangDiagnosticsEnabled = defaults.performanceHangDiagnosticsEnabled
             config.performanceGpuTimingEnabled = defaults.performanceGpuTimingEnabled
             config.performanceLogIntervalMs = defaults.performanceLogIntervalMs
             config.pluginsEnabled = defaults.pluginsEnabled
@@ -1587,7 +1817,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTe
     }
 
     private func updatePerfControlsEnabledState() {
-        let enabled = perfLoggingCheckbox.state == .on
+        let enabled = perfLoggingCheckbox.state == .on || perfHangDiagnosticsCheckbox.state == .on
         perfLogIntervalField.isEnabled = enabled
     }
 
@@ -1602,7 +1832,9 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTe
     }
 
     private func updateSwitcherControlsEnabledState() {
-        switcherHotkeyField?.isEnabled = switcherEnabledCheckbox.state == .on
+        let enabled = switcherEnabledCheckbox.state == .on
+        switcherHotkeyField?.isEnabled = enabled
+        switcherScopePopup?.isEnabled = enabled
     }
 
     private func updateSidebarControlsEnabledState() {
@@ -1629,6 +1861,26 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTe
         previewHoverDelayField?.isEnabled = enabled
     }
 
+    private func updateSystemIndicatorControlsEnabledState() {
+        let enabled = systemIndicatorsCheckbox.state == .on
+        systemIndicatorPlacementPopup?.isEnabled = enabled
+        systemIndicatorDisplayScopePopup?.isEnabled = enabled
+        systemIndicatorSelectedDisplayPopup?.isEnabled = enabled && systemIndicatorDisplayScopePopup.indexOfSelectedItem == 1
+        systemIndicatorChipPresetPopup?.isEnabled = enabled
+        systemIndicatorAppearancePopup?.isEnabled = enabled
+        systemIndicatorTemperatureUnitPopup?.isEnabled = enabled
+        systemIndicatorRefreshField?.isEnabled = enabled
+        systemIndicatorCpuCheckbox?.isEnabled = enabled
+        systemIndicatorGpuCheckbox?.isEnabled = enabled
+        systemIndicatorRamCheckbox?.isEnabled = enabled
+        systemIndicatorThermalCheckbox?.isEnabled = enabled
+        systemIndicatorCpuModePopup?.isEnabled = enabled && systemIndicatorCpuCheckbox.state == .on
+        systemIndicatorGpuModePopup?.isEnabled = enabled && systemIndicatorGpuCheckbox.state == .on
+        systemIndicatorRamModePopup?.isEnabled = enabled && systemIndicatorRamCheckbox.state == .on
+        systemIndicatorThermalModePopup?.isEnabled = enabled && systemIndicatorThermalCheckbox.state == .on
+        systemIndicatorGraphSamplesSlider?.isEnabled = enabled
+    }
+
     private func updateTabGroupControlsEnabledState() {
         let enabled = windowTabGroupsCheckbox.state == .on
         tabGroupHoverDelayField?.isEnabled = enabled
@@ -1638,6 +1890,55 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTe
     private func updateIconSizeControl(for iconSize: Int) {
         iconSizeLabel.stringValue = "\(iconSize) px"
         iconSizeSlider.integerValue = iconSize
+    }
+
+    private func selectSystemIndicatorMode(_ mode: SystemIndicatorVisualMode, in popup: NSPopUpButton) {
+        switch mode {
+        case .percentage: popup.selectItem(at: 0)
+        case .bar: popup.selectItem(at: 1)
+        case .graph: popup.selectItem(at: 2)
+        }
+    }
+
+    private func populateSystemIndicatorSelectedDisplayPopup(selectedDisplayId: UInt32?) {
+        guard let popup = systemIndicatorSelectedDisplayPopup else { return }
+        popup.removeAllItems()
+
+        let screens = NSScreen.screens
+        let fallbackDisplayId = NSScreen.main?.displayId ?? CGMainDisplayID()
+        let entries: [(title: String, displayId: CGDirectDisplayID)] = screens.enumerated().compactMap { index, screen in
+            guard let displayId = screen.displayId ?? (index == 0 ? fallbackDisplayId : nil) else {
+                return nil
+            }
+            let title = screen.localizedName.isEmpty ? "Display \(index + 1)" : screen.localizedName
+            return (title, displayId)
+        }
+
+        let nonEmptyEntries = entries.isEmpty ? [("Main Display", fallbackDisplayId)] : entries
+        for (index, entry) in nonEmptyEntries.enumerated() {
+            let title = nonEmptyEntries.count == 1 ? entry.title : "\(entry.title) \(index + 1)"
+            popup.addItem(withTitle: title)
+            popup.item(at: index)?.representedObject = NSNumber(value: UInt32(entry.displayId))
+        }
+
+        let target = selectedDisplayId ?? UInt32(fallbackDisplayId)
+        if let index = nonEmptyEntries.firstIndex(where: { UInt32($0.displayId) == target }) {
+            popup.selectItem(at: index)
+        } else {
+            popup.selectItem(at: 0)
+        }
+    }
+
+    private func selectedSystemIndicatorDisplayId() -> UInt32? {
+        (systemIndicatorSelectedDisplayPopup.selectedItem?.representedObject as? NSNumber)?.uint32Value
+    }
+
+    private func systemIndicatorMode(from popup: NSPopUpButton) -> SystemIndicatorVisualMode {
+        switch popup.indexOfSelectedItem {
+        case 1: return .bar
+        case 2: return .graph
+        default: return .percentage
+        }
     }
 
     private func updateAppearancePreview() {
@@ -1676,6 +1977,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTe
             obj.object as? NSTextField === hoverDelayField ||
             obj.object as? NSTextField === switcherHotkeyField ||
             obj.object as? NSTextField === launcherCustomUrlField ||
+            obj.object as? NSTextField === systemIndicatorRefreshField ||
             obj.object as? NSTextField === previewHoverDelayField ||
             obj.object as? NSTextField === providerTimeoutField ||
             obj.object as? NSTextField === providerCircuitBreakerField ||
@@ -1742,6 +2044,11 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTe
         let hotkey = switcherHotkeyField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
         if !hotkey.isEmpty {
             config.switcherHotkey = hotkey
+        }
+        switch switcherScopePopup.indexOfSelectedItem {
+        case 0: config.switcherWindowScope = .allDisplays
+        case 1: config.switcherWindowScope = .focusedDisplay
+        default: break
         }
         switch scrollWheelPopup.indexOfSelectedItem {
         case 0: config.scrollWheelMode = .cycleWindows
@@ -1861,7 +2168,54 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTe
         default: break
         }
 
+        config.systemIndicatorsEnabled = systemIndicatorsCheckbox.state == .on
+        switch systemIndicatorPlacementPopup.indexOfSelectedItem {
+        case 0: config.systemIndicatorPlacement = .free
+        case 1: config.systemIndicatorPlacement = .leading
+        case 2: config.systemIndicatorPlacement = .trailing
+        case 3: config.systemIndicatorPlacement = .leftCorner
+        case 4: config.systemIndicatorPlacement = .rightCorner
+        default: break
+        }
+        switch systemIndicatorDisplayScopePopup.indexOfSelectedItem {
+        case 0: config.systemIndicatorDisplayScope = .allDisplays
+        case 1: config.systemIndicatorDisplayScope = .selectedDisplay
+        default: break
+        }
+        config.systemIndicatorSelectedDisplayId = selectedSystemIndicatorDisplayId()
+        switch systemIndicatorChipPresetPopup.indexOfSelectedItem {
+        case 0: config.systemIndicatorChipPreset = .compact
+        case 1: config.systemIndicatorChipPreset = .dense
+        case 2: config.systemIndicatorChipPreset = .micro
+        default: break
+        }
+        switch systemIndicatorAppearancePopup.indexOfSelectedItem {
+        case 0: config.systemIndicatorAppearance = .glass
+        case 1: config.systemIndicatorAppearance = .flat
+        case 2: config.systemIndicatorAppearance = .underline
+        case 3: config.systemIndicatorAppearance = .minimal
+        default: break
+        }
+        switch systemIndicatorTemperatureUnitPopup.indexOfSelectedItem {
+        case 0: config.systemIndicatorTemperatureUnit = .celsius
+        case 1: config.systemIndicatorTemperatureUnit = .fahrenheit
+        default: break
+        }
+        if let refresh = Int(systemIndicatorRefreshField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)) {
+            config.systemIndicatorRefreshIntervalMs = refresh
+        }
+        config.systemIndicatorCpuEnabled = systemIndicatorCpuCheckbox.state == .on
+        config.systemIndicatorGpuEnabled = systemIndicatorGpuCheckbox.state == .on
+        config.systemIndicatorRamEnabled = systemIndicatorRamCheckbox.state == .on
+        config.systemIndicatorThermalEnabled = systemIndicatorThermalCheckbox.state == .on
+        config.systemIndicatorCpuVisualMode = systemIndicatorMode(from: systemIndicatorCpuModePopup)
+        config.systemIndicatorGpuVisualMode = systemIndicatorMode(from: systemIndicatorGpuModePopup)
+        config.systemIndicatorRamVisualMode = systemIndicatorMode(from: systemIndicatorRamModePopup)
+        config.systemIndicatorThermalVisualMode = systemIndicatorMode(from: systemIndicatorThermalModePopup)
+        config.systemIndicatorGraphSamples = systemIndicatorGraphSamplesSlider.integerValue
+
         config.performanceLoggingEnabled = perfLoggingCheckbox.state == .on
+        config.performanceHangDiagnosticsEnabled = perfHangDiagnosticsCheckbox.state == .on
         if let interval = Int(perfLogIntervalField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)) {
             config.performanceLogIntervalMs = interval
         }
@@ -2118,6 +2472,14 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTe
         button.target = self
         button.action = action
         return button
+    }
+
+    private func makeSystemIndicatorModePopup(at point: NSPoint) -> NSPopUpButton {
+        let popup = NSPopUpButton(frame: NSRect(x: point.x, y: point.y, width: 150, height: 26), pullsDown: false)
+        popup.addItems(withTitles: ["Percent", "Bar", "Graph"])
+        popup.target = self
+        popup.action = #selector(controlChanged(_:))
+        return popup
     }
 
     private func scrollSelectedTabToTop() {

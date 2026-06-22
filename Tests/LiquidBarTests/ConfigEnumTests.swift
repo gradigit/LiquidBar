@@ -75,6 +75,40 @@ struct ConfigEnumTests {
         }
     }
 
+    // MARK: - System Indicator Display Scope
+
+    @Test func testSystemIndicatorDisplayScopeRawValues() {
+        #expect(SystemIndicatorDisplayScope.allDisplays.rawValue == "all_displays")
+        #expect(SystemIndicatorDisplayScope.selectedDisplay.rawValue == "selected_display")
+    }
+
+    @Test func testSystemIndicatorDisplayScopeCodable() throws {
+        let encoder = JSONEncoder()
+        let decoder = JSONDecoder()
+        for scope in SystemIndicatorDisplayScope.allCases {
+            let data = try encoder.encode(scope)
+            let decoded = try decoder.decode(SystemIndicatorDisplayScope.self, from: data)
+            #expect(decoded == scope)
+        }
+    }
+
+    // MARK: - System Indicator Temperature Unit
+
+    @Test func testSystemIndicatorTemperatureUnitRawValues() {
+        #expect(SystemIndicatorTemperatureUnit.celsius.rawValue == "celsius")
+        #expect(SystemIndicatorTemperatureUnit.fahrenheit.rawValue == "fahrenheit")
+    }
+
+    @Test func testSystemIndicatorTemperatureUnitCodable() throws {
+        let encoder = JSONEncoder()
+        let decoder = JSONDecoder()
+        for unit in SystemIndicatorTemperatureUnit.allCases {
+            let data = try encoder.encode(unit)
+            let decoded = try decoder.decode(SystemIndicatorTemperatureUnit.self, from: data)
+            #expect(decoded == unit)
+        }
+    }
+
     // MARK: - WindowDisplayMode
 
     @Test func testWindowDisplayModeRawValues() {
@@ -273,6 +307,46 @@ struct ConfigEnumTests {
         }
     }
 
+    // MARK: - System Indicators
+
+    @Test func testSystemIndicatorVisualModeRawValues() {
+        #expect(SystemIndicatorVisualMode.percentage.rawValue == "percentage")
+        #expect(SystemIndicatorVisualMode.bar.rawValue == "bar")
+        #expect(SystemIndicatorVisualMode.graph.rawValue == "graph")
+    }
+
+    @Test func testSystemIndicatorVisualModeCodable() throws {
+        let encoder = JSONEncoder()
+        let decoder = JSONDecoder()
+        for mode in SystemIndicatorVisualMode.allCases {
+            let data = try encoder.encode(mode)
+            let decoded = try decoder.decode(SystemIndicatorVisualMode.self, from: data)
+            #expect(decoded == mode)
+        }
+    }
+
+    @Test func testSystemIndicatorChipPresetRawValues() {
+        #expect(SystemIndicatorChipPreset.full.rawValue == "full")
+        #expect(SystemIndicatorChipPreset.compact.rawValue == "compact")
+        #expect(SystemIndicatorChipPreset.dense.rawValue == "dense")
+        #expect(SystemIndicatorChipPreset.micro.rawValue == "micro")
+    }
+
+    @Test func testSystemIndicatorAppearanceRawValues() {
+        #expect(SystemIndicatorAppearance.glass.rawValue == "glass")
+        #expect(SystemIndicatorAppearance.flat.rawValue == "flat")
+        #expect(SystemIndicatorAppearance.underline.rawValue == "underline")
+        #expect(SystemIndicatorAppearance.minimal.rawValue == "minimal")
+    }
+
+    @Test func testSystemIndicatorPlacementRawValues() {
+        #expect(SystemIndicatorPlacement.free.rawValue == "free")
+        #expect(SystemIndicatorPlacement.leading.rawValue == "leading")
+        #expect(SystemIndicatorPlacement.trailing.rawValue == "trailing")
+        #expect(SystemIndicatorPlacement.leftCorner.rawValue == "left_corner")
+        #expect(SystemIndicatorPlacement.rightCorner.rawValue == "right_corner")
+    }
+
     // MARK: - FocusIndicatorStyle
 
     @Test func testFocusIndicatorStyleRawValues() {
@@ -304,6 +378,23 @@ struct ConfigEnumTests {
             let data = try encoder.encode(style)
             let decoded = try decoder.decode(SwitcherLayoutStyle.self, from: data)
             #expect(decoded == style)
+        }
+    }
+
+    // MARK: - SwitcherWindowScope
+
+    @Test func testSwitcherWindowScopeRawValues() {
+        #expect(SwitcherWindowScope.allDisplays.rawValue == "all_displays")
+        #expect(SwitcherWindowScope.focusedDisplay.rawValue == "focused_display")
+    }
+
+    @Test func testSwitcherWindowScopeCodable() throws {
+        let encoder = JSONEncoder()
+        let decoder = JSONDecoder()
+        for scope in SwitcherWindowScope.allCases {
+            let data = try encoder.encode(scope)
+            let decoded = try decoder.decode(SwitcherWindowScope.self, from: data)
+            #expect(decoded == scope)
         }
     }
 

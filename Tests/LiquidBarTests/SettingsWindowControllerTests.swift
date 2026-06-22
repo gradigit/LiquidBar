@@ -57,6 +57,9 @@ struct SettingsWindowControllerTests {
         #expect(labels.contains("Preview"))
         #expect(labels.contains("Visual Depth:"))
 
+        let chipPresetPopup = try findPopup(withItems: ["Compact", "Dense", "Micro"], in: contentView)
+        #expect(chipPresetPopup.indexOfSelectedItem == 0)
+
         if let outputPath = ProcessInfo.processInfo.environment["LIQUIDBAR_SETTINGS_VISUAL_QA_PATH"],
            !outputPath.isEmpty {
             try writeWindowContentSnapshot(contentView, to: URL(fileURLWithPath: outputPath))
@@ -170,6 +173,7 @@ struct SettingsWindowControllerTests {
         _ = try findButton(title: "Show window previews", in: contentView)
         _ = try findButton(title: "Enable provider runtime", in: contentView)
         _ = try findButton(title: "Performance logging", in: contentView)
+        _ = try findButton(title: "Hang diagnostics", in: contentView)
         _ = try findButton(title: "Enable plugins", in: contentView)
         _ = try findButton(title: "Enable window tab groups", in: contentView)
     }
@@ -275,6 +279,14 @@ struct SettingsWindowControllerTests {
     private func findButton(title: String, in view: NSView) throws -> NSButton {
         let buttons = recursiveSubviews(of: view).compactMap { $0 as? NSButton }
         return try #require(buttons.first { $0.title == title })
+    }
+
+    @MainActor
+    private func findPopup(withItems titles: [String], in view: NSView) throws -> NSPopUpButton {
+        let popups = recursiveSubviews(of: view).compactMap { $0 as? NSPopUpButton }
+        return try #require(popups.first { popup in
+            popup.itemArray.map(\.title) == titles
+        })
     }
 
     @MainActor

@@ -98,6 +98,46 @@ struct WindowThumbnailServicePolicyTests {
     }
 
     @MainActor
+    @Test func lastGoodThumbnailRequiresSufficientTierForLargeRequests() {
+        let service = WindowThumbnailService()
+        let tinyImage = NSImage(size: CGSize(width: 80, height: 80))
+
+        service.debugStoreLastGoodThumbnail(
+            windowId: 12,
+            image: tinyImage,
+            sizePoints: CGSize(width: 80, height: 80)
+        )
+
+        let resolved = service.cachedThumbnail(
+            windowId: 12,
+            targetSizePoints: CGSize(width: 480, height: 260),
+            includeLastGood: true
+        )
+
+        #expect(resolved == nil)
+    }
+
+    @MainActor
+    @Test func largeLastGoodThumbnailCanSatisfySmallerRequests() {
+        let service = WindowThumbnailService()
+        let largeImage = NSImage(size: CGSize(width: 480, height: 260))
+
+        service.debugStoreLastGoodThumbnail(
+            windowId: 14,
+            image: largeImage,
+            sizePoints: CGSize(width: 480, height: 260)
+        )
+
+        let resolved = service.cachedThumbnail(
+            windowId: 14,
+            targetSizePoints: CGSize(width: 140, height: 92),
+            includeLastGood: true
+        )
+
+        #expect(resolved === largeImage)
+    }
+
+    @MainActor
     @Test func inFlightIdentityIsTierAwareForSameWindow() {
         let service = WindowThumbnailService()
 
@@ -108,5 +148,54 @@ struct WindowThumbnailServicePolicyTests {
         #expect(keys.count == 2)
         #expect(keys.contains(WindowThumbnailService.requestKey(windowId: 13, targetSizePoints: CGSize(width: 80, height: 80))))
         #expect(keys.contains(WindowThumbnailService.requestKey(windowId: 13, targetSizePoints: CGSize(width: 260, height: 160))))
+    }
+
+    @Test func switcherLargeCapturesUseBestResolution() {
+        let largeKey = WindowThumbnailService.requestKey(
+            windowId: 21,
+            targetSizePoints: CGSize(width: 390, height: 220)
+        )
+        let tinyKey = WindowThumbnailService.requestKey(
+            windowId: 22,
+            targetSizePoints: CGSize(width: 90, height: 90)
+        )
+        let largeSwitcher = WindowThumbnailService.CaptureRequest(
+            key: largeKey,
+            windowId: 21,
+            targetSizePoints: CGSize(width: 390, height: 220),
+            screenScale: 2,
+            producer: .switcher,
+            generation: 0
+        )
+        let tinySwitcher = WindowThumbnailService.CaptureRequest(
+            key: tinyKey,
+            windowId: 22,
+            targetSizePoints: CGSize(width: 90, height: 90),
+            screenScale: 2,
+            producer: .switcher,
+            generation: 0
+        )
+        let largePrewarm = WindowThumbnailService.CaptureRequest(
+            key: largeKey,
+            windowId: 21,
+            targetSizePoints: CGSize(width: 390, height: 220),
+            screenScale: 2,
+            producer: .prewarm,
+            generation: 0
+        )
+
+        #expect(WindowThumbnailService.captureResolution(for: largeSwitcher) == .best)
+        #expect(WindowThumbnailService.captureResolution(for: tinySwitcher) == .nominal)
+        #expect(WindowThumbnailService.captureResolution(for: largePrewarm) == .best)
+    }
+
+    @Test func switcherAndPrewarmThumbnailsStayFreshLongerThanInteractivePreviews() {
+        let interactive = WindowThumbnailService.freshCacheTTL(for: .interactive)
+        let switcher = WindowThumbnailService.freshCacheTTL(for: .switcher)
+        let prewarm = WindowThumbnailService.freshCacheTTL(for: .prewarm)
+
+        #expect(interactive == 0.75)
+        #expect(switcher == 8.0)
+        #expect(prewarm == switcher)
     }
 }

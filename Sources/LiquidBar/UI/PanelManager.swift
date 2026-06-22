@@ -10,6 +10,8 @@ import QuartzCore
 
 struct ViewSyncSnapshot: Equatable {
     let itemSignature: Int
+    let itemBackgroundSignature: Int
+    let systemIndicatorVisualSignature: Int
     let focus: FocusInfo
     let sidebarExpanded: Bool
     let config: Config
@@ -221,6 +223,8 @@ final class PanelManager {
 
     nonisolated static func makeViewSyncSnapshot(
         items: [TaskbarItem],
+        itemBackgroundColors: [Int: String] = [:],
+        systemIndicatorVisuals: [String: SystemIndicatorVisual] = [:],
         config: Config,
         focus: FocusInfo,
         sidebarExpanded: Bool,
@@ -229,6 +233,8 @@ final class PanelManager {
     ) -> ViewSyncSnapshot {
         ViewSyncSnapshot(
             itemSignature: taskbarItemSignature(for: items),
+            itemBackgroundSignature: itemBackgroundColorSignature(for: itemBackgroundColors),
+            systemIndicatorVisualSignature: systemIndicatorVisualSignature(for: systemIndicatorVisuals),
             focus: focus,
             sidebarExpanded: sidebarExpanded,
             config: config.taskbarSurfaceRenderKey,
@@ -316,6 +322,35 @@ final class PanelManager {
         return hasher.finalize()
     }
 
+    private nonisolated static func itemBackgroundColorSignature(for colors: [Int: String]) -> Int {
+        var hasher = Hasher()
+        hasher.combine(colors.count)
+        for (index, color) in colors.sorted(by: { $0.key < $1.key }) {
+            hasher.combine(index)
+            hasher.combine(color)
+        }
+        return hasher.finalize()
+    }
+
+    nonisolated static func systemIndicatorVisualSignature(for visuals: [String: SystemIndicatorVisual]) -> Int {
+        var hasher = Hasher()
+        hasher.combine(visuals.count)
+        for (id, visual) in visuals.sorted(by: { $0.key < $1.key }) {
+            hasher.combine(id)
+            hasher.combine(visual.metric.rawValue)
+            hasher.combine(visual.mode.rawValue)
+            hasher.combine(visual.label)
+            hasher.combine(visual.valueText)
+            hasher.combine(visual.valuePercent)
+            hasher.combine(visual.history.count)
+            for value in visual.history {
+                hasher.combine(value)
+            }
+            hasher.combine(visual.severity)
+        }
+        return hasher.finalize()
+    }
+
     nonisolated static func shouldSynchronizeBarView(
         previous: ViewSyncSnapshot?,
         current: ViewSyncSnapshot,
@@ -352,7 +387,9 @@ final class PanelManager {
         iconCache: IconCache,
         renderer: NativeBarRenderer,
         focusByDisplay: [CGDirectDisplayID: FocusInfo] = [:],
-        expandedSidebarDisplays: Set<CGDirectDisplayID> = []
+        expandedSidebarDisplays: Set<CGDirectDisplayID> = [],
+        systemIndicatorVisuals: [String: SystemIndicatorVisual] = [:],
+        itemBackgroundColorsByDisplay: [CGDirectDisplayID: [Int: String]] = [:]
     ) {
         lastConfig = config
         for (displayId, panel) in panels {
@@ -387,17 +424,22 @@ final class PanelManager {
 
             let focus = focusByDisplay[displayId] ?? .none
             let sidebarExpanded = expandedSidebarDisplays.contains(displayId)
+            let itemBackgroundColors = itemBackgroundColorsByDisplay[displayId] ?? [:]
             let rendererResult = renderer.updateItems(
                 items,
                 config: config,
                 iconCache: iconCache,
                 displayId: displayId,
                 focus: focus,
-                sidebarExpanded: sidebarExpanded
+                sidebarExpanded: sidebarExpanded,
+                systemIndicatorVisuals: systemIndicatorVisuals,
+                itemBackgroundColors: itemBackgroundColors
             )
 
             let snapshot = Self.makeViewSyncSnapshot(
                 items: items,
+                itemBackgroundColors: itemBackgroundColors,
+                systemIndicatorVisuals: systemIndicatorVisuals,
                 config: config,
                 focus: focus,
                 sidebarExpanded: sidebarExpanded,

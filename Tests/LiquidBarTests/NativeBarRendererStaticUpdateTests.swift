@@ -56,6 +56,80 @@ struct NativeBarRendererStaticUpdateTests {
         renderer.shutdown()
     }
 
+    @Test func itemBackgroundColorChangeForcesStaticRebuild() throws {
+        let renderer = try makeRenderer()
+        let iconCache = IconCache()
+        let items: [TaskbarItem] = [
+            .window(
+                id: WindowId(42),
+                bundleId: "com.example.app",
+                title: "Project",
+                appName: "Example",
+                isHidden: false,
+                isMinimized: false,
+                screenId: 1
+            ),
+        ]
+        let config = Config()
+
+        renderer.updateItems(items, config: config, iconCache: iconCache, displayId: 1)
+        let initialBuildCount = renderer.debugStaticUpdateBuildCount(displayId: 1)
+
+        renderer.updateItems(
+            items,
+            config: config,
+            iconCache: iconCache,
+            displayId: 1,
+            itemBackgroundColors: [0: "#4A90E2"]
+        )
+
+        #expect(renderer.debugStaticUpdateBuildCount(displayId: 1) == initialBuildCount + 1)
+
+        renderer.updateItems(
+            items,
+            config: config,
+            iconCache: iconCache,
+            displayId: 1,
+            itemBackgroundColors: [0: "#4A90E2"]
+        )
+
+        #expect(renderer.debugStaticUpdateBuildCount(displayId: 1) == initialBuildCount + 1)
+        renderer.shutdown()
+    }
+
+    @Test func systemIndicatorVisualChangeForcesStaticRebuild() throws {
+        let renderer = try makeRenderer()
+        let iconCache = IconCache()
+        let items: [TaskbarItem] = [
+            .customText(id: "system.cpu", text: "CPU 42%", screenId: 1),
+        ]
+        let config = Config()
+
+        renderer.updateItems(
+            items,
+            config: config,
+            iconCache: iconCache,
+            displayId: 1,
+            systemIndicatorVisuals: [
+                "system.cpu": systemVisual(metric: .cpu, mode: .bar, valueText: "42%", value: 42, history: [31, 42])
+            ]
+        )
+        let initialBuildCount = renderer.debugStaticUpdateBuildCount(displayId: 1)
+
+        renderer.updateItems(
+            items,
+            config: config,
+            iconCache: iconCache,
+            displayId: 1,
+            systemIndicatorVisuals: [
+                "system.cpu": systemVisual(metric: .cpu, mode: .bar, valueText: "55%", value: 55, history: [31, 42, 55])
+            ]
+        )
+
+        #expect(renderer.debugStaticUpdateBuildCount(displayId: 1) == initialBuildCount + 1)
+        renderer.shutdown()
+    }
+
     @Test func iconCacheRevisionInvalidatesOneAdditionalStaticPass() throws {
         let renderer = try makeRenderer()
         let iconCache = IconCache()
@@ -93,6 +167,7 @@ struct NativeBarRendererStaticUpdateTests {
         var runtimeOnlyConfig = config
         runtimeOnlyConfig.adjustWindowsForTaskbar.toggle()
         runtimeOnlyConfig.performanceLoggingEnabled.toggle()
+        runtimeOnlyConfig.performanceHangDiagnosticsEnabled.toggle()
         runtimeOnlyConfig.performanceGpuTimingEnabled.toggle()
         runtimeOnlyConfig.performanceLogIntervalMs += 250
 
@@ -151,5 +226,23 @@ struct NativeBarRendererStaticUpdateTests {
         #expect(renderer.setHoverRect(nil, for: 1) == true)
         #expect(renderer.setHoverRect(nil, for: 1) == false)
         renderer.shutdown()
+    }
+
+    private func systemVisual(
+        metric: SystemIndicatorMetric,
+        mode: SystemIndicatorVisualMode,
+        valueText: String,
+        value: Float?,
+        history: [Float]
+    ) -> SystemIndicatorVisual {
+        SystemIndicatorVisual(
+            metric: metric,
+            mode: mode,
+            label: metric.label,
+            valueText: valueText,
+            valuePercent: value,
+            history: history,
+            severity: 0.2
+        )
     }
 }

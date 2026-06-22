@@ -19,18 +19,25 @@ struct UserStateTests {
 
         #expect(decoded.appOrder == ["com.app.a"])
         #expect(decoded.windowOrder == [101, 202])
+        #expect(decoded.taskbarItemOrder.isEmpty)
+        #expect(decoded.systemIndicatorOrder.isEmpty)
     }
 
     @Test func testJSONRoundtrip() throws {
         var original = UserState()
         original.appOrder = ["com.app.a", "com.app.b"]
         original.windowOrder = [11, 22, 33]
+        original.taskbarItemOrder = ["system:all:system.cpu", "window:11"]
+        original.systemIndicatorOrder = ["system.ram", "system.cpu"]
         original.pinnedAppsBySpace = [
             "111": ["com.apple.finder"],
             "222": ["com.apple.Safari"],
         ]
         original.groupPreviewOrderByKey = [
             "app:com.apple.finder": [11, 33, 22]
+        ]
+        original.windowPresentationOverrides = [
+            "window:com.example|example|docs": WindowPresentationOverride(title: "Docs", colorHex: "#4A90E2")
         ]
 
         let encoder = JSONEncoder()
@@ -42,6 +49,30 @@ struct UserStateTests {
         let decoded = try decoder.decode(UserState.self, from: data)
 
         #expect(decoded == original)
+    }
+
+    @Test func testUpdateTaskbarItemOrderDedupes() {
+        let key = "LIQUIDBAR_CONFIG_DIR"
+        let path = "/tmp/liquidbar-userstate-item-order-test-\(UUID().uuidString)"
+        setenv(key, path, 1)
+        defer { unsetenv(key) }
+
+        var state = UserState()
+        state.updateTaskbarItemOrder(["system:all:system.cpu", "window:11", "system:all:system.cpu"])
+
+        #expect(state.taskbarItemOrder == ["system:all:system.cpu", "window:11"])
+    }
+
+    @Test func testUpdateSystemIndicatorOrderFiltersAndDedupes() {
+        let key = "LIQUIDBAR_CONFIG_DIR"
+        let path = "/tmp/liquidbar-userstate-system-indicator-order-test-\(UUID().uuidString)"
+        setenv(key, path, 1)
+        defer { unsetenv(key) }
+
+        var state = UserState()
+        state.updateSystemIndicatorOrder(["system.ram", "window:11", "system.cpu", "system.ram"])
+
+        #expect(state.systemIndicatorOrder == ["system.ram", "system.cpu"])
     }
 
     @Test func testPinUnpinMutations() {
@@ -90,5 +121,44 @@ struct UserStateTests {
 
         state.updateGroupPreviewOrder(key: "app:com.example", orderedWindowIds: [])
         #expect(state.groupPreviewOrderByKey["app:com.example"] == nil)
+    }
+
+    @Test func testWindowPresentationOverrideMutations() {
+        let key = "LIQUIDBAR_CONFIG_DIR"
+        let path = "/tmp/liquidbar-userstate-presentation-test-\(UUID().uuidString)"
+        setenv(key, path, 1)
+        defer { unsetenv(key) }
+
+        var state = UserState()
+        let windowKey = "window:com.example.app|example|project"
+
+        state.setWindowTitleOverride(key: windowKey, title: "Project")
+        state.setWindowColorOverride(key: windowKey, colorHex: "#34C759")
+
+        #expect(state.presentationOverride(for: windowKey)?.title == "Project")
+        #expect(state.presentationOverride(for: windowKey)?.colorHex == "#34C759")
+
+        state.setWindowTitleOverride(key: windowKey, title: nil)
+        #expect(state.presentationOverride(for: windowKey)?.title == nil)
+        #expect(state.presentationOverride(for: windowKey)?.colorHex == "#34C759")
+
+        state.setWindowColorOverride(key: windowKey, colorHex: nil)
+        #expect(state.presentationOverride(for: windowKey) == nil)
+    }
+
+    @Test func testTabGroupColorMutation() {
+        let key = "LIQUIDBAR_CONFIG_DIR"
+        let path = "/tmp/liquidbar-userstate-tab-color-test-\(UUID().uuidString)"
+        setenv(key, path, 1)
+        defer { unsetenv(key) }
+
+        var state = UserState()
+        state.tabGroups = [TabGroup(id: "work", name: "Work", windowIds: [1])]
+
+        state.setTabGroupColor(id: "work", colorHex: "#AF52DE")
+        #expect(state.tabGroups[0].colorHex == "#AF52DE")
+
+        state.setTabGroupColor(id: "work", colorHex: nil)
+        #expect(state.tabGroups[0].colorHex == nil)
     }
 }

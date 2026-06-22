@@ -344,10 +344,11 @@ final class NativeBarView: NSView {
     }
 
     private func shouldUseLayeredGlass(for decoration: NativeDecoration) -> Bool {
+        guard decoration.usesLayeredGlass else { return false }
         switch decoration.kind {
-        case .hover, .focus, .badge, .pluginState, .stackPlate:
+        case .hover, .focus, .badge, .pluginState, .stackPlate, .systemMetricShell:
             return decoration.rect.width >= 4 && decoration.rect.height >= 4
-        case .pin, .separator, .dragShadow:
+        case .pin, .separator, .dragShadow, .systemMetricTrack, .systemMetricFill, .systemMetricGraph:
             return false
         }
     }
@@ -1107,6 +1108,14 @@ final class NativeBarView: NSView {
             rename.representedObject = groupId
             menu.addItem(rename)
 
+            menu.addItem(makeColorMenu(
+                title: "Color Tab Group",
+                index: index,
+                setAction: #selector(contextSetTabGroupColor(_:)),
+                resetTitle: "Clear Tab Group Color",
+                resetAction: #selector(contextSetTabGroupColor(_:))
+            ))
+
             let delete = NSMenuItem(title: "Delete Tab Group", action: #selector(contextDeleteTabGroup(_:)), keyEquivalent: "")
             delete.target = self
             delete.tag = index
@@ -1123,6 +1132,26 @@ final class NativeBarView: NSView {
             return makeAppContextMenu()
 
         case .window(let id, _, _, _, _, _, _):
+            let rename = NSMenuItem(title: "Rename Window…", action: #selector(contextRenameWindow(_:)), keyEquivalent: "")
+            rename.target = self
+            rename.tag = index
+            menu.addItem(rename)
+
+            menu.addItem(makeColorMenu(
+                title: "Color Window",
+                index: index,
+                setAction: #selector(contextSetWindowColor(_:)),
+                resetTitle: "Clear Window Color",
+                resetAction: #selector(contextResetWindowColor(_:))
+            ))
+
+            let resetTitle = NSMenuItem(title: "Reset Window Title", action: #selector(contextResetWindowTitle(_:)), keyEquivalent: "")
+            resetTitle.target = self
+            resetTitle.tag = index
+            menu.addItem(resetTitle)
+
+            menu.addItem(.separator())
+
             let closeItem = NSMenuItem(title: "Close Window", action: #selector(contextClose(_:)), keyEquivalent: "")
             closeItem.target = self
             closeItem.tag = index
@@ -1224,6 +1253,31 @@ final class NativeBarView: NSView {
         return menu
     }
 
+    private func makeColorMenu(
+        title: String,
+        index: Int,
+        setAction: Selector,
+        resetTitle: String,
+        resetAction: Selector
+    ) -> NSMenuItem {
+        let colorItem = NSMenuItem(title: title, action: nil, keyEquivalent: "")
+        let submenu = NSMenu()
+        for entry in PresentationColorPalette.entries {
+            let item = NSMenuItem(title: entry.name, action: setAction, keyEquivalent: "")
+            item.target = self
+            item.tag = index
+            item.representedObject = entry.hex
+            submenu.addItem(item)
+        }
+        submenu.addItem(.separator())
+        let clear = NSMenuItem(title: resetTitle, action: resetAction, keyEquivalent: "")
+        clear.target = self
+        clear.tag = index
+        submenu.addItem(clear)
+        colorItem.submenu = submenu
+        return colorItem
+    }
+
     private func makeAppContextMenu() -> NSMenu {
         let menu = NSMenu()
         appendAppContextItems(to: menu, includeSeparator: false)
@@ -1280,6 +1334,22 @@ final class NativeBarView: NSView {
         onContextAction?(sender.tag, .blacklist, nil)
     }
 
+    @objc private func contextRenameWindow(_ sender: NSMenuItem) {
+        onContextAction?(sender.tag, .renameWindow, nil)
+    }
+
+    @objc private func contextSetWindowColor(_ sender: NSMenuItem) {
+        onContextAction?(sender.tag, .setWindowColor, sender.representedObject as? String)
+    }
+
+    @objc private func contextResetWindowTitle(_ sender: NSMenuItem) {
+        onContextAction?(sender.tag, .resetWindowTitle, nil)
+    }
+
+    @objc private func contextResetWindowColor(_ sender: NSMenuItem) {
+        onContextAction?(sender.tag, .resetWindowColor, nil)
+    }
+
     @objc private func contextCreateTabGroup(_ sender: NSMenuItem) {
         onContextAction?(sender.tag, .createTabGroup, nil)
     }
@@ -1298,6 +1368,10 @@ final class NativeBarView: NSView {
 
     @objc private func contextDeleteTabGroup(_ sender: NSMenuItem) {
         onContextAction?(sender.tag, .deleteTabGroup, sender.representedObject as? String)
+    }
+
+    @objc private func contextSetTabGroupColor(_ sender: NSMenuItem) {
+        onContextAction?(sender.tag, .setTabGroupColor, sender.representedObject as? String)
     }
 
     @objc private func contextOpenCustomItem(_ sender: NSMenuItem) {

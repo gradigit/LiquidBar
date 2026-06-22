@@ -1,10 +1,24 @@
 import Foundation
 
+struct WindowPresentationOverride: Codable, Sendable, Equatable {
+    var title: String?
+    var colorHex: String?
+
+    var isEmpty: Bool {
+        (title?.isEmpty ?? true) && (colorHex?.isEmpty ?? true)
+    }
+}
+
 struct UserState: Codable, Sendable, Equatable {
     var appOrder: [String] = []
     /// Persistent ordering of taskbar windows/items by window id.
     /// Used to restore drag-reordered positions across LiquidBar restarts.
     var windowOrder: [UInt32] = []
+    /// Persistent ordering of visible taskbar item identities for free-placement
+    /// surfaces such as movable system indicators.
+    var taskbarItemOrder: [String] = []
+    /// Persistent metric ordering inside the system-indicator cluster.
+    var systemIndicatorOrder: [String] = []
     /// Per-Space pinned apps, keyed by Space `id64` string.
     var pinnedAppsBySpace: [String: [String]] = [:]
     /// Persistent ordering for group-preview thumbnails (mainly app groups).
@@ -12,15 +26,24 @@ struct UserState: Codable, Sendable, Equatable {
     var groupPreviewOrderByKey: [String: [UInt32]] = [:]
     /// User-defined window groups ("tab groups").
     var tabGroups: [TabGroup] = []
+    /// LiquidBar-only display overrides for real windows.
+    ///
+    /// Keys are stable fingerprints derived from the original bundle id + title.
+    /// Window ids are not stable across launches, so they are used only as runtime
+    /// lookup handles in `EventLoop`.
+    var windowPresentationOverrides: [String: WindowPresentationOverride] = [:]
 
     // MARK: - Codable (backward-compatible decoding)
 
     private enum CodingKeys: String, CodingKey {
         case appOrder
         case windowOrder
+        case taskbarItemOrder
+        case systemIndicatorOrder
         case pinnedAppsBySpace
         case groupPreviewOrderByKey
         case tabGroups
+        case windowPresentationOverrides
     }
 
     init() {}
@@ -29,18 +52,24 @@ struct UserState: Codable, Sendable, Equatable {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         appOrder = try c.decodeIfPresent([String].self, forKey: .appOrder) ?? []
         windowOrder = try c.decodeIfPresent([UInt32].self, forKey: .windowOrder) ?? []
+        taskbarItemOrder = try c.decodeIfPresent([String].self, forKey: .taskbarItemOrder) ?? []
+        systemIndicatorOrder = try c.decodeIfPresent([String].self, forKey: .systemIndicatorOrder) ?? []
         pinnedAppsBySpace = try c.decodeIfPresent([String: [String]].self, forKey: .pinnedAppsBySpace) ?? [:]
         groupPreviewOrderByKey = try c.decodeIfPresent([String: [UInt32]].self, forKey: .groupPreviewOrderByKey) ?? [:]
         tabGroups = try c.decodeIfPresent([TabGroup].self, forKey: .tabGroups) ?? []
+        windowPresentationOverrides = try c.decodeIfPresent([String: WindowPresentationOverride].self, forKey: .windowPresentationOverrides) ?? [:]
     }
 
     func encode(to encoder: Encoder) throws {
         var c = encoder.container(keyedBy: CodingKeys.self)
         try c.encode(appOrder, forKey: .appOrder)
         try c.encode(windowOrder, forKey: .windowOrder)
+        try c.encode(taskbarItemOrder, forKey: .taskbarItemOrder)
+        try c.encode(systemIndicatorOrder, forKey: .systemIndicatorOrder)
         try c.encode(pinnedAppsBySpace, forKey: .pinnedAppsBySpace)
         try c.encode(groupPreviewOrderByKey, forKey: .groupPreviewOrderByKey)
         try c.encode(tabGroups, forKey: .tabGroups)
+        try c.encode(windowPresentationOverrides, forKey: .windowPresentationOverrides)
     }
 
     // MARK: - Persistence
@@ -87,6 +116,22 @@ struct UserState: Codable, Sendable, Equatable {
         let normalized = order.filter { seen.insert($0).inserted }
         guard windowOrder != normalized else { return }
         windowOrder = normalized
+        save()
+    }
+
+    mutating func updateTaskbarItemOrder(_ order: [String]) {
+        var seen = Set<String>()
+        let normalized = order.filter { seen.insert($0).inserted }
+        guard taskbarItemOrder != normalized else { return }
+        taskbarItemOrder = normalized
+        save()
+    }
+
+    mutating func updateSystemIndicatorOrder(_ order: [String]) {
+        var seen = Set<String>()
+        let normalized = order.filter { $0.hasPrefix("system.") && seen.insert($0).inserted }
+        guard systemIndicatorOrder != normalized else { return }
+        systemIndicatorOrder = normalized
         save()
     }
 
@@ -230,6 +275,56 @@ struct UserState: Codable, Sendable, Equatable {
 
         guard reordered != existing else { return }
         tabGroups[idx].windowIds = reordered
+        save()
+    }
+
+    // MARK: - Window Presentation Overrides
+
+    func presentationOverride(for key: String) -> WindowPresentationOverride? {
+        windowPresentationOverrides[key]
+    }
+
+    mutating func setWindowTitleOverride(key: String, title: String?) {
+        guard !key.isEmpty else { return }
+        var override = windowPresentationOverrides[key] ?? WindowPresentationOverride()
+        let normalized = title?.trimmingCharacters(in: .whitespacesAndNewlines)
+        override.title = (normalized?.isEmpty == false) ? normalized : nil
+        setWindowPresentationOverride(key: key, override: override)
+    }
+
+    mutating func setWindowColorOverride(key: String, colorHex: String?) {
+        guard !key.isEmpty else { return }
+        var override = windowPresentationOverrides[key] ?? WindowPresentationOverride()
+        override.colorHex = colorHex?.trimmingCharacters(in: .whitespacesAndNewlines)
+        if override.colorHex?.isEmpty == true {
+            override.colorHex = nil
+        }
+        setWindowPresentationOverride(key: key, override: override)
+    }
+
+    mutating func clearWindowPresentationOverride(key: String) {
+        guard windowPresentationOverrides.removeValue(forKey: key) != nil else { return }
+        save()
+    }
+
+    mutating func setTabGroupColor(id: String, colorHex: String?) {
+        guard let idx = tabGroups.firstIndex(where: { $0.id == id }) else { return }
+        let normalized = colorHex?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let next = (normalized?.isEmpty == false) ? normalized : nil
+        guard tabGroups[idx].colorHex != next else { return }
+        tabGroups[idx].colorHex = next
+        save()
+    }
+
+    private mutating func setWindowPresentationOverride(key: String, override: WindowPresentationOverride) {
+        if override.isEmpty {
+            if windowPresentationOverrides.removeValue(forKey: key) != nil {
+                save()
+            }
+            return
+        }
+        guard windowPresentationOverrides[key] != override else { return }
+        windowPresentationOverrides[key] = override
         save()
     }
 }

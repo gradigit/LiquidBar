@@ -55,6 +55,50 @@ struct DragLifecycleTests {
         return renderer
     }
 
+    private func setupDenseSystemIndicatorRenderer(appearance: SystemIndicatorAppearance) -> NativeBarRenderer {
+        let renderer = NativeBarRenderer()
+        renderer.registerPanel(displayId: 1, barWidth: 260, barHeight: 32, scale: 2)
+
+        let items: [TaskbarItem] = [
+            .customText(id: "system.cpu", text: "55%", screenId: 1),
+            .customText(id: "system.ram", text: "74%", screenId: 1),
+            .customText(id: "system.thermal", text: "35C", screenId: 1),
+        ]
+        var config = Config(itemSizing: .auto)
+        config.systemIndicatorChipPreset = .dense
+        config.systemIndicatorAppearance = appearance
+        renderer.updateItems(
+            items,
+            config: config,
+            iconCache: IconCache(),
+            displayId: 1,
+            systemIndicatorVisuals: [
+                "system.cpu": systemVisual(metric: .cpu, mode: .bar, valueText: "55%", value: 55, history: []),
+                "system.ram": systemVisual(metric: .ram, mode: .bar, valueText: "74%", value: 74, history: []),
+                "system.thermal": systemVisual(metric: .thermal, mode: .percentage, valueText: "35C", value: 35, history: []),
+            ]
+        )
+        return renderer
+    }
+
+    private func systemVisual(
+        metric: SystemIndicatorMetric,
+        mode: SystemIndicatorVisualMode,
+        valueText: String,
+        value: Float?,
+        history: [Float]
+    ) -> SystemIndicatorVisual {
+        SystemIndicatorVisual(
+            metric: metric,
+            mode: mode,
+            label: metric.label,
+            valueText: valueText,
+            valuePercent: value,
+            history: history,
+            severity: 0.2
+        )
+    }
+
     // MARK: - Start Drag
 
     @Test func testStartDragCreatesAnimation() throws {
@@ -169,6 +213,37 @@ struct DragLifecycleTests {
         #expect(renderer.hasDragAnimation(for: 1) == true)
 
         renderer.shutdown()
+    }
+
+    @Test func denseSystemIndicatorDragTargetsUseIndicatorSpacing() throws {
+        for appearance in [SystemIndicatorAppearance.flat, .minimal] {
+            let renderer = setupDenseSystemIndicatorRenderer(appearance: appearance)
+            let rects = renderer.visualItemRects(displayId: 1)
+            #expect(rects.count == 3)
+
+            let source = try #require(rects.first)
+            renderer.startDrag(
+                sourceIndex: 0,
+                cursorX: Float(source.midX),
+                cursorOffsetInItem: Float(source.width / 2),
+                config: Config(),
+                displayId: 1
+            )
+            renderer.updateDragCursor(cursorX: Float(rects[1].midX), insertionIndex: 2, displayId: 1)
+
+            let activeTargets = renderer.debugDragSpringTargets(displayId: 1)
+            #expect(activeTargets.count == 3)
+            #expect(abs(activeTargets[1] - Float(rects[0].minX)) < 0.5)
+            #expect(abs(activeTargets[2] - Float(rects[2].minX)) < 0.5)
+
+            renderer.endDrag(displayId: 1)
+            let settleTargets = renderer.debugDragSpringTargets(displayId: 1)
+            #expect(settleTargets.count == 3)
+            #expect(abs(settleTargets[0] - Float(rects[1].minX)) < 0.5)
+            #expect(abs(settleTargets[2] - Float(rects[2].minX)) < 0.5)
+
+            renderer.shutdown()
+        }
     }
 
     // MARK: - Tick and Rebuild

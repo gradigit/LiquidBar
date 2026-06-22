@@ -68,17 +68,20 @@ final class WindowSwitcherPanel: NSPanel {
 
         fileprivate static func normalizedAspectRatio(_ aspectRatio: CGFloat) -> CGFloat {
             guard aspectRatio.isFinite, aspectRatio > 0 else { return fallbackAspectRatio }
-            return min(2.35, max(0.56, aspectRatio))
+            return min(2.35, max(0.34, aspectRatio))
         }
     }
 
     private final class EntryView: NSView {
         let windowId: UInt32
         private let floatingSurface: Bool
+        private let glassView: NSGlassEffectView?
+        private let contentRoot = NSView()
         private let iconView = NSImageView()
         private let titleLabel = NSTextField(labelWithString: "")
         private let subtitleLabel = NSTextField(labelWithString: "")
         private let thumbnailView = NSImageView()
+        private let footerScrimLayer = CAGradientLayer()
         private let hoverLayer = CALayer()
         private let selectionLayer = CALayer()
         private var widthConstraint: NSLayoutConstraint!
@@ -98,18 +101,21 @@ final class WindowSwitcherPanel: NSPanel {
         private var selected = false
         private var hovered = false
         private var currentScale: CGFloat = 1
+        private var currentBackgroundAlpha: CGFloat = 0
+        private var currentFooterBottomAlpha: CGFloat = 0
         var onClick: ((UInt32) -> Void)?
 
-        init(windowId: UInt32, metrics: EntryMetrics, floatingSurface: Bool) {
+        init(windowId: UInt32, metrics: EntryMetrics, floatingSurface: Bool, usesCardGlass: Bool) {
             self.windowId = windowId
             self.floatingSurface = floatingSurface
+            self.glassView = usesCardGlass ? NSGlassEffectView() : nil
             super.init(frame: .zero)
 
             wantsLayer = true
             layer?.cornerRadius = metrics.cardCornerRadius
             layer?.masksToBounds = false
             layer?.anchorPoint = CGPoint(x: 0.5, y: 0.5)
-            layer?.backgroundColor = NSColor.white.withAlphaComponent(floatingSurface ? 0.075 : 0.055).cgColor
+            layer?.backgroundColor = floatingSurface ? nil : NSColor.white.withAlphaComponent(0.055).cgColor
             layer?.borderWidth = 0.75
             layer?.borderColor = NSColor.white.withAlphaComponent(0.12).cgColor
             layer?.shadowColor = NSColor.black.cgColor
@@ -117,15 +123,48 @@ final class WindowSwitcherPanel: NSPanel {
             layer?.shadowRadius = 18
             layer?.shadowOpacity = 0.10
 
+            contentRoot.wantsLayer = true
+            contentRoot.layer?.masksToBounds = false
+            contentRoot.translatesAutoresizingMaskIntoConstraints = false
+            if let glassView {
+                glassView.translatesAutoresizingMaskIntoConstraints = false
+                glassView.style = .regular
+                glassView.cornerRadius = metrics.cardCornerRadius
+                glassView.tintColor = NSColor.white.withAlphaComponent(0.04)
+                glassView.contentView = contentRoot
+                addSubview(glassView)
+                NSLayoutConstraint.activate([
+                    glassView.leadingAnchor.constraint(equalTo: leadingAnchor),
+                    glassView.trailingAnchor.constraint(equalTo: trailingAnchor),
+                    glassView.topAnchor.constraint(equalTo: topAnchor),
+                    glassView.bottomAnchor.constraint(equalTo: bottomAnchor),
+                ])
+            } else {
+                addSubview(contentRoot)
+                NSLayoutConstraint.activate([
+                    contentRoot.leadingAnchor.constraint(equalTo: leadingAnchor),
+                    contentRoot.trailingAnchor.constraint(equalTo: trailingAnchor),
+                    contentRoot.topAnchor.constraint(equalTo: topAnchor),
+                    contentRoot.bottomAnchor.constraint(equalTo: bottomAnchor),
+                ])
+            }
+
+            footerScrimLayer.cornerRadius = 0
+            footerScrimLayer.masksToBounds = false
+            footerScrimLayer.startPoint = CGPoint(x: 0.5, y: 1.0)
+            footerScrimLayer.endPoint = CGPoint(x: 0.5, y: 0.0)
+            footerScrimLayer.opacity = 0
+            contentRoot.layer?.addSublayer(footerScrimLayer)
+
             hoverLayer.cornerRadius = metrics.cardCornerRadius
             hoverLayer.backgroundColor = NSColor.white.withAlphaComponent(0.10).cgColor
             hoverLayer.opacity = 0
-            layer?.addSublayer(hoverLayer)
+            contentRoot.layer?.addSublayer(hoverLayer)
 
             selectionLayer.cornerRadius = metrics.cardCornerRadius
-            selectionLayer.backgroundColor = NSColor.white.withAlphaComponent(0.22).cgColor
+            selectionLayer.backgroundColor = NSColor.white.withAlphaComponent(0.14).cgColor
             selectionLayer.opacity = 0
-            layer?.addSublayer(selectionLayer)
+            contentRoot.layer?.addSublayer(selectionLayer)
 
             thumbnailView.translatesAutoresizingMaskIntoConstraints = false
             thumbnailView.imageAlignment = .alignCenter
@@ -134,7 +173,7 @@ final class WindowSwitcherPanel: NSPanel {
             thumbnailView.layer?.cornerRadius = metrics.thumbnailCornerRadius
             thumbnailView.layer?.masksToBounds = true
             thumbnailView.layer?.backgroundColor = NSColor.black.withAlphaComponent(0.2).cgColor
-            addSubview(thumbnailView)
+            contentRoot.addSubview(thumbnailView)
 
             iconView.translatesAutoresizingMaskIntoConstraints = false
             iconView.imageAlignment = .alignCenter
@@ -142,35 +181,50 @@ final class WindowSwitcherPanel: NSPanel {
             iconView.wantsLayer = true
             iconView.layer?.cornerRadius = 6
             iconView.layer?.masksToBounds = true
-            addSubview(iconView)
+            contentRoot.addSubview(iconView)
+
+            let labelShadow = NSShadow()
+            labelShadow.shadowColor = NSColor.black.withAlphaComponent(0.58)
+            labelShadow.shadowBlurRadius = 4
+            labelShadow.shadowOffset = CGSize(width: 0, height: -1)
 
             titleLabel.translatesAutoresizingMaskIntoConstraints = false
             titleLabel.font = .systemFont(ofSize: metrics.titleFontSize, weight: .semibold)
             titleLabel.lineBreakMode = .byTruncatingTail
             titleLabel.maximumNumberOfLines = 1
-            titleLabel.textColor = .labelColor
-            addSubview(titleLabel)
+            titleLabel.isBezeled = false
+            titleLabel.drawsBackground = false
+            titleLabel.isEditable = false
+            titleLabel.isSelectable = false
+            titleLabel.textColor = floatingSurface ? .white : .labelColor
+            titleLabel.shadow = labelShadow
+            contentRoot.addSubview(titleLabel)
 
             subtitleLabel.translatesAutoresizingMaskIntoConstraints = false
             subtitleLabel.font = .systemFont(ofSize: metrics.subtitleFontSize, weight: .regular)
             subtitleLabel.lineBreakMode = .byTruncatingTail
             subtitleLabel.maximumNumberOfLines = 1
-            subtitleLabel.textColor = NSColor.secondaryLabelColor
-            addSubview(subtitleLabel)
+            subtitleLabel.isBezeled = false
+            subtitleLabel.drawsBackground = false
+            subtitleLabel.isEditable = false
+            subtitleLabel.isSelectable = false
+            subtitleLabel.textColor = floatingSurface ? NSColor.white.withAlphaComponent(0.78) : NSColor.secondaryLabelColor
+            subtitleLabel.shadow = labelShadow
+            contentRoot.addSubview(subtitleLabel)
 
             widthConstraint = widthAnchor.constraint(equalToConstant: metrics.width)
             heightConstraint = heightAnchor.constraint(equalToConstant: metrics.height)
-            thumbnailLeadingConstraint = thumbnailView.leadingAnchor.constraint(equalTo: leadingAnchor, constant: metrics.thumbnailInset)
-            thumbnailTrailingConstraint = thumbnailView.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -metrics.thumbnailInset)
-            thumbnailTopConstraint = thumbnailView.topAnchor.constraint(equalTo: topAnchor, constant: metrics.thumbnailInset)
+            thumbnailLeadingConstraint = thumbnailView.leadingAnchor.constraint(equalTo: contentRoot.leadingAnchor, constant: metrics.thumbnailInset)
+            thumbnailTrailingConstraint = thumbnailView.trailingAnchor.constraint(equalTo: contentRoot.trailingAnchor, constant: -metrics.thumbnailInset)
+            thumbnailTopConstraint = thumbnailView.topAnchor.constraint(equalTo: contentRoot.topAnchor, constant: metrics.thumbnailInset)
             thumbnailHeightConstraint = thumbnailView.heightAnchor.constraint(equalToConstant: metrics.thumbnailHeight)
-            iconLeadingConstraint = iconView.leadingAnchor.constraint(equalTo: leadingAnchor, constant: metrics.thumbnailInset + 2)
+            iconLeadingConstraint = iconView.leadingAnchor.constraint(equalTo: contentRoot.leadingAnchor, constant: metrics.thumbnailInset + 2)
             iconTopConstraint = iconView.topAnchor.constraint(equalTo: thumbnailView.bottomAnchor, constant: metrics.textGap)
             iconWidthConstraint = iconView.widthAnchor.constraint(equalToConstant: metrics.iconSize)
             iconHeightConstraint = iconView.heightAnchor.constraint(equalToConstant: metrics.iconSize)
             titleTopConstraint = titleLabel.topAnchor.constraint(equalTo: thumbnailView.bottomAnchor, constant: metrics.textGap)
-            titleTrailingConstraint = titleLabel.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -(metrics.thumbnailInset + 2))
-            subtitleBottomConstraint = subtitleLabel.bottomAnchor.constraint(lessThanOrEqualTo: bottomAnchor, constant: -(metrics.thumbnailInset - 2))
+            titleTrailingConstraint = titleLabel.trailingAnchor.constraint(equalTo: contentRoot.trailingAnchor, constant: -(metrics.thumbnailInset + 2))
+            subtitleBottomConstraint = subtitleLabel.bottomAnchor.constraint(lessThanOrEqualTo: contentRoot.bottomAnchor, constant: -(metrics.thumbnailInset - 2))
 
             NSLayoutConstraint.activate([
                 widthConstraint,
@@ -203,8 +257,11 @@ final class WindowSwitcherPanel: NSPanel {
 
         override func layout() {
             super.layout()
-            hoverLayer.frame = bounds
-            selectionLayer.frame = bounds
+            let rootBounds = contentRoot.bounds
+            let footerHeight = min(rootBounds.height, max(48, rootBounds.height - thumbnailView.frame.maxY + 8))
+            footerScrimLayer.frame = CGRect(x: 0, y: 0, width: rootBounds.width, height: footerHeight)
+            hoverLayer.frame = rootBounds
+            selectionLayer.frame = rootBounds
         }
 
         override func updateTrackingAreas() {
@@ -280,7 +337,9 @@ final class WindowSwitcherPanel: NSPanel {
 
             titleLabel.font = .systemFont(ofSize: metrics.titleFontSize, weight: .semibold)
             subtitleLabel.font = .systemFont(ofSize: metrics.subtitleFontSize, weight: .regular)
+            glassView?.cornerRadius = metrics.cardCornerRadius
             layer?.cornerRadius = metrics.cardCornerRadius
+            footerScrimLayer.cornerRadius = 0
             hoverLayer.cornerRadius = metrics.cardCornerRadius
             selectionLayer.cornerRadius = metrics.cardCornerRadius
             thumbnailView.layer?.cornerRadius = metrics.thumbnailCornerRadius
@@ -292,7 +351,7 @@ final class WindowSwitcherPanel: NSPanel {
                     let anim = CABasicAnimation(keyPath: "transform")
                     anim.fromValue = layer?.presentation()?.transform ?? currentTransform
                     anim.toValue = targetTransform
-                    anim.duration = 0.12
+                    anim.duration = 0.15
                     anim.timingFunction = CAMediaTimingFunction(name: .easeOut)
                     layer?.add(anim, forKey: "liquidbar.switcher.cardScale")
                 }
@@ -307,35 +366,44 @@ final class WindowSwitcherPanel: NSPanel {
         }
 
         private func updateChrome(animated: Bool) {
-            let bgAlpha: CGFloat
+            let tintAlpha: CGFloat
             let borderAlpha: CGFloat
             let borderWidth: CGFloat
             if selected {
-                bgAlpha = hovered ? 0.32 : (floatingSurface ? 0.27 : 0.24)
-                borderAlpha = hovered ? 0.64 : (floatingSurface ? 0.58 : 0.54)
-                borderWidth = 1.4
+                tintAlpha = hovered ? 0.12 : (floatingSurface ? 0.075 : 0.24)
+                borderAlpha = hovered ? 0.78 : (floatingSurface ? 0.66 : 0.54)
+                borderWidth = 1.35
             } else if hovered {
-                bgAlpha = floatingSurface ? 0.16 : 0.13
-                borderAlpha = floatingSurface ? 0.36 : 0.32
-                borderWidth = 1.0
+                tintAlpha = floatingSurface ? 0.052 : 0.13
+                borderAlpha = floatingSurface ? 0.48 : 0.32
+                borderWidth = 0.95
             } else {
-                bgAlpha = floatingSurface ? 0.075 : 0.045
-                borderAlpha = floatingSurface ? 0.16 : 0.11
+                tintAlpha = floatingSurface ? 0.018 : 0.045
+                borderAlpha = floatingSurface ? 0.22 : 0.11
                 borderWidth = 0.6
             }
 
             let selectionOpacity: Float = selected ? 1 : 0
-            let hoverOpacity: Float = hovered ? (selected ? 0.18 : 0.55) : 0
+            let hoverOpacity: Float = hovered ? (selected ? 0.10 : 0.20) : 0
+            let footerTopAlpha: CGFloat = floatingSurface ? 0.0 : 0
+            let footerBottomAlpha: CGFloat = 0
 
             if animated {
                 animateOpacity(layer: selectionLayer, to: selectionOpacity)
                 animateOpacity(layer: hoverLayer, to: hoverOpacity)
             }
-            layer?.backgroundColor = NSColor.white.withAlphaComponent(bgAlpha).cgColor
+            glassView?.tintColor = floatingSurface ? NSColor.white.withAlphaComponent(tintAlpha) : nil
+            layer?.backgroundColor = floatingSurface ? nil : NSColor.white.withAlphaComponent(tintAlpha).cgColor
             layer?.borderColor = NSColor.white.withAlphaComponent(borderAlpha).cgColor
             layer?.borderWidth = borderWidth
             layer?.shadowOpacity = selected ? 0.24 : (hovered ? 0.16 : 0.08)
             layer?.shadowRadius = selected ? 24 : (hovered ? 20 : 14)
+            currentBackgroundAlpha = tintAlpha
+            currentFooterBottomAlpha = footerBottomAlpha
+            footerScrimLayer.colors = [
+                NSColor.black.withAlphaComponent(footerTopAlpha).cgColor,
+                NSColor.black.withAlphaComponent(footerBottomAlpha).cgColor,
+            ]
             selectionLayer.opacity = selectionOpacity
             hoverLayer.opacity = hoverOpacity
         }
@@ -344,7 +412,7 @@ final class WindowSwitcherPanel: NSPanel {
             let anim = CABasicAnimation(keyPath: "opacity")
             anim.fromValue = layer.presentation()?.opacity ?? layer.opacity
             anim.toValue = targetOpacity
-            anim.duration = 0.12
+            anim.duration = 0.14
             anim.timingFunction = CAMediaTimingFunction(name: .easeOut)
             layer.add(anim, forKey: "opacity")
         }
@@ -354,12 +422,27 @@ final class WindowSwitcherPanel: NSPanel {
             setHovered(hovered, animated: false)
         }
 
-        func debugVisualState() -> (borderWidth: CGFloat, selectionOpacity: Float, hoverOpacity: Float, scale: CGFloat) {
-            (layer?.borderWidth ?? 0, selectionLayer.opacity, hoverLayer.opacity, currentScale)
+        func debugVisualState() -> (borderWidth: CGFloat, selectionOpacity: Float, hoverOpacity: Float, scale: CGFloat, backgroundAlpha: CGFloat, footerBottomAlpha: CGFloat) {
+            return (
+                layer?.borderWidth ?? 0,
+                selectionLayer.opacity,
+                hoverLayer.opacity,
+                currentScale,
+                currentBackgroundAlpha,
+                currentFooterBottomAlpha
+            )
         }
 
         func debugThumbnailImage() -> NSImage? {
             thumbnailView.image
+        }
+
+        func debugUsesSystemGlass() -> Bool {
+            floatingSurface && glassView != nil
+        }
+
+        func debugLabelsDrawBackground() -> Bool {
+            titleLabel.drawsBackground || subtitleLabel.drawsBackground || titleLabel.isBezeled || subtitleLabel.isBezeled
         }
 
         func debugVisualFrame(in document: NSView) -> NSRect {
@@ -371,7 +454,8 @@ final class WindowSwitcherPanel: NSPanel {
             let frame = convert(bounds, to: document)
             let dx = frame.width * max(0, currentScale - 1) / 2
             let dy = frame.height * max(0, currentScale - 1) / 2
-            return frame.insetBy(dx: -dx, dy: -dy)
+            let selectedOutset: CGFloat = currentScale > 1.001 ? 8 : 0
+            return frame.insetBy(dx: -(dx + selectedOutset), dy: -(dy + selectedOutset))
         }
     }
 
@@ -379,22 +463,44 @@ final class WindowSwitcherPanel: NSPanel {
     let layoutStyle: SwitcherLayoutStyle
     private let metrics: LayoutMetrics
     private var animationProfile: AnimationProfile = .balancedSpring
-    private let effectContainer = NSView()
+    private let effectContainer: NSView
+    private let effectContentView = NSView()
     private let scrollView = NSScrollView()
     private let documentView = NSView()
     private let stackView = NSStackView()
     private var documentWidthConstraint: NSLayoutConstraint?
+    private var usesSharedGlassBackground = false
     private var entryViews: [UInt32: EntryView] = [:]
     private var entryAspectRatioByWindowId: [UInt32: CGFloat] = [:]
     private var orderedWindowIds: [UInt32] = []
     private var selectedIndex: Int = 0
     private var visibilityToken: UInt64 = 0
+    private var scrollDisplayLink: CADisplayLink?
+    private var scrollAnimation: ScrollAnimationState?
+    private var pendingSpringScrollTarget: NSPoint?
+    private var springScrollDispatchScheduled = false
     var onEntryClick: ((UInt32) -> Void)?
+
+    private struct ScrollAnimationState {
+        var kind: String
+        var targetOrigin: NSPoint
+        var currentX: CGFloat
+        var velocityX: CGFloat
+        var startedAt: CFTimeInterval
+        var lastTimestamp: CFTimeInterval
+        var lastFrameTimestamp: CFTimeInterval?
+        var frameIntervalsMs: [Double]
+        var retargetCount: Int
+        var distancePoints: CGFloat
+        var drivesScroll: Bool
+        var deadline: CFTimeInterval?
+    }
 
     init(theme: Theme, glassStyle: GlassStyle, layoutStyle: SwitcherLayoutStyle = .heroCarousel) {
         self.glassStyle = glassStyle
         self.layoutStyle = layoutStyle
         self.metrics = Self.metrics(for: layoutStyle)
+        self.effectContainer = NSView()
         super.init(
             contentRect: NSRect(x: 0, y: 0, width: 880, height: metrics.panelHeight),
             styleMask: [.borderless, .nonactivatingPanel],
@@ -500,7 +606,8 @@ final class WindowSwitcherPanel: NSPanel {
             let view = reusableViews[entry.windowId] ?? EntryView(
                 windowId: entry.windowId,
                 metrics: entryMetrics,
-                floatingSurface: layoutStyle == .heroCarousel
+                floatingSurface: layoutStyle == .heroCarousel,
+                usesCardGlass: layoutStyle == .heroCarousel
             )
             view.translatesAutoresizingMaskIntoConstraints = false
             view.onClick = { [weak self] windowId in
@@ -626,6 +733,9 @@ final class WindowSwitcherPanel: NSPanel {
         let token = visibilityToken
 
         guard isVisible else { return }
+        pendingSpringScrollTarget = nil
+        springScrollDispatchScheduled = false
+        finishScrollAnimation(success: false)
         if SystemAccessibilityPreferences.reduceMotion {
             orderOut(nil)
             return
@@ -664,12 +774,36 @@ final class WindowSwitcherPanel: NSPanel {
 
     private func setupUI() {
         contentView = effectContainer
+        let glassContainer = effectContainer as? NSGlassEffectContainerView
+        glassContainer?.spacing = 0
         effectContainer.wantsLayer = true
         effectContainer.layer?.cornerRadius = metrics.containerCornerRadius
         effectContainer.layer?.masksToBounds = layoutStyle != .heroCarousel
         effectContainer.layer?.borderWidth = metrics.containerBorderWidth
         effectContainer.layer?.borderColor = NSColor.white.withAlphaComponent(metrics.containerBorderAlpha).cgColor
+        effectContainer.layer?.shadowColor = NSColor.black.cgColor
+        effectContainer.layer?.shadowOffset = CGSize(width: 0, height: -18)
+        effectContainer.layer?.shadowRadius = 0
+        effectContainer.layer?.shadowOpacity = 0
         effectContainer.setAccessibilityIdentifier("liquidbar.overlay.switcher")
+
+        effectContentView.translatesAutoresizingMaskIntoConstraints = false
+        effectContentView.wantsLayer = true
+        effectContentView.layer?.masksToBounds = false
+        if let glassContainer {
+            glassContainer.contentView = effectContentView
+            if effectContentView.superview == nil {
+                effectContainer.addSubview(effectContentView)
+            }
+        } else {
+            effectContainer.addSubview(effectContentView)
+        }
+        NSLayoutConstraint.activate([
+            effectContentView.leadingAnchor.constraint(equalTo: effectContainer.leadingAnchor),
+            effectContentView.trailingAnchor.constraint(equalTo: effectContainer.trailingAnchor),
+            effectContentView.topAnchor.constraint(equalTo: effectContainer.topAnchor),
+            effectContentView.bottomAnchor.constraint(equalTo: effectContainer.bottomAnchor),
+        ])
 
         if metrics.backdropAlpha > 0 {
             rebuildGlassBackground()
@@ -682,7 +816,8 @@ final class WindowSwitcherPanel: NSPanel {
         scrollView.autohidesScrollers = true
         scrollView.horizontalScrollElasticity = .allowed
         scrollView.verticalScrollElasticity = .none
-        effectContainer.addSubview(scrollView)
+        scrollView.contentView.wantsLayer = true
+        effectContentView.addSubview(scrollView)
 
         stackView.orientation = .horizontal
         stackView.spacing = metrics.spacing
@@ -696,6 +831,8 @@ final class WindowSwitcherPanel: NSPanel {
         stackView.translatesAutoresizingMaskIntoConstraints = false
 
         documentView.translatesAutoresizingMaskIntoConstraints = false
+        documentView.wantsLayer = true
+        documentView.layer?.masksToBounds = false
         documentView.addSubview(stackView)
         let widthConstraint = documentView.widthAnchor.constraint(equalToConstant: documentWidth(forEntryCount: 0, selectedIndex: 0))
         documentWidthConstraint = widthConstraint
@@ -710,10 +847,10 @@ final class WindowSwitcherPanel: NSPanel {
         scrollView.documentView = documentView
 
         NSLayoutConstraint.activate([
-            scrollView.leadingAnchor.constraint(equalTo: effectContainer.leadingAnchor, constant: metrics.panelInset),
-            scrollView.trailingAnchor.constraint(equalTo: effectContainer.trailingAnchor, constant: -metrics.panelInset),
-            scrollView.topAnchor.constraint(equalTo: effectContainer.topAnchor, constant: metrics.panelInset),
-            scrollView.bottomAnchor.constraint(equalTo: effectContainer.bottomAnchor, constant: -metrics.panelInset),
+            scrollView.leadingAnchor.constraint(equalTo: effectContentView.leadingAnchor, constant: metrics.panelInset),
+            scrollView.trailingAnchor.constraint(equalTo: effectContentView.trailingAnchor, constant: -metrics.panelInset),
+            scrollView.topAnchor.constraint(equalTo: effectContentView.topAnchor, constant: metrics.panelInset),
+            scrollView.bottomAnchor.constraint(equalTo: effectContentView.bottomAnchor, constant: -metrics.panelInset),
         ])
     }
 
@@ -755,7 +892,7 @@ final class WindowSwitcherPanel: NSPanel {
         guard style == .heroCarousel else { return entry }
 
         let normalizedAspect = Entry.normalizedAspectRatio(aspectRatio)
-        let thumbnailWidth = min(390, max(150, entry.thumbnailHeight * normalizedAspect))
+        let thumbnailWidth = min(560, max(82, entry.thumbnailHeight * normalizedAspect))
         entry.width = thumbnailWidth + entry.thumbnailInset * 2
         return entry
     }
@@ -794,16 +931,16 @@ final class WindowSwitcherPanel: NSPanel {
 
         case .heroCarousel:
             let regular = EntryMetrics(
-                width: 294,
-                height: 236,
-                thumbnailHeight: 166,
-                iconSize: 26,
-                titleFontSize: 14,
+                width: 500,
+                height: 344,
+                thumbnailHeight: 260,
+                iconSize: 28,
+                titleFontSize: 15,
                 subtitleFontSize: 12,
-                thumbnailInset: 13,
-                textGap: 8,
-                cardCornerRadius: 20,
-                thumbnailCornerRadius: 13,
+                thumbnailInset: 14,
+                textGap: 10,
+                cardCornerRadius: 24,
+                thumbnailCornerRadius: 16,
                 scale: 1
             )
             return LayoutMetrics(
@@ -817,21 +954,21 @@ final class WindowSwitcherPanel: NSPanel {
                     subtitleFontSize: regular.subtitleFontSize,
                     thumbnailInset: regular.thumbnailInset,
                     textGap: regular.textGap,
-                    cardCornerRadius: 22,
-                    thumbnailCornerRadius: 14,
-                    scale: 1.06
+                    cardCornerRadius: 26,
+                    thumbnailCornerRadius: 18,
+                    scale: 1.07
                 ),
-                documentHeight: 276,
-                spacing: 16,
-                panelInset: 18,
-                contentInset: 34,
+                documentHeight: 420,
+                spacing: 24,
+                panelInset: 16,
+                contentInset: 26,
                 backdropAlpha: 0,
                 containerBorderAlpha: 0,
                 containerBorderWidth: 0,
                 containerCornerRadius: 0,
-                minPanelWidth: 960,
+                minPanelWidth: 980,
                 maxPanelWidth: 2200,
-                maxVisibleWidthFraction: 0.94
+                maxVisibleWidthFraction: 0.96
             )
         }
     }
@@ -846,7 +983,7 @@ final class WindowSwitcherPanel: NSPanel {
     }
 
     private func rebuildGlassBackground() {
-        for v in effectContainer.subviews where v !== scrollView {
+        for v in effectContentView.subviews where v !== scrollView {
             v.removeFromSuperview()
         }
 
@@ -866,19 +1003,23 @@ final class WindowSwitcherPanel: NSPanel {
             cornerRadiusOverride: metrics.containerCornerRadius
         )
         let bg = surface.view
+        usesSharedGlassBackground = true
+        if let glass = bg as? NSGlassEffectView, layoutStyle == .heroCarousel {
+            glass.tintColor = NSColor.white.withAlphaComponent(0.05)
+        }
 
         bg.translatesAutoresizingMaskIntoConstraints = false
         bg.alphaValue = metrics.backdropAlpha
-        if scrollView.superview === effectContainer {
-            effectContainer.addSubview(bg, positioned: .below, relativeTo: scrollView)
+        if scrollView.superview === effectContentView {
+            effectContentView.addSubview(bg, positioned: .below, relativeTo: scrollView)
         } else {
-            effectContainer.addSubview(bg)
+            effectContentView.addSubview(bg)
         }
         NSLayoutConstraint.activate([
-            bg.leadingAnchor.constraint(equalTo: effectContainer.leadingAnchor),
-            bg.trailingAnchor.constraint(equalTo: effectContainer.trailingAnchor),
-            bg.topAnchor.constraint(equalTo: effectContainer.topAnchor),
-            bg.bottomAnchor.constraint(equalTo: effectContainer.bottomAnchor),
+            bg.leadingAnchor.constraint(equalTo: effectContentView.leadingAnchor),
+            bg.trailingAnchor.constraint(equalTo: effectContentView.trailingAnchor),
+            bg.topAnchor.constraint(equalTo: effectContentView.topAnchor),
+            bg.bottomAnchor.constraint(equalTo: effectContentView.bottomAnchor),
         ])
     }
 
@@ -918,8 +1059,346 @@ final class WindowSwitcherPanel: NSPanel {
         targetX = min(max(0, targetX), maxX)
         guard abs(targetX - visible.origin.x) > 0.5 else { return }
 
-        scrollView.contentView.scroll(to: NSPoint(x: targetX, y: visible.origin.y))
-        scrollView.reflectScrolledClipView(scrollView.contentView)
+        scrollToSelectedTarget(x: targetX, y: visible.origin.y, animated: animated)
+    }
+
+    private func scrollToSelectedTarget(x targetX: CGFloat, y: CGFloat, animated: Bool) {
+        let clipView = scrollView.contentView
+        let targetOrigin = NSPoint(x: targetX, y: y)
+        clipView.layer?.removeAnimation(forKey: "liquidbar.switcher.clipScroll")
+
+        if animated && isVisible && !SystemAccessibilityPreferences.reduceMotion {
+            if !Self.usesLegacySwitcherScrollAnimation {
+                scheduleSpringScrollAnimation(to: targetOrigin)
+                return
+            }
+            startLegacyScrollProbe(to: targetOrigin)
+            NSAnimationContext.runAnimationGroup { context in
+                context.duration = 0.21
+                context.timingFunction = CAMediaTimingFunction(controlPoints: 0.18, 0.88, 0.20, 1.0)
+                context.allowsImplicitAnimation = true
+                clipView.animator().setBoundsOrigin(targetOrigin)
+            } completionHandler: { [weak self, weak clipView] in
+                MainActor.assumeIsolated {
+                    guard let self, let clipView else { return }
+                    self.scrollView.reflectScrolledClipView(clipView)
+                }
+            }
+        } else {
+            pendingSpringScrollTarget = nil
+            springScrollDispatchScheduled = false
+            finishScrollAnimation(success: false)
+            clipView.scroll(to: targetOrigin)
+        }
+        scrollView.reflectScrolledClipView(clipView)
+    }
+
+    private func scheduleSpringScrollAnimation(to targetOrigin: NSPoint) {
+        pendingSpringScrollTarget = targetOrigin
+        guard !springScrollDispatchScheduled else { return }
+        springScrollDispatchScheduled = true
+        let token = visibilityToken
+
+        Task { @MainActor [weak self] in
+            guard let self, self.visibilityToken == token else { return }
+            self.springScrollDispatchScheduled = false
+            guard self.isVisible, let targetOrigin = self.pendingSpringScrollTarget else {
+                self.pendingSpringScrollTarget = nil
+                return
+            }
+            self.pendingSpringScrollTarget = nil
+            if Self.usesDisplayLinkSpringScrollAnimation {
+                self.startSpringScrollAnimation(to: targetOrigin)
+            } else if Self.usesAppKitClipScrollAnimation {
+                self.startAppKitClipScrollAnimation(to: targetOrigin)
+            } else {
+                self.startTransformScrollAnimation(to: targetOrigin)
+            }
+        }
+    }
+
+    private func startTransformScrollAnimation(to targetOrigin: NSPoint) {
+        guard let layer = documentView.layer else {
+            startAppKitClipScrollAnimation(to: targetOrigin)
+            return
+        }
+
+        let now = CACurrentMediaTime()
+        let clipView = scrollView.contentView
+        let currentOrigin = clipView.bounds.origin
+        let presentationTranslation = layer.presentation()?.transform.m41 ?? layer.transform.m41
+        let initialTranslation = targetOrigin.x - currentOrigin.x + presentationTranslation
+        let distance = abs(targetOrigin.x - currentOrigin.x)
+
+        finishScrollAnimation(success: false)
+
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        clipView.scroll(to: targetOrigin)
+        scrollView.reflectScrolledClipView(clipView)
+        layer.rasterizationScale = backingScaleFactor
+        layer.shouldRasterize = true
+        layer.transform = CATransform3DMakeTranslation(initialTranslation, 0, 0)
+        CATransaction.commit()
+
+        scrollAnimation = ScrollAnimationState(
+            kind: "transform_scroll",
+            targetOrigin: targetOrigin,
+            currentX: targetOrigin.x,
+            velocityX: 0,
+            startedAt: now,
+            lastTimestamp: now,
+            lastFrameTimestamp: nil,
+            frameIntervalsMs: [],
+            retargetCount: 0,
+            distancePoints: distance,
+            drivesScroll: false,
+            deadline: nil
+        )
+        ensureScrollDisplayLink()
+
+        let anim = CABasicAnimation(keyPath: "transform")
+        anim.fromValue = layer.transform
+        anim.toValue = CATransform3DIdentity
+        anim.duration = 0.11
+        anim.timingFunction = CAMediaTimingFunction(controlPoints: 0.20, 0.88, 0.18, 1.0)
+
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        CATransaction.setCompletionBlock { [weak self] in
+            MainActor.assumeIsolated {
+                guard let self else { return }
+                guard let state = self.scrollAnimation,
+                      state.kind == "transform_scroll",
+                      abs(state.startedAt - now) < 0.0001 else {
+                    return
+                }
+                self.documentView.layer?.transform = CATransform3DIdentity
+                self.finishScrollAnimation(success: true)
+            }
+        }
+        layer.transform = CATransform3DIdentity
+        layer.add(anim, forKey: "liquidbar.switcher.documentTranslate")
+        CATransaction.commit()
+    }
+
+    private func startAppKitClipScrollAnimation(to targetOrigin: NSPoint) {
+        let now = CACurrentMediaTime()
+        let clipView = scrollView.contentView
+        finishScrollAnimation(success: false)
+        let currentX = clipView.bounds.origin.x
+        scrollAnimation = ScrollAnimationState(
+            kind: "system_scroll",
+            targetOrigin: targetOrigin,
+            currentX: currentX,
+            velocityX: 0,
+            startedAt: now,
+            lastTimestamp: now,
+            lastFrameTimestamp: nil,
+            frameIntervalsMs: [],
+            retargetCount: 0,
+            distancePoints: abs(targetOrigin.x - currentX),
+            drivesScroll: false,
+            deadline: nil
+        )
+        ensureScrollDisplayLink()
+
+        NSAnimationContext.runAnimationGroup { context in
+            context.duration = 0.16
+            context.timingFunction = CAMediaTimingFunction(controlPoints: 0.20, 0.90, 0.18, 1.0)
+            context.allowsImplicitAnimation = true
+            clipView.animator().setBoundsOrigin(targetOrigin)
+        } completionHandler: { [weak self, weak clipView] in
+            MainActor.assumeIsolated {
+                guard let self, let clipView else { return }
+                self.scrollView.reflectScrolledClipView(clipView)
+                guard let state = self.scrollAnimation,
+                      state.kind == "system_scroll",
+                      abs(state.startedAt - now) < 0.0001 else {
+                    return
+                }
+                self.finishScrollAnimation(success: true)
+            }
+        }
+    }
+
+    private func startLegacyScrollProbe(to targetOrigin: NSPoint) {
+        let now = CACurrentMediaTime()
+        finishScrollAnimation(success: false)
+        let currentX = scrollView.contentView.bounds.origin.x
+        scrollAnimation = ScrollAnimationState(
+            kind: "legacy_scroll",
+            targetOrigin: targetOrigin,
+            currentX: currentX,
+            velocityX: 0,
+            startedAt: now,
+            lastTimestamp: now,
+            lastFrameTimestamp: nil,
+            frameIntervalsMs: [],
+            retargetCount: 0,
+            distancePoints: abs(targetOrigin.x - currentX),
+            drivesScroll: false,
+            deadline: now + 0.24
+        )
+        ensureScrollDisplayLink()
+    }
+
+    private func startSpringScrollAnimation(to targetOrigin: NSPoint) {
+        let now = CACurrentMediaTime()
+        let clipView = scrollView.contentView
+        if var state = scrollAnimation, state.drivesScroll {
+            state.targetOrigin = targetOrigin
+            state.retargetCount += 1
+            state.distancePoints += abs(targetOrigin.x - state.currentX)
+            state.deadline = nil
+            scrollAnimation = state
+            ensureScrollDisplayLink()
+            return
+        }
+
+        finishScrollAnimation(success: false)
+        let currentX = clipView.bounds.origin.x
+        scrollAnimation = ScrollAnimationState(
+            kind: "spring_scroll",
+            targetOrigin: targetOrigin,
+            currentX: currentX,
+            velocityX: 0,
+            startedAt: now,
+            lastTimestamp: now,
+            lastFrameTimestamp: nil,
+            frameIntervalsMs: [],
+            retargetCount: 0,
+            distancePoints: abs(targetOrigin.x - currentX),
+            drivesScroll: true,
+            deadline: nil
+        )
+        ensureScrollDisplayLink()
+    }
+
+    private func ensureScrollDisplayLink() {
+        guard scrollDisplayLink == nil else { return }
+        let link = displayLink(target: self, selector: #selector(handleScrollDisplayLink(_:)))
+        if #available(macOS 14.0, *) {
+            link.preferredFrameRateRange = CAFrameRateRange(minimum: 60, maximum: 120, preferred: 120)
+        }
+        link.add(to: .main, forMode: .common)
+        scrollDisplayLink = link
+    }
+
+    @objc private func handleScrollDisplayLink(_ displayLink: CADisplayLink) {
+        guard var state = scrollAnimation else {
+            scrollDisplayLink?.invalidate()
+            scrollDisplayLink = nil
+            return
+        }
+
+        let now = displayLink.targetTimestamp > 0 ? displayLink.targetTimestamp : CACurrentMediaTime()
+        if let lastFrame = state.lastFrameTimestamp {
+            state.frameIntervalsMs.append(max(0, (now - lastFrame) * 1000.0))
+            if state.frameIntervalsMs.count > 240 {
+                state.frameIntervalsMs.removeFirst(state.frameIntervalsMs.count - 240)
+            }
+        }
+        state.lastFrameTimestamp = now
+
+        if !state.drivesScroll {
+            scrollAnimation = state
+            if let deadline = state.deadline, CACurrentMediaTime() >= deadline {
+                finishScrollAnimation(success: true)
+            }
+            return
+        }
+
+        let rawDelta = max(0.001, now - state.lastTimestamp)
+        let dt = min(rawDelta, 1.0 / 30.0)
+        state.lastTimestamp = now
+
+        // High-damping spring: fast magnetic travel with little overshoot.
+        let angularFrequency: CGFloat = 38.0
+        let dampingRatio: CGFloat = 0.92
+        let displacement = state.targetOrigin.x - state.currentX
+        let acceleration = angularFrequency * angularFrequency * displacement
+            - 2 * dampingRatio * angularFrequency * state.velocityX
+        state.velocityX += acceleration * CGFloat(dt)
+        state.currentX += state.velocityX * CGFloat(dt)
+
+        let clipView = scrollView.contentView
+        clipView.scroll(to: NSPoint(x: state.currentX, y: state.targetOrigin.y))
+        scrollView.reflectScrolledClipView(clipView)
+
+        let remaining = abs(state.targetOrigin.x - state.currentX)
+        if remaining < 0.75, abs(state.velocityX) < 18.0 {
+            clipView.scroll(to: state.targetOrigin)
+            scrollView.reflectScrolledClipView(clipView)
+            scrollAnimation = state
+            finishScrollAnimation(success: true)
+        } else {
+            scrollAnimation = state
+        }
+    }
+
+    private func finishScrollAnimation(success: Bool) {
+        guard let state = scrollAnimation else { return }
+        scrollAnimation = nil
+        scrollDisplayLink?.invalidate()
+        scrollDisplayLink = nil
+        documentView.layer?.removeAnimation(forKey: "liquidbar.switcher.documentTranslate")
+        documentView.layer?.transform = CATransform3DIdentity
+        documentView.layer?.shouldRasterize = false
+
+        PerformanceMonitor.shared.recordSwitcherAnimation(
+            kind: state.kind,
+            durationMs: (CACurrentMediaTime() - state.startedAt) * 1000.0,
+            frameCount: state.frameIntervalsMs.count,
+            frameP50Ms: Self.percentile(state.frameIntervalsMs, p: 0.50),
+            frameP95Ms: Self.percentile(state.frameIntervalsMs, p: 0.95),
+            frameMaxMs: state.frameIntervalsMs.max(),
+            retargetCount: state.retargetCount,
+            distancePoints: Double(state.distancePoints),
+            success: success
+        )
+    }
+
+    private static var usesLegacySwitcherScrollAnimation: Bool {
+        let env = ProcessInfo.processInfo.environment
+        if envBool("LIQUIDBAR_DISABLE_SWITCHER_SPRING_SCROLL") {
+            return true
+        }
+        return env["LIQUIDBAR_SWITCHER_SCROLL_ANIMATION"]?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() == "legacy"
+    }
+
+    private static var usesDisplayLinkSpringScrollAnimation: Bool {
+        let mode = ProcessInfo.processInfo.environment["LIQUIDBAR_SWITCHER_SCROLL_ANIMATION"]?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased()
+        return mode == "displaylink_spring" || mode == "spring_displaylink" || mode == "manual_spring"
+    }
+
+    private static var usesAppKitClipScrollAnimation: Bool {
+        let mode = ProcessInfo.processInfo.environment["LIQUIDBAR_SWITCHER_SCROLL_ANIMATION"]?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased()
+        return mode == "appkit_scroll" || mode == "system_scroll" || mode == "clip_scroll"
+    }
+
+    private static func envBool(_ key: String) -> Bool {
+        guard let raw = ProcessInfo.processInfo.environment[key]?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !raw.isEmpty else {
+            return false
+        }
+        switch raw.lowercased() {
+        case "1", "true", "yes", "y", "on":
+            return true
+        default:
+            return false
+        }
+    }
+
+    private static func percentile(_ values: [Double], p: Double) -> Double? {
+        guard !values.isEmpty else { return nil }
+        let sorted = values.sorted()
+        let rank = Int((Double(sorted.count - 1) * p).rounded(.toNearestOrAwayFromZero))
+        return sorted[min(max(rank, 0), sorted.count - 1)]
     }
 
     #if DEBUG
@@ -971,13 +1450,25 @@ final class WindowSwitcherPanel: NSPanel {
         entryViews[windowId]?.debugSetHovered(hovered)
     }
 
-    func debugEntryVisualState(windowId: UInt32) -> (borderWidth: CGFloat, selectionOpacity: Float, hoverOpacity: Float, scale: CGFloat)? {
+    func debugEntryVisualState(windowId: UInt32) -> (borderWidth: CGFloat, selectionOpacity: Float, hoverOpacity: Float, scale: CGFloat, backgroundAlpha: CGFloat, footerBottomAlpha: CGFloat)? {
         entryViews[windowId]?.debugVisualState()
     }
 
     func debugEntryViewObjectIdentifier(windowId: UInt32) -> ObjectIdentifier? {
         guard let view = entryViews[windowId] else { return nil }
         return ObjectIdentifier(view)
+    }
+
+    func debugEntryUsesSystemGlass(windowId: UInt32) -> Bool {
+        entryViews[windowId]?.debugUsesSystemGlass() ?? false
+    }
+
+    func debugUsesSharedGlassBackground() -> Bool {
+        usesSharedGlassBackground
+    }
+
+    func debugLabelsDrawBackground(windowId: UInt32) -> Bool {
+        entryViews[windowId]?.debugLabelsDrawBackground() ?? true
     }
 
     func debugThumbnailImage(windowId: UInt32) -> NSImage? {

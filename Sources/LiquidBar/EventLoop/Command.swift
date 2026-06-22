@@ -16,11 +16,18 @@ enum ContextAction: Int, Sendable {
     case removeFromTabGroup = 12
     case renameTabGroup = 13
     case deleteTabGroup = 14
+    case setTabGroupColor = 15
 
     // Custom items (payload = customItemId)
     case openCustomItem = 20
     case editCustomItem = 21
     case deleteCustomItem = 22
+
+    // LiquidBar-only window presentation (payload = color hex when needed)
+    case renameWindow = 40
+    case setWindowColor = 41
+    case resetWindowTitle = 42
+    case resetWindowColor = 43
 }
 
 enum AppContextAction: Int, Sendable {

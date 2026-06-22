@@ -23,6 +23,11 @@ struct AXObserverServiceTests {
                 kCGWindowOwnerPID as CFString: Int32(77),
                 kCGWindowLayer as CFString: 25,
             ],
+            [
+                kCGWindowOwnerPID as CFString: Int32(88),
+                kCGWindowOwnerName as CFString: "CursorUIViewService",
+                kCGWindowLayer as CFString: 0,
+            ],
         ]
 
         let pids = AXObserverService.observablePids(from: windows, ownPid: ownPid)

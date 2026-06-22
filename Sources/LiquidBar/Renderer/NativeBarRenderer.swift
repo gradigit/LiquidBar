@@ -8,6 +8,7 @@ extension Config {
         var key = self
         key.adjustWindowsForTaskbar = true
         key.performanceLoggingEnabled = false
+        key.performanceHangDiagnosticsEnabled = false
         key.performanceGpuTimingEnabled = false
         key.performanceLogIntervalMs = 0
         return key
@@ -61,6 +62,10 @@ struct NativeDecoration {
         case pluginState
         case separator
         case dragShadow
+        case systemMetricShell
+        case systemMetricTrack
+        case systemMetricFill
+        case systemMetricGraph
     }
 
     var kind: Kind
@@ -69,6 +74,7 @@ struct NativeDecoration {
     var color: NSColor
     var alpha: Float
     var visualDepth: VisualDepth = .balanced
+    var usesLayeredGlass: Bool = true
 }
 
 struct NativeBarItemPresentation {
@@ -95,6 +101,8 @@ struct NativeBarSnapshot {
 
 private struct StaticUpdateKey: Equatable {
     let itemSignature: Int
+    let itemBackgroundSignature: Int
+    let systemIndicatorVisualSignature: Int
     let focus: FocusInfo
     let sidebarExpanded: Bool
     let config: Config
@@ -125,6 +133,11 @@ private struct DragAnimation {
     var shadowVelocity: Float = 0
     var isSettling: Bool = false
     var lastTickTime: CFTimeInterval = 0
+}
+
+private enum DragLayoutElement {
+    case item(Int)
+    case gap
 }
 
 enum SpringConstants {
@@ -182,6 +195,8 @@ final class NativeBarRenderer {
     private var panelItems: [CGDirectDisplayID: [TaskbarItem]] = [:]
     private var panelConfigs: [CGDirectDisplayID: Config] = [:]
     private var panelIconCaches: [CGDirectDisplayID: IconCache] = [:]
+    private var itemBackgroundColorsByDisplay: [CGDirectDisplayID: [Int: String]] = [:]
+    private var systemIndicatorVisualsByDisplay: [CGDirectDisplayID: [String: SystemIndicatorVisual]] = [:]
     private var itemLayouts: [CGDirectDisplayID: [(x: Float, width: Float)]] = [:]
     private var visualRectsByDisplay: [CGDirectDisplayID: [NSRect]] = [:]
     private var nativeTextOverlayItemsByDisplay: [CGDirectDisplayID: [NativeTextOverlayItem]] = [:]
@@ -210,6 +225,8 @@ final class NativeBarRenderer {
         panelItems.removeValue(forKey: displayId)
         panelConfigs.removeValue(forKey: displayId)
         panelIconCaches.removeValue(forKey: displayId)
+        itemBackgroundColorsByDisplay.removeValue(forKey: displayId)
+        systemIndicatorVisualsByDisplay.removeValue(forKey: displayId)
         itemLayouts.removeValue(forKey: displayId)
         visualRectsByDisplay.removeValue(forKey: displayId)
         nativeTextOverlayItemsByDisplay.removeValue(forKey: displayId)
@@ -245,18 +262,24 @@ final class NativeBarRenderer {
         iconCache: IconCache,
         displayId: CGDirectDisplayID,
         focus: FocusInfo = .none,
-        sidebarExpanded: Bool = false
+        sidebarExpanded: Bool = false,
+        systemIndicatorVisuals: [String: SystemIndicatorVisual] = [:],
+        itemBackgroundColors: [Int: String] = [:]
     ) -> StaticUpdateResult {
         guard var state = panelStates[displayId] else { return .rebuiltStaticState }
 
         panelItems[displayId] = items
         panelConfigs[displayId] = config
         panelIconCaches[displayId] = iconCache
+        itemBackgroundColorsByDisplay[displayId] = itemBackgroundColors
+        systemIndicatorVisualsByDisplay[displayId] = systemIndicatorVisuals
         animationTuningByDisplay[displayId] = config.animationProfile.rendererTuning
         hoveredItemIndexByDisplay[displayId] = hoveredItemIndexByDisplay[displayId] ?? -1
 
         let key = StaticUpdateKey(
             itemSignature: Self.taskbarItemSignature(for: items),
+            itemBackgroundSignature: Self.itemBackgroundColorSignature(for: itemBackgroundColors),
+            systemIndicatorVisualSignature: Self.systemIndicatorVisualSignature(for: systemIndicatorVisuals),
             focus: focus,
             sidebarExpanded: sidebarExpanded,
             config: config.taskbarSurfaceRenderKey,
@@ -281,7 +304,8 @@ final class NativeBarRenderer {
             config: config,
             primaryLength: primaryLength,
             displayId: displayId,
-            focus: focus
+            focus: focus,
+            systemIndicatorVisuals: systemIndicatorVisuals
         )
         itemLayouts[displayId] = layouts
 
@@ -444,7 +468,7 @@ final class NativeBarRenderer {
             springs: layouts.map { SpringState(current: $0.x, target: $0.x) },
             lastTickTime: CACurrentMediaTime()
         )
-        computeGapTargets(&anim, layouts: layouts)
+        computeGapTargets(&anim, layouts: layouts, displayId: displayId)
         dragAnimations[displayId] = anim
         hoverRects.removeValue(forKey: displayId)
         rebuildSnapshot(displayId: displayId)
@@ -455,7 +479,7 @@ final class NativeBarRenderer {
         anim.cursorX = cursorX
         anim.insertionIndex = partitionIndex[displayId].map { min(insertionIndex, $0) } ?? insertionIndex
         if let layouts = itemLayouts[displayId] {
-            computeGapTargets(&anim, layouts: layouts)
+            computeGapTargets(&anim, layouts: layouts, displayId: displayId)
         }
         dragAnimations[displayId] = anim
         rebuildSnapshot(displayId: displayId)
@@ -465,7 +489,7 @@ final class NativeBarRenderer {
         guard var anim = dragAnimations[displayId] else { return }
         anim.isSettling = true
         if let layouts = itemLayouts[displayId] {
-            computeSettleTargets(&anim, layouts: layouts)
+            computeSettleTargets(&anim, layouts: layouts, displayId: displayId)
         }
         dragAnimations[displayId] = anim
         rebuildSnapshot(displayId: displayId)
@@ -489,6 +513,10 @@ final class NativeBarRenderer {
             dragIconCount[displayId] ?? 0,
             dragTextCount[displayId] ?? 0
         )
+    }
+
+    func debugDragSpringTargets(displayId: CGDirectDisplayID) -> [Float] {
+        dragAnimations[displayId]?.springs.map(\.target) ?? []
     }
 
     func tickAndRebuildDragBuffers(displayId: CGDirectDisplayID) -> Bool {
@@ -556,6 +584,8 @@ final class NativeBarRenderer {
         panelItems.removeAll()
         panelConfigs.removeAll()
         panelIconCaches.removeAll()
+        itemBackgroundColorsByDisplay.removeAll()
+        systemIndicatorVisualsByDisplay.removeAll()
         itemLayouts.removeAll()
         visualRectsByDisplay.removeAll()
         nativeTextOverlayItemsByDisplay.removeAll()
@@ -584,6 +614,7 @@ final class NativeBarRenderer {
         let iconSize = Float(config.iconSize)
         let displayIconsOnly = effectiveDisplayIconsOnly(config: config, position: position, sidebarExpanded: sidebarExpanded)
         let rects = visualRectsByDisplay[displayId] ?? []
+        let systemIndicatorVisuals = systemIndicatorVisualsByDisplay[displayId] ?? [:]
 
         var presentations: [NativeBarItemPresentation] = []
         var textItems: [NativeTextOverlayItem] = []
@@ -603,7 +634,19 @@ final class NativeBarRenderer {
         for (index, item) in items.enumerated() {
             guard index < layouts.count, index < rects.count else { continue }
             let rect = rects[index]
-            let title = item.displayTitle(iconsOnly: displayIconsOnly || (partitionIndex[displayId] != nil && index >= partitionIndex[displayId]!))
+            let metricVisual = systemIndicatorVisual(for: item, visuals: systemIndicatorVisuals)
+            let collapseForIconsOnly = displayIconsOnly && metricVisual == nil
+            let forceIconOnlyForCollapsedPartition = metricVisual == nil &&
+                (partitionIndex[displayId] != nil && index >= partitionIndex[displayId]!)
+            let collapseForOverflow = shouldCollapseTitleForOverflow(
+                item: item,
+                rect: rect,
+                config: config,
+                position: position,
+                iconSize: iconSize,
+                systemIndicatorVisuals: systemIndicatorVisuals
+            )
+            let title = item.displayTitle(iconsOnly: collapseForIconsOnly || forceIconOnlyForCollapsedPartition || collapseForOverflow)
             let alpha: Float = item.isDimmed ? 0.5 : 1.0
             let icon: NSImage? = item.iconKey.flatMap { iconCache.getIcon(bundleId: $0) }
             let iconRect = iconRectForItem(
@@ -616,7 +659,15 @@ final class NativeBarRenderer {
                 sidebarExpanded: sidebarExpanded,
                 isHovered: hoveredItemIndexByDisplay[displayId] == index
             )
-            let titleRect = titleRectForItem(rect: rect, iconRect: iconRect, title: title, position: position)
+            let titleRect = titleRectForItem(
+                rect: rect,
+                item: item,
+                iconRect: iconRect,
+                title: title,
+                position: position,
+                config: config,
+                systemIndicatorVisual: metricVisual
+            )
 
             presentations.append(NativeBarItemPresentation(
                 identity: Self.identity(for: item, index: index),
@@ -629,7 +680,7 @@ final class NativeBarRenderer {
                 alpha: alpha,
                 isDimmed: item.isDimmed,
                 cornerRadius: CGFloat(LayoutConstants.hoverCornerRadius),
-                backgroundColor: nil
+                backgroundColor: PresentationColorPalette.color(from: itemBackgroundColorsByDisplay[displayId]?[index])
             ))
 
             if !title.isEmpty {
@@ -653,6 +704,7 @@ final class NativeBarRenderer {
                 iconRect: iconRect,
                 config: config,
                 alpha: alpha,
+                systemIndicatorVisual: metricVisual,
                 into: &decorations,
                 textItems: &textItems
             )
@@ -755,9 +807,20 @@ final class NativeBarRenderer {
         iconRect: NSRect,
         config: Config,
         alpha: Float,
+        systemIndicatorVisual: SystemIndicatorVisual?,
         into decorations: inout [NativeDecoration],
         textItems: inout [NativeTextOverlayItem]
     ) {
+        if let systemIndicatorVisual {
+            appendSystemIndicatorDecorations(
+                metricVisual: systemIndicatorVisual,
+                rect: rect,
+                config: config,
+                alpha: alpha,
+                into: &decorations
+            )
+        }
+
         if case .pinnedApp = item {
             let pinRect: NSRect
             if config.taskbarPosition.isVertical {
@@ -880,34 +943,430 @@ final class NativeBarRenderer {
         }
     }
 
-    private func computeGapTargets(_ anim: inout DragAnimation, layouts: [(x: Float, width: Float)]) {
-        let gapWidth = anim.sourceWidth + LayoutConstants.itemSpacing
-        var x = anim.leftMargin
-        var logicalIdx = 0
-        for i in layouts.indices {
-            if i == anim.sourceIndex { continue }
-            let adjustedInsert = anim.insertionIndex <= anim.sourceIndex ? anim.insertionIndex : anim.insertionIndex - 1
-            if logicalIdx == adjustedInsert {
-                x += gapWidth
+    private func appendSystemIndicatorDecorations(
+        metricVisual: SystemIndicatorVisual,
+        rect: NSRect,
+        config: Config,
+        alpha: Float,
+        into decorations: inout [NativeDecoration]
+    ) {
+        guard config.taskbarPosition.isHorizontal else { return }
+        let layout = metricChipLayout(for: config.systemIndicatorChipPreset)
+        let accent = systemIndicatorAccentColor(metricVisual.metric, severity: metricVisual.severity)
+
+        if config.systemIndicatorChipPreset == .micro {
+            appendMicroSystemIndicatorDecorations(
+                metricVisual: metricVisual,
+                rect: rect,
+                layout: layout,
+                accent: accent,
+                config: config,
+                alpha: alpha,
+                into: &decorations
+            )
+            return
+        }
+
+        if config.systemIndicatorChipPreset == .dense {
+            appendDenseSystemIndicatorDecorations(
+                metricVisual: metricVisual,
+                rect: rect,
+                layout: layout,
+                accent: accent,
+                config: config,
+                alpha: alpha,
+                into: &decorations
+            )
+            return
+        }
+
+        let shell = rect.insetBy(dx: CGFloat(layout.shellInsetX), dy: CGFloat(layout.shellInsetY))
+        switch config.systemIndicatorAppearance {
+        case .glass:
+            decorations.append(NativeDecoration(
+                kind: .systemMetricShell,
+                rect: shell,
+                cornerRadius: min(8, shell.height / 2),
+                color: .white,
+                alpha: 0.07 * alpha,
+                visualDepth: config.visualDepth
+            ))
+        case .flat:
+            decorations.append(NativeDecoration(
+                kind: .systemMetricShell,
+                rect: shell,
+                cornerRadius: min(7, shell.height / 2),
+                color: accent,
+                alpha: 0.12 * alpha,
+                visualDepth: config.visualDepth,
+                usesLayeredGlass: false
+            ))
+        case .underline, .minimal:
+            break
+        }
+
+        let trackW = max(8, rect.width - CGFloat(layout.trackInsetX * 2))
+        let trackRect: NSRect = {
+            switch config.systemIndicatorAppearance {
+            case .underline:
+                return NSRect(
+                    x: rect.minX + 10,
+                    y: rect.maxY - 4.5,
+                    width: max(8, rect.width - 20),
+                    height: 2
+                )
+            case .minimal:
+                return NSRect(
+                    x: rect.minX + 7,
+                    y: rect.maxY - 4,
+                    width: max(6, rect.width - 14),
+                    height: 1.6
+                )
+            case .glass, .flat:
+                return NSRect(
+                    x: rect.minX + CGFloat(layout.trackInsetX),
+                    y: rect.maxY - CGFloat(layout.trackBottomInset + layout.trackHeight),
+                    width: trackW,
+                    height: CGFloat(layout.trackHeight)
+                )
             }
-            anim.springs[i].target = x
-            x += layouts[i].width + LayoutConstants.itemSpacing
-            logicalIdx += 1
+        }()
+        if config.systemIndicatorAppearance != .minimal {
+            decorations.append(NativeDecoration(
+                kind: .systemMetricTrack,
+                rect: trackRect,
+                cornerRadius: trackRect.height / 2,
+                color: config.systemIndicatorAppearance == .flat ? accent : .white,
+                alpha: (config.systemIndicatorAppearance == .underline ? 0.16 : 0.12) * alpha,
+                visualDepth: config.visualDepth,
+                usesLayeredGlass: false
+            ))
+        }
+
+        switch metricVisual.mode {
+        case .percentage, .bar:
+            guard let value = metricVisual.valuePercent else { return }
+            let fraction = CGFloat(min(max(value / 100, 0), 1))
+            let fillWidth = max(2, trackRect.width * fraction)
+            let fillRect: NSRect
+            if config.systemIndicatorAppearance == .minimal {
+                fillRect = NSRect(
+                    x: trackRect.minX,
+                    y: trackRect.minY,
+                    width: min(trackRect.width, max(3, fillWidth)),
+                    height: trackRect.height
+                )
+            } else {
+                fillRect = NSRect(x: trackRect.minX, y: trackRect.minY, width: fillWidth, height: trackRect.height)
+            }
+            decorations.append(NativeDecoration(
+                kind: .systemMetricFill,
+                rect: fillRect,
+                cornerRadius: trackRect.height / 2,
+                color: accent,
+                alpha: 0.82 * alpha,
+                visualDepth: config.visualDepth,
+                usesLayeredGlass: false
+            ))
+
+        case .graph:
+            appendSystemIndicatorGraphDecorations(
+                metricVisual: metricVisual,
+                trackRect: trackRect,
+                layout: layout,
+                accent: accent,
+                alpha: alpha,
+                visualDepth: config.visualDepth,
+                into: &decorations
+            )
         }
     }
 
-    private func computeSettleTargets(_ anim: inout DragAnimation, layouts: [(x: Float, width: Float)]) {
+    private func appendDenseSystemIndicatorDecorations(
+        metricVisual: SystemIndicatorVisual,
+        rect: NSRect,
+        layout: MetricChipLayout,
+        accent: NSColor,
+        config: Config,
+        alpha: Float,
+        into decorations: inout [NativeDecoration]
+    ) {
+        let shellInsetX = config.systemIndicatorAppearance == .flat ? Float(0) : layout.shellInsetX
+        let shell = rect.insetBy(dx: CGFloat(shellInsetX), dy: CGFloat(layout.shellInsetY))
+        switch config.systemIndicatorAppearance {
+        case .glass:
+            decorations.append(NativeDecoration(
+                kind: .systemMetricShell,
+                rect: shell,
+                cornerRadius: min(7, shell.height / 2),
+                color: .white,
+                alpha: 0.06 * alpha,
+                visualDepth: config.visualDepth
+            ))
+        case .flat:
+            decorations.append(NativeDecoration(
+                kind: .systemMetricShell,
+                rect: shell,
+                cornerRadius: min(7, shell.height / 2),
+                color: accent,
+                alpha: 0.11 * alpha,
+                visualDepth: config.visualDepth,
+                usesLayeredGlass: false
+            ))
+        case .underline, .minimal:
+            break
+        }
+
+        guard config.systemIndicatorAppearance != .minimal,
+              let value = metricVisual.valuePercent else { return }
+
+        let trackRect = NSRect(
+            x: rect.minX + CGFloat(layout.trackInsetX),
+            y: rect.maxY - CGFloat(layout.trackBottomInset + layout.trackHeight),
+            width: max(6, rect.width - CGFloat(layout.trackInsetX * 2)),
+            height: CGFloat(layout.trackHeight)
+        )
+        if config.systemIndicatorAppearance == .underline {
+            decorations.append(NativeDecoration(
+                kind: .systemMetricTrack,
+                rect: trackRect,
+                cornerRadius: trackRect.height / 2,
+                color: .white,
+                alpha: 0.13 * alpha,
+                visualDepth: config.visualDepth,
+                usesLayeredGlass: false
+            ))
+        }
+
+        let fraction = CGFloat(min(max(value / 100, 0), 1))
+        decorations.append(NativeDecoration(
+            kind: .systemMetricFill,
+            rect: NSRect(x: trackRect.minX, y: trackRect.minY, width: max(2, trackRect.width * fraction), height: trackRect.height),
+            cornerRadius: trackRect.height / 2,
+            color: accent,
+            alpha: 0.80 * alpha,
+            visualDepth: config.visualDepth,
+            usesLayeredGlass: false
+        ))
+    }
+
+    private func appendMicroSystemIndicatorDecorations(
+        metricVisual: SystemIndicatorVisual,
+        rect: NSRect,
+        layout: MetricChipLayout,
+        accent: NSColor,
+        config: Config,
+        alpha: Float,
+        into decorations: inout [NativeDecoration]
+    ) {
+        let values = microIndicatorValues(metricVisual)
+        let shell = rect.insetBy(dx: CGFloat(layout.shellInsetX), dy: CGFloat(layout.shellInsetY))
+        if config.systemIndicatorAppearance == .glass || config.systemIndicatorAppearance == .flat {
+            decorations.append(NativeDecoration(
+                kind: .systemMetricShell,
+                rect: shell,
+                cornerRadius: min(5, shell.height / 2),
+                color: config.systemIndicatorAppearance == .flat ? accent : .white,
+                alpha: (config.systemIndicatorAppearance == .flat ? 0.08 : 0.045) * alpha,
+                visualDepth: config.visualDepth,
+                usesLayeredGlass: config.systemIndicatorAppearance == .glass
+            ))
+        }
+
+        let count = max(1, min(values.count, 5))
+        let barWidth = CGFloat(layout.graphBarWidth)
+        let gap = CGFloat(layout.graphBarGap)
+        let totalWidth = CGFloat(count) * barWidth + CGFloat(count - 1) * gap
+        let baseHeight = max(10, rect.height - CGFloat(layout.shellInsetY * 2 + 3))
+        let startX = rect.midX - totalWidth / 2
+        let baseline = rect.midY + baseHeight / 2
+        for (offset, value) in values.suffix(count).enumerated() {
+            let normalized = CGFloat(min(max(value / 100, 0), 1))
+            let height = max(2, baseHeight * normalized)
+            decorations.append(NativeDecoration(
+                kind: .systemMetricGraph,
+                rect: NSRect(
+                    x: startX + CGFloat(offset) * (barWidth + gap),
+                    y: baseline - height,
+                    width: barWidth,
+                    height: height
+                ),
+                cornerRadius: min(barWidth / 2, 1.5),
+                color: accent,
+                alpha: 0.82 * alpha,
+                visualDepth: config.visualDepth,
+                usesLayeredGlass: false
+            ))
+        }
+    }
+
+    private func microIndicatorValues(_ metricVisual: SystemIndicatorVisual) -> [Float] {
+        let values = metricVisual.history.isEmpty ? [] : Array(metricVisual.history.suffix(5))
+        if !values.isEmpty { return values }
+        if let value = metricVisual.valuePercent { return [value] }
+        return [18]
+    }
+
+    private func appendSystemIndicatorGraphDecorations(
+        metricVisual: SystemIndicatorVisual,
+        trackRect: NSRect,
+        layout: MetricChipLayout,
+        accent: NSColor,
+        alpha: Float,
+        visualDepth: VisualDepth,
+        into decorations: inout [NativeDecoration]
+    ) {
+        let values = Array(metricVisual.history.suffix(16))
+        guard !values.isEmpty else { return }
+
+        let barWidth = CGFloat(layout.graphBarWidth)
+        let gap = CGFloat(layout.graphBarGap)
+        let stride = max(0.5, barWidth + gap)
+        let maxVisible = max(1, Int(floor((trackRect.width + gap) / stride)))
+        let visible = Array(values.suffix(maxVisible))
+        let totalWidth = min(trackRect.width, CGFloat(visible.count) * stride - gap)
+        let startX = trackRect.maxX - totalWidth
+        let maxBarHeight = max(4, trackRect.height * 2.6)
+
+        for (index, value) in visible.enumerated() {
+            let normalized = CGFloat(min(max(value / 100, 0), 1))
+            let height = max(1.5, maxBarHeight * normalized)
+            decorations.append(NativeDecoration(
+                kind: .systemMetricGraph,
+                rect: NSRect(
+                    x: startX + CGFloat(index) * stride,
+                    y: trackRect.midY - height / 2,
+                    width: barWidth,
+                    height: height
+                ),
+                cornerRadius: min(1.5, barWidth / 2),
+                color: accent,
+                alpha: 0.82 * alpha,
+                visualDepth: visualDepth
+            ))
+        }
+    }
+
+    private func systemIndicatorAccentColor(_ metric: SystemIndicatorMetric, severity: Float) -> NSColor {
+        switch metric {
+        case .cpu:
+            return NSColor(calibratedRed: 0.36, green: 0.68, blue: 1.0, alpha: 1)
+        case .gpu:
+            return NSColor(calibratedRed: 1.0, green: 0.62, blue: 0.35, alpha: 1)
+        case .ram:
+            return NSColor(calibratedRed: 0.38, green: 0.84, blue: 0.58, alpha: 1)
+        case .thermal:
+            let heat = CGFloat(min(max(severity, 0), 1))
+            return NSColor(
+                calibratedRed: 0.82 + 0.18 * heat,
+                green: 0.72 - 0.38 * heat,
+                blue: 0.32 - 0.16 * heat,
+                alpha: 1
+            )
+        }
+    }
+
+    private func computeGapTargets(
+        _ anim: inout DragAnimation,
+        layouts: [(x: Float, width: Float)],
+        displayId: CGDirectDisplayID
+    ) {
+        let nonSource = layouts.indices.filter { $0 != anim.sourceIndex }
+        let insert = anim.insertionIndex <= anim.sourceIndex
+            ? min(max(anim.insertionIndex, 0), nonSource.count)
+            : min(max(anim.insertionIndex - 1, 0), nonSource.count)
+        var sequence = nonSource.map { DragLayoutElement.item($0) }
+        sequence.insert(.gap, at: insert)
+
+        let items = panelItems[displayId] ?? []
+        let config = panelConfigs[displayId] ?? Config()
+        let systemIndicatorVisuals = systemIndicatorVisualsByDisplay[displayId] ?? [:]
+
+        var x = anim.leftMargin
+        var previous: DragLayoutElement?
+        for element in sequence {
+            if let previous {
+                x += spacingBetweenDragElements(
+                    after: previous,
+                    before: element,
+                    sourceIndex: anim.sourceIndex,
+                    items: items,
+                    config: config,
+                    systemIndicatorVisuals: systemIndicatorVisuals
+                )
+            }
+
+            switch element {
+            case .gap:
+                x += anim.sourceWidth
+            case .item(let index):
+                anim.springs[index].target = x
+                x += layouts[index].width
+            }
+            previous = element
+        }
+    }
+
+    private func computeSettleTargets(
+        _ anim: inout DragAnimation,
+        layouts: [(x: Float, width: Float)],
+        displayId: CGDirectDisplayID
+    ) {
         var finalOrder = layouts.indices.filter { $0 != anim.sourceIndex }
         let insert = anim.insertionIndex <= anim.sourceIndex
             ? min(anim.insertionIndex, finalOrder.count)
             : min(anim.insertionIndex - 1, finalOrder.count)
         finalOrder.insert(anim.sourceIndex, at: max(0, insert))
 
+        let items = panelItems[displayId] ?? []
+        let config = panelConfigs[displayId] ?? Config()
+        let systemIndicatorVisuals = systemIndicatorVisualsByDisplay[displayId] ?? [:]
+
         var x = anim.leftMargin
-        for itemIdx in finalOrder {
+        for (offset, itemIdx) in finalOrder.enumerated() {
+            if offset > 0 {
+                x += spacingBetweenItems(
+                    after: finalOrder[offset - 1],
+                    before: itemIdx,
+                    items: items,
+                    config: config,
+                    systemIndicatorVisuals: systemIndicatorVisuals
+                )
+            }
             anim.springs[itemIdx].target = x
-            x += layouts[itemIdx].width + LayoutConstants.itemSpacing
+            x += layouts[itemIdx].width
         }
+    }
+
+    private func spacingBetweenDragElements(
+        after lhs: DragLayoutElement,
+        before rhs: DragLayoutElement,
+        sourceIndex: Int,
+        items: [TaskbarItem],
+        config: Config,
+        systemIndicatorVisuals: [String: SystemIndicatorVisual]
+    ) -> Float {
+        let leftIndex: Int
+        let rightIndex: Int
+        switch lhs {
+        case .item(let index):
+            leftIndex = index
+        case .gap:
+            leftIndex = sourceIndex
+        }
+        switch rhs {
+        case .item(let index):
+            rightIndex = index
+        case .gap:
+            rightIndex = sourceIndex
+        }
+        return spacingBetweenItems(
+            after: leftIndex,
+            before: rightIndex,
+            items: items,
+            config: config,
+            systemIndicatorVisuals: systemIndicatorVisuals
+        )
     }
 
     private func layoutLeftMargin(config: Config) -> Float {
@@ -926,13 +1385,19 @@ final class NativeBarRenderer {
         config: Config,
         primaryLength: Float,
         displayId: CGDirectDisplayID? = nil,
-        focus: FocusInfo = .none
+        focus: FocusInfo = .none,
+        systemIndicatorVisuals: [String: SystemIndicatorVisual] = [:]
     ) -> [(x: Float, width: Float)] {
         guard !items.isEmpty else { return [] }
         let iconSize = Float(config.iconSize)
         let iconsOnly = config.iconsOnly || config.taskbarPosition.isVertical
         let uniformSizing = config.itemSizing == .uniform
         let uniformWidth = computeUniformItemWidth(config: config, primaryLength: primaryLength, count: items.count)
+        let systemIndicatorTileWidth = metricClusterTileWidth(
+            items: items,
+            config: config,
+            systemIndicatorVisuals: systemIndicatorVisuals
+        )
         let shouldCollapse: (TaskbarItem) -> Bool = { item in
             (item.isHidden && config.showHiddenApps && config.hiddenWindowMode == .collapsedRight)
                 || (item.isMinimized && config.showMinimizedWindows && config.minimizedWindowMode == .collapsedRight)
@@ -943,13 +1408,22 @@ final class NativeBarRenderer {
         }
 
         var layouts: [(x: Float, width: Float)] = []
+        var minimumWidths: [Float] = []
+        var compressible: [Bool] = []
         var x = layoutLeftMargin(config: config)
         var sepX: Float?
         for (index, item) in items.enumerated() {
             if case .customSpacer(_, let width, _) = item {
                 let w = Float(max(0, width))
                 layouts.append((x, w))
-                x += w + LayoutConstants.itemSpacing
+                minimumWidths.append(w)
+                compressible.append(false)
+                x += w + spacingAfterItem(
+                    at: index,
+                    items: items,
+                    config: config,
+                    systemIndicatorVisuals: systemIndicatorVisuals
+                )
                 continue
             }
             if let pIndex, index == pIndex {
@@ -957,29 +1431,71 @@ final class NativeBarRenderer {
                 x += 8
             }
 
-            let forceIconOnly = pIndex != nil && index >= pIndex!
             let tabbedCollapse = shouldCollapseForTabbedTaskbar(item: item, focus: focus, config: config)
             let alwaysIconOnly = shouldAlwaysUseIconOnlyLayout(item)
-            let title = item.displayTitle(iconsOnly: iconsOnly || forceIconOnly || tabbedCollapse || alwaysIconOnly)
+            let metricVisual = systemIndicatorVisual(for: item, visuals: systemIndicatorVisuals)
+            let isSystemIndicator = isSystemIndicatorItem(item, visuals: systemIndicatorVisuals)
+            let forceIconOnly = metricVisual == nil && pIndex != nil && index >= pIndex!
+            let collapseForIconsOnly = iconsOnly && metricVisual == nil
+            let title = item.displayTitle(iconsOnly: collapseForIconsOnly || forceIconOnly || tabbedCollapse || alwaysIconOnly)
             let width: Float
-            if forceIconOnly || iconsOnly || tabbedCollapse || alwaysIconOnly {
+            if metricVisual != nil {
+                width = systemIndicatorTileWidth
+            } else if forceIconOnly || iconsOnly || tabbedCollapse || alwaysIconOnly {
                 width = iconOnlyWidth(item: item, config: config, iconSize: iconSize)
             } else if uniformSizing {
                 width = uniformWidth
-            } else if case .customText(_, let text, _) = item {
-                width = computeAutoWidthNoIcon(config: config, title: text, fontSize: Float(config.fontSize))
+            } else if case .customText(let id, let text, _) = item {
+                let minimumWidth: Float = id.hasPrefix("system.") ? 92 : LayoutConstants.minItemWidth
+                width = computeAutoWidthNoIcon(
+                    config: config,
+                    title: text,
+                    fontSize: Float(config.fontSize),
+                    minimumWidth: minimumWidth
+                )
             } else {
                 width = computeAutoWidth(config: config, title: title, iconSize: iconSize, fontSize: Float(config.fontSize))
             }
             layouts.append((x, width))
-            x += width + LayoutConstants.itemSpacing
+            let desiredMinimumWidth: Float = {
+                if isSystemIndicator || alwaysIconOnly || forceIconOnly || collapseForIconsOnly || tabbedCollapse {
+                    return width
+                }
+                if item.iconKey != nil {
+                    return iconOnlyWidth(item: item, config: config, iconSize: iconSize)
+                }
+                return LayoutConstants.minItemWidth
+            }()
+            let minimumWidth = min(width, desiredMinimumWidth)
+            minimumWidths.append(minimumWidth)
+            compressible.append(width > minimumWidth + 0.5)
+            x += width + spacingAfterItem(
+                at: index,
+                items: items,
+                config: config,
+                systemIndicatorVisuals: systemIndicatorVisuals
+            )
         }
 
-        if let displayId {
-            if let sepX { separatorX[displayId] = sepX } else { separatorX.removeValue(forKey: displayId) }
-        }
+        let cornerAffixedIndicators = config.taskbarPosition.isHorizontal &&
+            (config.systemIndicatorPlacement == .leftCorner || config.systemIndicatorPlacement == .rightCorner)
 
-        if config.iconsOnly && config.taskbarPosition == .bottom && config.centerItems && !layouts.isEmpty {
+        let fitResult = fitHorizontalLayoutsToAvailableSpace(
+            layouts: layouts,
+            items: items,
+            minimumWidths: minimumWidths,
+            compressible: compressible,
+            config: config,
+            primaryLength: primaryLength,
+            leftMargin: layoutLeftMargin(config: config),
+            partitionIndex: pIndex,
+            cornerAffixedIndicators: cornerAffixedIndicators,
+            systemIndicatorVisuals: systemIndicatorVisuals
+        )
+        layouts = fitResult.layouts
+        sepX = fitResult.separatorX
+
+        if config.iconsOnly && config.taskbarPosition == .bottom && config.centerItems && !cornerAffixedIndicators && !layouts.isEmpty {
             let last = layouts[layouts.count - 1]
             let left = layoutLeftMargin(config: config)
             let totalWidth = last.x + last.width - left
@@ -987,9 +1503,301 @@ final class NativeBarRenderer {
             for i in layouts.indices {
                 layouts[i].x += offset
             }
+            if let currentSepX = sepX {
+                sepX = currentSepX + offset
+            }
+        }
+
+        if cornerAffixedIndicators {
+            layouts = applySystemIndicatorCornerAffixLayouts(
+                layouts: layouts,
+                items: items,
+                config: config,
+                primaryLength: primaryLength,
+                leftMargin: layoutLeftMargin(config: config),
+                systemIndicatorVisuals: systemIndicatorVisuals
+            )
+        }
+
+        if let displayId {
+            if let sepX { separatorX[displayId] = sepX } else { separatorX.removeValue(forKey: displayId) }
         }
 
         return layouts
+    }
+
+    private func systemIndicatorVisual(
+        for item: TaskbarItem,
+        visuals: [String: SystemIndicatorVisual]
+    ) -> SystemIndicatorVisual? {
+        guard case .customText(let id, _, _) = item else { return nil }
+        return visuals[id]
+    }
+
+    private func isSystemIndicatorItem(
+        _ item: TaskbarItem,
+        visuals: [String: SystemIndicatorVisual]
+    ) -> Bool {
+        if systemIndicatorVisual(for: item, visuals: visuals) != nil {
+            return true
+        }
+        guard case .customText(let id, _, _) = item else { return false }
+        return id.hasPrefix("system.")
+    }
+
+    private func usesTightDenseSystemIndicatorSpacing(config: Config) -> Bool {
+        guard config.taskbarPosition.isHorizontal,
+              config.systemIndicatorChipPreset == .dense else {
+            return false
+        }
+        return config.systemIndicatorAppearance == .flat ||
+            config.systemIndicatorAppearance == .underline ||
+            config.systemIndicatorAppearance == .minimal
+    }
+
+    private func usesCondensedDenseSystemIndicatorTiles(config: Config) -> Bool {
+        guard config.taskbarPosition.isHorizontal,
+              config.systemIndicatorChipPreset == .dense else {
+            return false
+        }
+        return config.systemIndicatorAppearance == .underline ||
+            config.systemIndicatorAppearance == .minimal
+    }
+
+    private func systemIndicatorAdjacentSpacing(config: Config) -> Float {
+        guard usesTightDenseSystemIndicatorSpacing(config: config) else {
+            return LayoutConstants.itemSpacing
+        }
+        return config.systemIndicatorAppearance == .flat ? 2 : 1
+    }
+
+    private func spacingBetweenItems(
+        after lhs: Int,
+        before rhs: Int,
+        items: [TaskbarItem],
+        config: Config,
+        systemIndicatorVisuals: [String: SystemIndicatorVisual]
+    ) -> Float {
+        guard usesTightDenseSystemIndicatorSpacing(config: config),
+              items.indices.contains(lhs),
+              items.indices.contains(rhs),
+              isSystemIndicatorItem(items[lhs], visuals: systemIndicatorVisuals),
+              isSystemIndicatorItem(items[rhs], visuals: systemIndicatorVisuals) else {
+            return LayoutConstants.itemSpacing
+        }
+        return systemIndicatorAdjacentSpacing(config: config)
+    }
+
+    private func spacingAfterItem(
+        at index: Int,
+        items: [TaskbarItem],
+        config: Config,
+        systemIndicatorVisuals: [String: SystemIndicatorVisual]
+    ) -> Float {
+        guard index + 1 < items.count else { return LayoutConstants.itemSpacing }
+        return spacingBetweenItems(
+            after: index,
+            before: index + 1,
+            items: items,
+            config: config,
+            systemIndicatorVisuals: systemIndicatorVisuals
+        )
+    }
+
+    private func applySystemIndicatorCornerAffixLayouts(
+        layouts: [(x: Float, width: Float)],
+        items: [TaskbarItem],
+        config: Config,
+        primaryLength: Float,
+        leftMargin: Float,
+        systemIndicatorVisuals: [String: SystemIndicatorVisual]
+    ) -> [(x: Float, width: Float)] {
+        guard config.taskbarPosition.isHorizontal else { return layouts }
+        guard config.systemIndicatorPlacement == .leftCorner || config.systemIndicatorPlacement == .rightCorner else {
+            return layouts
+        }
+
+        let indicatorIndices = items.indices.filter { index in
+            isSystemIndicatorItem(items[index], visuals: systemIndicatorVisuals)
+        }
+        guard !indicatorIndices.isEmpty else { return layouts }
+
+        let spacing = systemIndicatorAdjacentSpacing(config: config)
+        let clusterWidth = indicatorIndices.enumerated().reduce(Float(0)) { partial, element in
+            let (offset, index) = element
+            return partial + (offset == 0 ? 0 : spacing) + layouts[index].width
+        }
+
+        let targetStart: Float = {
+            switch config.systemIndicatorPlacement {
+            case .leftCorner:
+                return leftMargin
+            case .rightCorner:
+                return max(leftMargin, primaryLength - leftMargin - clusterWidth)
+            default:
+                return leftMargin
+            }
+        }()
+
+        var output = layouts
+        var cursor = targetStart
+        for index in indicatorIndices {
+            output[index].x = cursor
+            cursor += output[index].width + spacing
+        }
+        return output
+    }
+
+    private func fitHorizontalLayoutsToAvailableSpace(
+        layouts: [(x: Float, width: Float)],
+        items: [TaskbarItem],
+        minimumWidths: [Float],
+        compressible: [Bool],
+        config: Config,
+        primaryLength: Float,
+        leftMargin: Float,
+        partitionIndex: Int?,
+        cornerAffixedIndicators: Bool,
+        systemIndicatorVisuals: [String: SystemIndicatorVisual]
+    ) -> (layouts: [(x: Float, width: Float)], separatorX: Float?) {
+        guard config.taskbarPosition.isHorizontal,
+              layouts.count == items.count,
+              minimumWidths.count == layouts.count,
+              compressible.count == layouts.count else {
+            return (layouts, nil)
+        }
+
+        let spacing = LayoutConstants.itemSpacing
+        let indicatorIndices: [Int] = cornerAffixedIndicators
+            ? items.indices.filter { isSystemIndicatorItem(items[$0], visuals: systemIndicatorVisuals) }
+            : []
+        let indicatorIndexSet = Set(indicatorIndices)
+        let regularIndices = items.indices.filter { !indicatorIndexSet.contains($0) }
+
+        let indicatorSpacing = systemIndicatorAdjacentSpacing(config: config)
+        let clusterWidth = indicatorIndices.enumerated().reduce(Float(0)) { partial, element in
+            let (offset, index) = element
+            return partial + (offset == 0 ? 0 : indicatorSpacing) + layouts[index].width
+        }
+        let reservedGap = indicatorIndices.isEmpty || regularIndices.isEmpty ? Float(0) : spacing
+        let contentStart: Float
+        let contentEnd: Float
+        switch config.systemIndicatorPlacement {
+        case .leftCorner where cornerAffixedIndicators:
+            contentStart = leftMargin + clusterWidth + reservedGap
+            contentEnd = primaryLength - leftMargin
+        case .rightCorner where cornerAffixedIndicators:
+            contentStart = leftMargin
+            contentEnd = primaryLength - leftMargin - clusterWidth - reservedGap
+        default:
+            contentStart = leftMargin
+            contentEnd = primaryLength - leftMargin
+        }
+
+        var output = layouts
+        var widths = layouts.map(\.width)
+        let targetIndices = cornerAffixedIndicators ? regularIndices : Array(items.indices)
+        let available = max(0, contentEnd - contentStart)
+        let partitionGap: Float = {
+            guard let partitionIndex, targetIndices.contains(partitionIndex) else { return 0 }
+            return 8
+        }()
+        let currentRequired = targetIndices.enumerated().reduce(partitionGap) { partial, element in
+            let (offset, index) = element
+            let itemSpacing = offset == 0
+                ? Float(0)
+                : spacingBetweenItems(
+                    after: targetIndices[offset - 1],
+                    before: index,
+                    items: items,
+                    config: config,
+                    systemIndicatorVisuals: systemIndicatorVisuals
+                )
+            return partial + itemSpacing + widths[index]
+        }
+
+        if currentRequired > available {
+            shrinkWidthsToFit(
+                widths: &widths,
+                indices: targetIndices,
+                minimumWidths: minimumWidths,
+                compressible: compressible,
+                excess: currentRequired - available
+            )
+        }
+
+        var cursor = contentStart
+        var separator: Float?
+        for (offset, index) in targetIndices.enumerated() {
+            if offset > 0 {
+                cursor += spacingBetweenItems(
+                    after: targetIndices[offset - 1],
+                    before: index,
+                    items: items,
+                    config: config,
+                    systemIndicatorVisuals: systemIndicatorVisuals
+                )
+            }
+            if let partitionIndex, index == partitionIndex {
+                separator = cursor
+                cursor += 8
+            }
+            output[index].x = cursor
+            output[index].width = widths[index]
+            cursor += widths[index]
+        }
+
+        return (output, separator)
+    }
+
+    private func shrinkWidthsToFit(
+        widths: inout [Float],
+        indices: [Int],
+        minimumWidths: [Float],
+        compressible: [Bool],
+        excess: Float
+    ) {
+        var remaining = excess
+        var candidates = indices.filter { index in
+            compressible[index] && widths[index] > minimumWidths[index] + 0.5
+        }
+
+        while remaining > 0.5, !candidates.isEmpty {
+            let share = remaining / Float(candidates.count)
+            var nextCandidates: [Int] = []
+            var consumed: Float = 0
+
+            for index in candidates {
+                let capacity = max(0, widths[index] - minimumWidths[index])
+                let reduction = min(capacity, share)
+                widths[index] -= reduction
+                consumed += reduction
+                if widths[index] > minimumWidths[index] + 0.5 {
+                    nextCandidates.append(index)
+                }
+            }
+
+            if consumed <= 0.001 {
+                break
+            }
+            remaining -= consumed
+            candidates = nextCandidates
+        }
+    }
+
+    private func shouldCollapseTitleForOverflow(
+        item: TaskbarItem,
+        rect: NSRect,
+        config: Config,
+        position: Position,
+        iconSize: Float,
+        systemIndicatorVisuals: [String: SystemIndicatorVisual]
+    ) -> Bool {
+        guard position.isHorizontal else { return false }
+        guard !isSystemIndicatorItem(item, visuals: systemIndicatorVisuals) else { return false }
+        guard item.iconKey != nil else { return false }
+        let iconOnly = iconOnlyWidth(item: item, config: config, iconSize: iconSize)
+        return Float(rect.width) <= iconOnly + 0.5
     }
 
     private func shouldAlwaysUseIconOnlyLayout(_ item: TaskbarItem) -> Bool {
@@ -1113,8 +1921,26 @@ final class NativeBarRenderer {
         }
     }
 
-    private func titleRectForItem(rect: NSRect, iconRect: NSRect, title: String, position: Position) -> NSRect {
+    private func titleRectForItem(
+        rect: NSRect,
+        item: TaskbarItem,
+        iconRect: NSRect,
+        title: String,
+        position: Position,
+        config: Config,
+        systemIndicatorVisual: SystemIndicatorVisual?
+    ) -> NSRect {
         guard !title.isEmpty else { return .zero }
+        if item.iconKey == nil {
+            let insets = systemIndicatorVisual == nil
+                ? (left: CGFloat(LayoutConstants.iconLeftMargin), right: CGFloat(LayoutConstants.textRightPadding))
+                : systemIndicatorTitleInsets(config: config)
+            let leftInset = insets.left
+            let rightInset = insets.right
+            let x = rect.minX + leftInset
+            let width = max(0, rect.maxX - x - rightInset)
+            return NSRect(x: x, y: rect.minY, width: width, height: rect.height)
+        }
         let x: CGFloat = iconRect.maxX + CGFloat(LayoutConstants.iconGap)
         let width = max(0, rect.maxX - x - CGFloat(LayoutConstants.textRightPadding))
         return NSRect(x: x, y: rect.minY, width: width, height: rect.height)
@@ -1136,12 +1962,130 @@ final class NativeBarRenderer {
         return min(max(width, LayoutConstants.minItemWidth), Float(config.maxItemWidth))
     }
 
-    private func computeAutoWidthNoIcon(config: Config, title: String, fontSize: Float) -> Float {
+    private func computeAutoWidthNoIcon(
+        config: Config,
+        title: String,
+        fontSize: Float,
+        minimumWidth: Float = LayoutConstants.minItemWidth
+    ) -> Float {
         let font = NSFont.systemFont(ofSize: CGFloat(fontSize), weight: .medium)
         let textSize = (title as NSString).size(withAttributes: [.font: font])
         let textWidth = min(Float(textSize.width), Float(config.maxTitleWidth))
         let width = LayoutConstants.iconLeftMargin + textWidth + LayoutConstants.textRightPadding
-        return min(max(width, LayoutConstants.minItemWidth), Float(config.maxItemWidth))
+        return min(max(width, minimumWidth), max(Float(config.maxItemWidth), minimumWidth))
+    }
+
+    private struct MetricChipLayout {
+        let tileWidth: Float
+        let shellInsetX: Float
+        let shellInsetY: Float
+        let trackHeight: Float
+        let trackInsetX: Float
+        let trackBottomInset: Float
+        let graphBarWidth: Float
+        let graphBarGap: Float
+    }
+
+    private func metricChipLayout(for preset: SystemIndicatorChipPreset) -> MetricChipLayout {
+        switch preset {
+        case .full:
+            return MetricChipLayout(
+                tileWidth: 112,
+                shellInsetX: 0,
+                shellInsetY: 4,
+                trackHeight: 3.5,
+                trackInsetX: 12,
+                trackBottomInset: 5,
+                graphBarWidth: 2.5,
+                graphBarGap: 2
+            )
+        case .compact:
+            return MetricChipLayout(
+                tileWidth: 92,
+                shellInsetX: 0,
+                shellInsetY: 4,
+                trackHeight: 3.5,
+                trackInsetX: 12,
+                trackBottomInset: 5,
+                graphBarWidth: 2.5,
+                graphBarGap: 2
+            )
+        case .dense:
+            return MetricChipLayout(
+                tileWidth: 56,
+                shellInsetX: 1,
+                shellInsetY: 5,
+                trackHeight: 2,
+                trackInsetX: 7,
+                trackBottomInset: 4,
+                graphBarWidth: 1.6,
+                graphBarGap: 1.2
+            )
+        case .micro:
+            return MetricChipLayout(
+                tileWidth: 20,
+                shellInsetX: 3,
+                shellInsetY: 6,
+                trackHeight: 2,
+                trackInsetX: 4,
+                trackBottomInset: 4,
+                graphBarWidth: 2,
+                graphBarGap: 1
+            )
+        }
+    }
+
+    private func systemIndicatorTitleInsets(config: Config) -> (left: CGFloat, right: CGFloat) {
+        if usesCondensedDenseSystemIndicatorTiles(config: config) {
+            return (2, 2)
+        }
+        if config.systemIndicatorChipPreset == .compact {
+            return (6, 6)
+        }
+        return (CGFloat(LayoutConstants.iconLeftMargin), CGFloat(LayoutConstants.textRightPadding))
+    }
+
+    private func systemIndicatorTextFitSlack(config: Config) -> Float {
+        config.systemIndicatorChipPreset == .micro ? 0 : 4
+    }
+
+    private func metricClusterTileWidth(
+        items: [TaskbarItem],
+        config: Config,
+        systemIndicatorVisuals: [String: SystemIndicatorVisual]
+    ) -> Float {
+        let layout = metricChipLayout(for: config.systemIndicatorChipPreset)
+        let fallback = min(Float(config.maxItemWidth), layout.tileWidth)
+        guard config.taskbarPosition.isHorizontal,
+              config.systemIndicatorChipPreset != .micro else {
+            return fallback
+        }
+
+        let font = NSFont.systemFont(ofSize: CGFloat(config.fontSize), weight: .medium)
+        let textWidth = items.compactMap { item -> Float? in
+            guard systemIndicatorVisual(for: item, visuals: systemIndicatorVisuals) != nil else {
+                return nil
+            }
+            let title = item.displayTitle(iconsOnly: false)
+            guard !title.isEmpty else { return nil }
+            let size = (title as NSString).size(withAttributes: [.font: font])
+            return min(Float(size.width), Float(config.maxTitleWidth))
+        }.max() ?? 0
+
+        guard textWidth > 0 else { return fallback }
+
+        let insets = systemIndicatorTitleInsets(config: config)
+        let contentWidth = ceil(textWidth + Float(insets.left + insets.right) + systemIndicatorTextFitSlack(config: config))
+        let minimumWidth: Float = {
+            if usesCondensedDenseSystemIndicatorTiles(config: config) {
+                return 20
+            }
+            if config.systemIndicatorChipPreset == .dense {
+                return 32
+            }
+            return LayoutConstants.minItemWidth
+        }()
+        return min(Float(config.maxItemWidth), max(minimumWidth, contentWidth))
     }
 
     private func effectiveDisplayIconsOnly(config: Config, position: Position, sidebarExpanded: Bool) -> Bool {
@@ -1325,6 +2269,35 @@ final class NativeBarRenderer {
                 hasher.combine(icon)
                 hasher.combine(screenId)
             }
+        }
+        return hasher.finalize()
+    }
+
+    private static func itemBackgroundColorSignature(for colors: [Int: String]) -> Int {
+        var hasher = Hasher()
+        hasher.combine(colors.count)
+        for (index, color) in colors.sorted(by: { $0.key < $1.key }) {
+            hasher.combine(index)
+            hasher.combine(color)
+        }
+        return hasher.finalize()
+    }
+
+    private static func systemIndicatorVisualSignature(for visuals: [String: SystemIndicatorVisual]) -> Int {
+        var hasher = Hasher()
+        hasher.combine(visuals.count)
+        for (id, visual) in visuals.sorted(by: { $0.key < $1.key }) {
+            hasher.combine(id)
+            hasher.combine(visual.metric.rawValue)
+            hasher.combine(visual.mode.rawValue)
+            hasher.combine(visual.label)
+            hasher.combine(visual.valueText)
+            hasher.combine(visual.valuePercent)
+            hasher.combine(visual.history.count)
+            for value in visual.history {
+                hasher.combine(value)
+            }
+            hasher.combine(visual.severity)
         }
         return hasher.finalize()
     }

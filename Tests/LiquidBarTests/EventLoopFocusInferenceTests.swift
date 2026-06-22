@@ -90,6 +90,39 @@ struct EventLoopFocusInferenceTests {
         #expect(ordered.map(\.id.raw) == [3, 1, 2, 4])
     }
 
+    @Test func switcherCandidatesDefaultToAllDisplays() {
+        let windows = [
+            makeTestWindow(id: 1, bundle: "com.example.one", title: "One", monitorId: 1),
+            makeTestWindow(id: 2, bundle: "com.example.two", title: "Two", monitorId: 2),
+            makeTestWindow(id: 3, bundle: "com.example.three", title: "Duplicate", monitorId: 2),
+            makeTestWindow(id: 3, bundle: "com.example.three", title: "Duplicate", monitorId: 2),
+        ]
+
+        let candidates = EventLoop.switcherCandidateWindows(
+            windows: windows,
+            scope: .allDisplays,
+            focusDisplayId: 1
+        )
+
+        #expect(candidates.map(\.id.raw) == [1, 2, 3])
+    }
+
+    @Test func switcherCandidatesCanLimitToFocusedDisplay() {
+        let windows = [
+            makeTestWindow(id: 1, bundle: "com.example.one", title: "One", monitorId: 1),
+            makeTestWindow(id: 2, bundle: "com.example.two", title: "Two", monitorId: 2),
+            makeTestWindow(id: 3, bundle: "com.example.three", title: "Three", monitorId: 2),
+        ]
+
+        let candidates = EventLoop.switcherCandidateWindows(
+            windows: windows,
+            scope: .focusedDisplay,
+            focusDisplayId: 2
+        )
+
+        #expect(candidates.map(\.id.raw) == [2, 3])
+    }
+
     @Test func switcherInitialSelectionFollowsMRUToggleBehavior() {
         let windows = [
             makeTestWindow(id: 1, bundle: "com.example.one", title: "One"),

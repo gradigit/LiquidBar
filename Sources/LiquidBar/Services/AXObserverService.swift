@@ -63,7 +63,7 @@ final class AXObserverService {
         private let baseDelay: CFTimeInterval
         private let maxDelay: CFTimeInterval
 
-        init(baseDelay: CFTimeInterval = 2.0, maxDelay: CFTimeInterval = 120.0) {
+        init(baseDelay: CFTimeInterval = 30.0, maxDelay: CFTimeInterval = 300.0) {
             self.baseDelay = baseDelay
             self.maxDelay = maxDelay
         }
@@ -115,9 +115,10 @@ final class AXObserverService {
     private let ownPid = ProcessInfo.processInfo.processIdentifier
     private var isStarted = false
     private var reconcileWorkItem: DispatchWorkItem?
-    private let maxObserverAddsPerPass = 2
+    private let maxObserverAddsPerPass = 1
     private let batchReconcileDelay: TimeInterval = 0.25
     private let minimumReconcileDelay: TimeInterval = 0.25
+    private let axMessagingTimeout: Float = 0.05
 
     private static let notifications: [String] = [
         kAXWindowCreatedNotification,
@@ -170,7 +171,12 @@ final class AXObserverService {
             return
         }
 
-        let wantedPids = observablePids()
+        let wantedPids = PerformanceMonitor.shared.measureSegment(
+            "ax_observer_window_list",
+            thresholdMs: 60.0
+        ) {
+            observablePids()
+        }
         observerBackoff.prune(keeping: wantedPids)
 
         for pid in Array(entriesByPid.keys) where !wantedPids.contains(pid) {
@@ -192,7 +198,14 @@ final class AXObserverService {
         var attempted = 0
         for pid in retryableMissing {
             attempted += 1
-            if addObserver(for: pid) {
+            let added = PerformanceMonitor.shared.measureSegment(
+                "ax_observer_add",
+                thresholdMs: 80.0,
+                details: "pid=\(pid)"
+            ) {
+                addObserver(for: pid)
+            }
+            if added {
                 observerBackoff.recordSuccess(pid: pid)
             } else {
                 observerBackoff.recordFailure(pid: pid, now: now)
@@ -237,8 +250,9 @@ final class AXObserverService {
             if let layer = parseInt(dict[kCGWindowLayer as CFString]), layer != 0 {
                 continue
             }
+            let ownerName = dict[kCGWindowOwnerName as CFString] as? String
             guard let pid = parsePid(dict[kCGWindowOwnerPID as CFString]),
-                  shouldObserve(pid: pid, ownPid: ownPid) else {
+                  shouldObserve(pid: pid, ownPid: ownPid, ownerName: ownerName) else {
                 continue
             }
             pids.insert(pid)
@@ -248,7 +262,25 @@ final class AXObserverService {
     }
 
     nonisolated static func shouldObserve(pid: pid_t, ownPid: pid_t) -> Bool {
-        pid > 0 && pid != ownPid
+        shouldObserve(pid: pid, ownPid: ownPid, ownerName: nil)
+    }
+
+    nonisolated static func shouldObserve(pid: pid_t, ownPid: pid_t, ownerName: String?) -> Bool {
+        guard pid > 0, pid != ownPid else { return false }
+        guard let ownerName else { return true }
+        return !isIgnoredSystemUIOwner(ownerName)
+    }
+
+    private nonisolated static func isIgnoredSystemUIOwner(_ ownerName: String) -> Bool {
+        switch ownerName {
+        case "CursorUIViewService",
+             "TextInputMenuAgent",
+             "TextInputSwitcher",
+             "TextInputUIMacHelper":
+            return true
+        default:
+            return false
+        }
     }
 
     nonisolated static func parsePid(_ value: Any?) -> pid_t? {
@@ -273,6 +305,7 @@ final class AXObserverService {
         guard createErr == .success, let observer = rawObserver else { return false }
 
         let appElement = AXUIElementCreateApplication(pid)
+        AXUIElementSetMessagingTimeout(appElement, axMessagingTimeout)
         let refcon = Unmanaged.passUnretained(self).toOpaque()
 
         var registered: [String] = []

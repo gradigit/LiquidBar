@@ -11,6 +11,7 @@ CYCLES="${LIQUIDBAR_SWITCHER_LIVE_CYCLES:-1}"
 STEPS="${LIQUIDBAR_SWITCHER_LIVE_STEPS:-8}"
 DIRECTION="${LIQUIDBAR_SWITCHER_BENCH_DIRECTION:-1}"
 SWITCHER_LAYOUT="${LIQUIDBAR_SWITCHER_LAYOUT:-hero_carousel}"
+SWITCHER_SCROLL_ANIMATION="${LIQUIDBAR_SWITCHER_SCROLL_ANIMATION:-spring}"
 APP_SETTLE_SECONDS="${LIQUIDBAR_SWITCHER_APP_SETTLE_SECONDS:-5}"
 WARMUP_MS="${LIQUIDBAR_SWITCHER_LIVE_WARMUP_MS:-1200}"
 OPEN_HOLD_MS="${LIQUIDBAR_SWITCHER_LIVE_OPEN_HOLD_MS:-180}"
@@ -18,6 +19,7 @@ STEP_PAUSE_MS="${LIQUIDBAR_SWITCHER_LIVE_STEP_PAUSE_MS:-80}"
 RELEASE_PAUSE_MS="${LIQUIDBAR_SWITCHER_LIVE_RELEASE_PAUSE_MS:-280}"
 COOLDOWN_MS="${LIQUIDBAR_SWITCHER_LIVE_COOLDOWN_MS:-1500}"
 SCREENSHOT_DIR="${LIQUIDBAR_SWITCHER_LIVE_SCREENSHOT_DIR:-}"
+THUMBNAIL_PREWARM_DISABLED="${LIQUIDBAR_DISABLE_SWITCHER_THUMBNAIL_PREWARM:-0}"
 
 if [[ ! -x "$APP_EXEC" ]]; then
   echo "error: LiquidBar test app not found at: $APP_EXEC" >&2
@@ -115,6 +117,7 @@ data = {
     "switcher_enabled": True,
     "switcher_hotkey": "command+tab",
     "switcher_layout_style": layout,
+    "switcher_window_scope": "all_displays",
     "tab_group_collapse_on_outside_click": True,
     "tab_group_hover_expand_delay_ms": 1000,
     "tabbed_taskbar_enabled": False,
@@ -150,11 +153,16 @@ trap cleanup EXIT INT TERM
 echo "Launching LiquidBar live hotkey benchmark app..."
 echo "Run id: $RUN_ID"
 echo "Config directory: $CONFIG_DIR"
+echo "Switcher thumbnail prewarm disabled: $THUMBNAIL_PREWARM_DISABLED"
+echo "Switcher scroll animation: $SWITCHER_SCROLL_ANIMATION"
 if [[ -n "$SCREENSHOT_DIR" ]]; then
   echo "Screenshot directory: $SCREENSHOT_DIR"
 fi
 
-LIQUIDBAR_CONFIG_DIR="$CONFIG_DIR" "$APP_EXEC" &
+LIQUIDBAR_CONFIG_DIR="$CONFIG_DIR" \
+LIQUIDBAR_DISABLE_SWITCHER_THUMBNAIL_PREWARM="$THUMBNAIL_PREWARM_DISABLED" \
+LIQUIDBAR_SWITCHER_SCROLL_ANIMATION="$SWITCHER_SCROLL_ANIMATION" \
+"$APP_EXEC" &
 APP_PID=$!
 
 sleep "$APP_SETTLE_SECONDS"

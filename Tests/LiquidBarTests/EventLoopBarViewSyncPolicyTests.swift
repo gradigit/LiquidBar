@@ -96,6 +96,13 @@ struct EventLoopBarViewSyncPolicyTests {
         #expect(delays.contains(where: { $0 >= 1.0 }))
     }
 
+    @Test func spaceChangeRecoveryUsesSparseDelayedPolls() {
+        let delays = EventLoop.spaceChangeRecoveryDelays
+        #expect(delays == delays.sorted())
+        #expect(delays == [0.15, 0.45, 1.00])
+        #expect(delays.count == 3)
+    }
+
     @Test func visibleReorderPlanUsesVisibleItemIndicesForWindowOrder() {
         let items: [TaskbarItem] = [
             .launcher(screenId: 1),
@@ -125,6 +132,12 @@ struct EventLoopBarViewSyncPolicyTests {
         #expect(plan?.windowOrder == [20, 10, 11])
         #expect(plan?.appOrder == ["com.app.beta", "com.app.alpha", "com.app.pinned"])
         #expect(plan?.pinnedOrder == ["com.app.pinned"])
+        #expect(plan?.itemOrder == [
+            "launcher:1",
+            "window:20",
+            "app-group:1:com.app.alpha",
+            "pinned:1:com.app.pinned",
+        ])
     }
 
     @Test func visibleReorderPlanExpandsTabGroupWindowIds() {
@@ -155,6 +168,85 @@ struct EventLoopBarViewSyncPolicyTests {
 
         #expect(plan?.windowOrder == [10, 11, 20])
         #expect(plan?.appOrder == ["com.app.alpha", "com.app.beta"])
+        #expect(plan?.itemOrder == ["tab-group:1:research", "window:20"])
+    }
+
+    @Test func visibleReorderPlanIncludesSystemIndicatorItemIdentity() {
+        let items: [TaskbarItem] = [
+            .customText(id: "system.cpu", text: "CPU 42%", screenId: nil),
+            .window(
+                id: WindowId(20),
+                bundleId: "com.app.beta",
+                title: "Beta",
+                appName: "Beta",
+                isHidden: false,
+                isMinimized: false,
+                screenId: 1
+            ),
+        ]
+
+        let plan = EventLoop.visibleReorderPlan(items: items, from: 0, to: 2, tabGroups: [])
+
+        #expect(plan?.itemOrder == ["window:20", "system:all:system.cpu"])
+    }
+
+    @Test func preferredSystemIndicatorOrderReordersMetricClusterOnly() {
+        let items: [TaskbarItem] = [
+            .customText(id: "system.cpu", text: "CPU 42%", screenId: nil),
+            .customText(id: "system.gpu", text: "GPU 7%", screenId: nil),
+            .customText(id: "system.ram", text: "RAM 63%", screenId: nil),
+        ]
+
+        let reordered = EventLoop.applyPreferredSystemIndicatorOrder(
+            items,
+            preferred: ["system.ram", "system.cpu"]
+        )
+
+        #expect(reordered.map(\.bundleId) == [
+            "custom:text:system.ram",
+            "custom:text:system.cpu",
+            "custom:text:system.gpu",
+        ])
+    }
+
+    @Test func systemIndicatorMetricOrderAfterReorderAllowsInternalClusterMove() {
+        let items: [TaskbarItem] = [
+            .customText(id: "system.cpu", text: "CPU 42%", screenId: nil),
+            .customText(id: "system.gpu", text: "GPU 7%", screenId: nil),
+            .customText(id: "system.ram", text: "RAM 63%", screenId: nil),
+            .window(
+                id: WindowId(20),
+                bundleId: "com.app.beta",
+                title: "Beta",
+                appName: "Beta",
+                isHidden: false,
+                isMinimized: false,
+                screenId: 1
+            ),
+        ]
+
+        let order = EventLoop.systemIndicatorMetricOrderAfterReorder(items: items, from: 0, to: 3)
+
+        #expect(order == ["system.gpu", "system.ram", "system.cpu"])
+    }
+
+    @Test func systemIndicatorMetricOrderAfterReorderRejectsMovesOutsideCluster() {
+        let items: [TaskbarItem] = [
+            .customText(id: "system.cpu", text: "CPU 42%", screenId: nil),
+            .customText(id: "system.gpu", text: "GPU 7%", screenId: nil),
+            .window(
+                id: WindowId(20),
+                bundleId: "com.app.beta",
+                title: "Beta",
+                appName: "Beta",
+                isHidden: false,
+                isMinimized: false,
+                screenId: 1
+            ),
+        ]
+
+        #expect(EventLoop.systemIndicatorMetricOrderAfterReorder(items: items, from: 0, to: 3) == nil)
+        #expect(EventLoop.systemIndicatorMetricOrderAfterReorder(items: items, from: 2, to: 0) == nil)
     }
 
     @Test func visibleReorderPlanRejectsNoOpMoves() {

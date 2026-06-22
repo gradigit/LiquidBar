@@ -10,6 +10,7 @@ let package = Package(
             path: "Sources/LiquidBar",
             linkerSettings: [
                 .linkedFramework("ApplicationServices"),
+                .linkedFramework("IOKit"),
                 .linkedFramework("QuartzCore"),
                 .linkedFramework("ScreenCaptureKit"),
             ]

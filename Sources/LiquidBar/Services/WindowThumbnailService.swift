@@ -47,6 +47,7 @@ final class WindowThumbnailService {
     private struct LastGoodEntry {
         let image: NSImage
         let capturedAt: CFAbsoluteTime
+        let sizePoints: CGSize
         let byteCost: Int
     }
 
@@ -344,11 +345,11 @@ final class WindowThumbnailService {
     private var scheduler = ThumbnailRequestScheduler()
     /// Last known-good image for a window, kept longer than the short TTL cache.
     /// Used to show previews for hidden/minimized windows when live capture fails.
-    private var lastGoodImageByWindowId: [CGWindowID: LastGoodEntry] = [:]
+    private var lastGoodImageByKey: [ThumbnailRequestKey: LastGoodEntry] = [:]
+    private var requestQueuedAtByIdentity: [CaptureRequestIdentity: CFTimeInterval] = [:]
     private var retentionPolicy: RetentionPolicy
     private var lastMaintenanceAt: CFAbsoluteTime = 0
 
-    private let freshCacheTTL: CFAbsoluteTime = 0.75
     private let staleServeTTL: CFAbsoluteTime = 8.0
 
     init(
@@ -393,22 +394,26 @@ final class WindowThumbnailService {
 
         if preferCachedImage {
             if let entry = bestCachedEntry(windowId: windowId, targetSizePoints: targetSizePoints) {
+                recordThumbnailCacheEvent(request: request, outcome: "cache_preferred", entry: entry)
                 completion(entry.image)
                 return
             }
-            if let img = lastGoodImageByWindowId[windowId]?.image {
-                completion(img)
+            if let entry = bestLastGoodEntry(windowId: windowId, targetSizePoints: targetSizePoints) {
+                recordThumbnailLastGoodEvent(request: request, outcome: "last_good_preferred", entry: entry)
+                completion(entry.image)
                 return
             }
         }
 
         if let entry = bestCachedEntry(windowId: windowId, targetSizePoints: targetSizePoints) {
             let age = now - entry.capturedAt
-            if age < freshCacheTTL {
+            if age < Self.freshCacheTTL(for: producer) {
+                recordThumbnailCacheEvent(request: request, outcome: "cache_fresh", entry: entry)
                 completion(entry.image)
                 return
             }
             if age < staleServeTTL {
+                recordThumbnailCacheEvent(request: request, outcome: "cache_stale_served", entry: entry)
                 completion(entry.image)
                 scheduleCapture(request, completion: completion)
                 return
@@ -437,7 +442,7 @@ final class WindowThumbnailService {
             }
         }
         if includeLastGood {
-            return lastGoodImageByWindowId[windowId]?.image
+            return bestAnyLastGoodEntry(windowId: windowId)?.image
         }
         return nil
     }
@@ -462,7 +467,7 @@ final class WindowThumbnailService {
             }
         }
         if includeLastGood {
-            return lastGoodImageByWindowId[windowId]?.image
+            return bestLastGoodEntry(windowId: windowId, targetSizePoints: targetSizePoints)?.image
         }
         return nil
     }
@@ -489,12 +494,13 @@ final class WindowThumbnailService {
         )
 
         if preferCachedImage,
-           bestCachedEntry(windowId: windowId, targetSizePoints: targetSizePoints) != nil || lastGoodImageByWindowId[windowId] != nil {
+           bestCachedEntry(windowId: windowId, targetSizePoints: targetSizePoints) != nil ||
+           bestLastGoodEntry(windowId: windowId, targetSizePoints: targetSizePoints) != nil {
             return
         }
 
         if let entry = bestCachedEntry(windowId: windowId, targetSizePoints: targetSizePoints),
-           (now - entry.capturedAt) < freshCacheTTL {
+           (now - entry.capturedAt) < Self.freshCacheTTL(for: producer) {
             return
         }
 
@@ -508,10 +514,11 @@ final class WindowThumbnailService {
 
     func pruneToLiveWindowIds(_ liveWindowIds: Set<CGWindowID>) {
         imageCacheByKey = imageCacheByKey.filter { liveWindowIds.contains($0.key.windowId) }
-        lastGoodImageByWindowId = lastGoodImageByWindowId.filter { liveWindowIds.contains($0.key) }
+        lastGoodImageByKey = lastGoodImageByKey.filter { liveWindowIds.contains($0.key.windowId) }
         let result = scheduler.pruneToLiveWindowIds(liveWindowIds)
         dropCallbacks(for: result.droppedQueued)
         callbacksByIdentity = callbacksByIdentity.filter { liveWindowIds.contains($0.key.key.windowId) }
+        requestQueuedAtByIdentity = requestQueuedAtByIdentity.filter { liveWindowIds.contains($0.key.key.windowId) }
     }
 
     func sweepRetainedThumbnails(now: CFAbsoluteTime = CFAbsoluteTimeGetCurrent()) {
@@ -524,8 +531,12 @@ final class WindowThumbnailService {
         completion: ((NSImage?) -> Void)? = nil
     ) {
         let result = scheduler.enqueue(request)
+        let now = CACurrentMediaTime()
         if let completion, let trackedRequest = result.trackedRequest {
             callbacksByIdentity[trackedRequest.identity, default: []].append(completion)
+            requestQueuedAtByIdentity[trackedRequest.identity, default: now] = now
+        } else if let trackedRequest = result.trackedRequest {
+            requestQueuedAtByIdentity[trackedRequest.identity, default: now] = now
         }
         dropCallbacks(for: result.droppedQueued)
         dispatchCaptures(result.dispatch)
@@ -540,10 +551,13 @@ final class WindowThumbnailService {
     private func dropCallbacks(for requests: [CaptureRequest]) {
         for request in requests {
             callbacksByIdentity.removeValue(forKey: request.identity)
+            requestQueuedAtByIdentity.removeValue(forKey: request.identity)
         }
     }
 
     private func performCapture(_ request: CaptureRequest) {
+        let captureStart = CACurrentMediaTime()
+        let queuedAt = requestQueuedAtByIdentity[request.identity] ?? captureStart
         // Note: macOS typically does not list an app in Screen Recording privacy settings
         // until it has attempted to request access. We only request when the user has
         // explicitly enabled previews (this codepath).
@@ -566,6 +580,14 @@ final class WindowThumbnailService {
                 }
             }
 
+            recordThumbnailCaptureEvent(
+                request: request,
+                outcome: "screen_recording_missing",
+                queuedAt: queuedAt,
+                captureStart: captureStart,
+                image: nil,
+                success: false
+            )
             completeCapture(request: request, image: nil)
             return
         }
@@ -573,6 +595,14 @@ final class WindowThumbnailService {
         resolveSCWindow(windowId: request.windowId) { [weak self] scWindow in
             guard let self else { return }
             guard let scWindow else {
+                self.recordThumbnailCaptureEvent(
+                    request: request,
+                    outcome: "window_missing",
+                    queuedAt: queuedAt,
+                    captureStart: captureStart,
+                    image: nil,
+                    success: false
+                )
                 self.completeCapture(request: request, image: nil)
                 return
             }
@@ -591,7 +621,7 @@ final class WindowThumbnailService {
             cfg.includeChildWindows = true
             cfg.ignoreShadowsSingleWindow = true
             cfg.ignoreGlobalClipSingleWindow = true
-            cfg.captureResolution = .nominal
+            cfg.captureResolution = Self.captureResolution(for: request)
 
             SCScreenshotManager.captureImage(contentFilter: filter, configuration: cfg) { [weak self] cgImage, error in
                 Task { @MainActor in
@@ -601,9 +631,21 @@ final class WindowThumbnailService {
                     }
 
                     guard let cgImage else {
+                        let fallback = self.bestLastGoodEntry(
+                            windowId: request.windowId,
+                            targetSizePoints: request.targetSizePoints
+                        )?.image
+                        self.recordThumbnailCaptureEvent(
+                            request: request,
+                            outcome: fallback == nil ? "capture_failed" : "last_good_fallback",
+                            queuedAt: queuedAt,
+                            captureStart: captureStart,
+                            image: fallback,
+                            success: fallback != nil
+                        )
                         self.completeCapture(
                             request: request,
-                            image: self.lastGoodImageByWindowId[request.windowId]?.image
+                            image: fallback
                         )
                         return
                     }
@@ -620,12 +662,21 @@ final class WindowThumbnailService {
                         sizePoints: sizePoints,
                         byteCost: Self.approximateByteCost(sizePoints: sizePoints, screenScale: request.screenScale)
                     )
-                    self.lastGoodImageByWindowId[request.windowId] = LastGoodEntry(
+                    self.lastGoodImageByKey[request.key] = LastGoodEntry(
                         image: nsImage,
                         capturedAt: capturedAt,
+                        sizePoints: sizePoints,
                         byteCost: Self.approximateByteCost(sizePoints: sizePoints, screenScale: request.screenScale)
                     )
                     self.enforceRetentionBudgets()
+                    self.recordThumbnailCaptureEvent(
+                        request: request,
+                        outcome: "captured",
+                        queuedAt: queuedAt,
+                        captureStart: captureStart,
+                        image: nsImage,
+                        success: true
+                    )
                     self.completeCapture(request: request, image: nsImage)
                 }
             }
@@ -633,6 +684,7 @@ final class WindowThumbnailService {
     }
 
     private func completeCapture(request: CaptureRequest, image: NSImage?) {
+        requestQueuedAtByIdentity.removeValue(forKey: request.identity)
         let shouldDeliver = scheduler.isCurrent(request)
         let callbacks = callbacksByIdentity.removeValue(forKey: request.identity) ?? []
         let nextDispatch = scheduler.finish(request.key)
@@ -673,8 +725,54 @@ final class WindowThumbnailService {
             .value
     }
 
+    private func bestLastGoodEntry(windowId: CGWindowID, targetSizePoints: CGSize) -> LastGoodEntry? {
+        guard let key = Self.bestAvailableCacheKey(
+            windowId: windowId,
+            targetSizePoints: targetSizePoints,
+            availableKeys: Set(lastGoodImageByKey.keys)
+        ) else {
+            return nil
+        }
+        guard let entry = lastGoodImageByKey[key],
+              entry.sizePoints.width >= targetSizePoints.width * 0.85,
+              entry.sizePoints.height >= targetSizePoints.height * 0.85 else {
+            return nil
+        }
+        return entry
+    }
+
+    private func bestAnyLastGoodEntry(windowId: CGWindowID) -> LastGoodEntry? {
+        lastGoodImageByKey
+            .filter { $0.key.windowId == windowId }
+            .sorted {
+                if $0.key.tier != $1.key.tier {
+                    return $0.key.tier > $1.key.tier
+                }
+                return $0.value.capturedAt > $1.value.capturedAt
+            }
+            .first?
+            .value
+    }
+
     nonisolated static func requestKey(windowId: CGWindowID, targetSizePoints: CGSize) -> ThumbnailRequestKey {
         ThumbnailRequestKey(windowId: windowId, tier: ThumbnailTier.forTargetSize(targetSizePoints))
+    }
+
+    nonisolated static func captureResolution(for request: CaptureRequest) -> SCCaptureResolutionType {
+        if (request.producer == .switcher || request.producer == .prewarm),
+           request.key.tier == .large {
+            return .best
+        }
+        return .nominal
+    }
+
+    nonisolated static func freshCacheTTL(for producer: ThumbnailProducer) -> CFAbsoluteTime {
+        switch producer {
+        case .switcher, .prewarm:
+            return 8.0
+        case .interactive, .groupPreview:
+            return 0.75
+        }
     }
 
     nonisolated static func approximateByteCost(sizePoints: CGSize, screenScale: CGFloat) -> Int {
@@ -709,7 +807,7 @@ final class WindowThumbnailService {
 
     private func sweepStaleEntries(now: CFAbsoluteTime) {
         imageCacheByKey = imageCacheByKey.filter { (now - $0.value.capturedAt) <= retentionPolicy.staleCacheAge }
-        lastGoodImageByWindowId = lastGoodImageByWindowId.filter { (now - $0.value.capturedAt) <= retentionPolicy.staleLastGoodAge }
+        lastGoodImageByKey = lastGoodImageByKey.filter { (now - $0.value.capturedAt) <= retentionPolicy.staleLastGoodAge }
     }
 
     private func enforceRetentionBudgets() {
@@ -745,12 +843,15 @@ final class WindowThumbnailService {
         let maxEntries = retentionPolicy.maxLastGoodEntries
         let maxBytes = retentionPolicy.maxLastGoodBytes
 
-        var entries = lastGoodImageByWindowId
+        var entries = lastGoodImageByKey
             .sorted {
                 if $0.value.capturedAt != $1.value.capturedAt {
                     return $0.value.capturedAt < $1.value.capturedAt
                 }
-                return $0.key < $1.key
+                if $0.key.windowId != $1.key.windowId {
+                    return $0.key.windowId < $1.key.windowId
+                }
+                return $0.key.tier < $1.key.tier
             }
 
         var totalBytes = entries.reduce(0) { $0 + $1.value.byteCost }
@@ -758,7 +859,82 @@ final class WindowThumbnailService {
             guard let evicted = entries.first else { break }
             entries.removeFirst()
             totalBytes -= evicted.value.byteCost
-            lastGoodImageByWindowId.removeValue(forKey: evicted.key)
+            lastGoodImageByKey.removeValue(forKey: evicted.key)
+        }
+    }
+
+    private func recordThumbnailCacheEvent(
+        request: CaptureRequest,
+        outcome: String,
+        entry: CacheEntry
+    ) {
+        PerformanceMonitor.shared.recordThumbnailEvent(
+            producer: request.producer.rawValue,
+            tier: Self.tierName(request.key.tier),
+            outcome: outcome,
+            queueWaitMs: 0,
+            captureMs: 0,
+            totalMs: 0,
+            byteCost: entry.byteCost,
+            success: true
+        )
+    }
+
+    private func recordThumbnailLastGoodEvent(
+        request: CaptureRequest,
+        outcome: String,
+        entry: LastGoodEntry
+    ) {
+        PerformanceMonitor.shared.recordThumbnailEvent(
+            producer: request.producer.rawValue,
+            tier: Self.tierName(request.key.tier),
+            outcome: outcome,
+            queueWaitMs: 0,
+            captureMs: 0,
+            totalMs: 0,
+            byteCost: entry.byteCost,
+            success: true
+        )
+    }
+
+    private func recordThumbnailCaptureEvent(
+        request: CaptureRequest,
+        outcome: String,
+        queuedAt: CFTimeInterval,
+        captureStart: CFTimeInterval,
+        image: NSImage?,
+        success: Bool
+    ) {
+        let now = CACurrentMediaTime()
+        let queueWaitMs = max(0, (captureStart - queuedAt) * 1000.0)
+        let captureMs = max(0, (now - captureStart) * 1000.0)
+        let totalMs = max(0, (now - queuedAt) * 1000.0)
+        let byteCost: Int
+        if let image {
+            byteCost = Self.approximateByteCost(sizePoints: image.size, screenScale: request.screenScale)
+        } else {
+            byteCost = 0
+        }
+        PerformanceMonitor.shared.recordThumbnailEvent(
+            producer: request.producer.rawValue,
+            tier: Self.tierName(request.key.tier),
+            outcome: outcome,
+            queueWaitMs: queueWaitMs,
+            captureMs: captureMs,
+            totalMs: totalMs,
+            byteCost: byteCost,
+            success: success
+        )
+    }
+
+    nonisolated static func tierName(_ tier: ThumbnailTier) -> String {
+        switch tier {
+        case .tiny:
+            return "tiny"
+        case .standard:
+            return "standard"
+        case .large:
+            return "large"
         }
     }
 
@@ -797,16 +973,17 @@ final class WindowThumbnailService {
         capturedAt: CFAbsoluteTime = CFAbsoluteTimeGetCurrent(),
         screenScale: CGFloat = 2.0
     ) {
-        lastGoodImageByWindowId[windowId] = LastGoodEntry(
+        lastGoodImageByKey[Self.requestKey(windowId: windowId, targetSizePoints: sizePoints)] = LastGoodEntry(
             image: image,
             capturedAt: capturedAt,
+            sizePoints: sizePoints,
             byteCost: Self.approximateByteCost(sizePoints: sizePoints, screenScale: screenScale)
         )
         enforceRetentionBudgets()
     }
 
     func debugLastGoodWindowIds() -> [CGWindowID] {
-        lastGoodImageByWindowId.keys.sorted()
+        Array(Set(lastGoodImageByKey.keys.map(\.windowId))).sorted()
     }
 
     func debugStartInFlight(windowId: CGWindowID, targetSizePoints: CGSize) {

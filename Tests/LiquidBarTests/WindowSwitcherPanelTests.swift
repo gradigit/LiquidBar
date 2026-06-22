@@ -2,7 +2,7 @@ import AppKit
 @testable import LiquidBar
 import Testing
 
-@Suite("WindowSwitcherPanel")
+@Suite("WindowSwitcherPanel", .serialized)
 @MainActor
 struct WindowSwitcherPanelTests {
     @Test func updateKeepsSelectedEntryVisible() throws {
@@ -142,27 +142,41 @@ struct WindowSwitcherPanelTests {
         #expect(selectedVisualFrame.maxY <= visibleRect.maxY + 1)
     }
 
-    @Test func heroCarouselUsesFloatingCardSurfaceWithoutBackpane() {
+    @Test func heroCarouselUsesFloatingThumbnailCardsWithoutBackpaneOrTextPills() throws {
         let panel = WindowSwitcherPanel(theme: .dark, glassStyle: .publicRegular, layoutStyle: .heroCarousel)
         defer { panel.close() }
 
+        panel.update(entries: Self.entries(count: 3), selectedIndex: 1)
+
         let surface = panel.debugSurfaceState()
+        let regularState = try #require(panel.debugEntryVisualState(windowId: 1))
+        let selectedState = try #require(panel.debugEntryVisualState(windowId: 2))
         let selectedTarget = WindowSwitcherPanel.thumbnailTargetSize(layoutStyle: .heroCarousel, selected: true)
         let regularTarget = WindowSwitcherPanel.thumbnailTargetSize(layoutStyle: .heroCarousel, selected: false)
 
-        #expect(surface.panelHeight >= 300)
-        #expect(surface.documentHeight >= 276)
-        #expect(surface.contentInset >= 34)
+        #expect(surface.panelHeight >= 450)
+        #expect(surface.documentHeight >= 420)
+        #expect(surface.contentInset >= 26)
         #expect(surface.backdropAlpha == 0)
         #expect(surface.borderAlpha == 0)
         #expect(surface.borderWidth == 0)
         #expect(surface.shadow == false)
-        #expect(surface.maxVisibleWidthFraction >= 0.94)
+        #expect(surface.maxVisibleWidthFraction >= 0.96)
         #expect(surface.maxPanelWidth >= 2200)
         #expect(surface.cornerRadius == 0)
-        #expect(regularTarget.height >= 166)
-        #expect(selectedTarget.height >= 175)
-        #expect(selectedTarget.width >= 285)
+        #expect(!panel.debugUsesSharedGlassBackground())
+        #expect(panel.debugEntryUsesSystemGlass(windowId: 1))
+        #expect(panel.debugEntryUsesSystemGlass(windowId: 2))
+        #expect(!panel.debugLabelsDrawBackground(windowId: 1))
+        #expect(!panel.debugLabelsDrawBackground(windowId: 2))
+        #expect(regularState.backgroundAlpha <= 0.03)
+        #expect(regularState.footerBottomAlpha == 0)
+        #expect(selectedState.backgroundAlpha >= 0.07)
+        #expect(selectedState.footerBottomAlpha == 0)
+        #expect(selectedState.backgroundAlpha > regularState.backgroundAlpha)
+        #expect(regularTarget.height >= 260)
+        #expect(selectedTarget.height >= 278)
+        #expect(selectedTarget.width >= 480)
     }
 
     @Test func heroCarouselCardWidthFollowsWindowAspectRatio() throws {
@@ -197,6 +211,27 @@ struct WindowSwitcherPanelTests {
         #expect(landscapeFrame.width > portraitFrame.width + 100)
         #expect(wideFrame.width > landscapeFrame.width + 60)
         #expect(wideTarget.width > portraitTarget.width + 220)
+    }
+
+    @Test func heroCarouselSkinnyWindowsKeepNarrowCardFootprint() throws {
+        let skinnyTarget = WindowSwitcherPanel.thumbnailTargetSize(
+            layoutStyle: .heroCarousel,
+            selected: false,
+            aspectRatio: 0.30
+        )
+
+        let panel = WindowSwitcherPanel(theme: .dark, glassStyle: .publicRegular, layoutStyle: .heroCarousel)
+        defer { panel.close() }
+
+        let surface = panel.debugSurfaceState()
+        panel.setFrame(NSRect(x: 0, y: 0, width: 980, height: surface.panelHeight), display: false)
+        panel.update(entries: [Self.entry(windowId: 1, aspectRatio: 0.30)], selectedIndex: 0)
+
+        let skinnyFrame = try #require(panel.debugEntryFrame(windowId: 1))
+
+        #expect(skinnyTarget.width <= 90)
+        #expect(skinnyTarget.height >= 260)
+        #expect(skinnyFrame.width <= 122)
     }
 
     @Test func switcherPanelSnapshotCanBeExportedForVisualQA() throws {

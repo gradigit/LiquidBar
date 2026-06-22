@@ -8,13 +8,12 @@ import AppKit
 /// - `LIQUIDBAR_TEST_REDUCE_MOTION` ("1"/"0")
 /// - `LIQUIDBAR_TEST_INCREASE_CONTRAST` ("1"/"0")
 enum SystemAccessibilityPreferences {
-    private static var isUITestMode: Bool {
-        ProcessInfo.processInfo.environment["LIQUIDBAR_TEST_CONTROL"] == "1"
-    }
+    private static let launchEnvironment = ProcessInfo.processInfo.environment
+    private static let isUITestMode = launchEnvironment["LIQUIDBAR_TEST_CONTROL"] == "1"
 
     private static func envBool(_ key: String) -> Bool? {
         guard isUITestMode else { return nil }
-        guard let raw = ProcessInfo.processInfo.environment[key]?.trimmingCharacters(in: .whitespacesAndNewlines),
+        guard let raw = launchEnvironment[key]?.trimmingCharacters(in: .whitespacesAndNewlines),
               !raw.isEmpty else { return nil }
         switch raw.lowercased() {
         case "1", "true", "yes", "y": return true
@@ -35,4 +34,3 @@ enum SystemAccessibilityPreferences {
         envBool("LIQUIDBAR_TEST_INCREASE_CONTRAST") ?? NSWorkspace.shared.accessibilityDisplayShouldIncreaseContrast
     }
 }
-

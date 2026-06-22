@@ -16,10 +16,16 @@ struct CommandTypesTests {
         #expect(ContextAction.removeFromTabGroup.rawValue == 12)
         #expect(ContextAction.renameTabGroup.rawValue == 13)
         #expect(ContextAction.deleteTabGroup.rawValue == 14)
+        #expect(ContextAction.setTabGroupColor.rawValue == 15)
 
         #expect(ContextAction.openCustomItem.rawValue == 20)
         #expect(ContextAction.editCustomItem.rawValue == 21)
         #expect(ContextAction.deleteCustomItem.rawValue == 22)
+
+        #expect(ContextAction.renameWindow.rawValue == 40)
+        #expect(ContextAction.setWindowColor.rawValue == 41)
+        #expect(ContextAction.resetWindowTitle.rawValue == 42)
+        #expect(ContextAction.resetWindowColor.rawValue == 43)
     }
 
     @Test func testContextActionFromRawValue() {
@@ -29,8 +35,11 @@ struct CommandTypesTests {
         #expect(ContextAction(rawValue: 3) == .blacklist)
         #expect(ContextAction(rawValue: 10) == .createTabGroup)
         #expect(ContextAction(rawValue: 14) == .deleteTabGroup)
+        #expect(ContextAction(rawValue: 15) == .setTabGroupColor)
         #expect(ContextAction(rawValue: 20) == .openCustomItem)
         #expect(ContextAction(rawValue: 22) == .deleteCustomItem)
+        #expect(ContextAction(rawValue: 40) == .renameWindow)
+        #expect(ContextAction(rawValue: 43) == .resetWindowColor)
         #expect(ContextAction(rawValue: 99) == nil)
     }
 

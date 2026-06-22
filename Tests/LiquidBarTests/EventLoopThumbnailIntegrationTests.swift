@@ -36,6 +36,17 @@ struct EventLoopThumbnailIntegrationTests {
         #expect(EventLoop.switcherThumbnailIndices(count: 0, selectedIndex: 0).isEmpty)
     }
 
+    @Test func switcherPrewarmThumbnailPolicyUsesSmallerPrioritySet() {
+        let indices = EventLoop.switcherPrewarmThumbnailIndices(count: 40, selectedIndex: 20)
+
+        #expect(indices.first == 20)
+        #expect(indices.contains(18))
+        #expect(indices.contains(22))
+        #expect(indices.contains(0))
+        #expect(indices.count <= 8)
+        #expect(Set(indices).count == indices.count)
+    }
+
     @Test func hideSwitcherInvalidatesQueuedSwitcherRequests() throws {
         let (loop, renderer) = try makeLoop()
         defer { renderer.shutdown() }

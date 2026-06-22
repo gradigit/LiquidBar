@@ -32,7 +32,16 @@ DEFAULT_METRICS = [
         False,
         "switcher_cycle_step_worst_ms",
     ),
+    MetricSpec(
+        "switcher_animation_frame_p95_ms",
+        "Switcher animation frame p95 ms",
+        False,
+    ),
     MetricSpec("switcher_failed_total", "Switcher failed actions", False),
+    MetricSpec("thumbnail_failed_total", "Thumbnail failed events", False),
+    MetricSpec("thumbnail_queue_p95_ms", "Thumbnail queue p95 ms", False),
+    MetricSpec("thumbnail_capture_p95_ms", "Thumbnail capture p95 ms", False),
+    MetricSpec("thumbnail_total_p95_ms", "Thumbnail total p95 ms", False),
 ]
 
 WORST_METRICS = [

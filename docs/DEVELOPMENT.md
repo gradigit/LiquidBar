@@ -107,6 +107,28 @@ Enable performance logging in config before collecting runtime logs:
 Then use the runbook in `docs/PERFORMANCE.md` for baseline/candidate capture and
 A/B comparison.
 
+For local hang/debug sessions, turn on Preferences -> Advanced -> Diagnostics ->
+Hang diagnostics. If preferences are inaccessible, use the launch environment
+escape hatch before launching the app:
+
+```sh
+launchctl setenv LIQUIDBAR_DEV_DIAGNOSTICS 1
+./scripts/build_test_app.sh
+open "$HOME/Applications/LiquidBar Test.app"
+```
+
+Manual unified-log checks need `--info` to include the aggregate diagnostics:
+
+```sh
+log show --last 2m --info --predicate 'subsystem == "com.liquidbar" AND category == "perf"'
+```
+
+After the capture, clear it so normal app launches stay quiet:
+
+```sh
+launchctl unsetenv LIQUIDBAR_DEV_DIAGNOSTICS
+```
+
 ## Generated Files
 
 Generated projects, DerivedData, result bundles, app bundles, logs, and local
