@@ -797,6 +797,180 @@ struct NativeBarRendererSnapshotTests {
         try writeViewSnapshot(container, to: URL(fileURLWithPath: outputPath))
     }
 
+    @Test func systemIndicatorReadmeShowcaseCanBeExported() throws {
+        guard let outputPath = ProcessInfo.processInfo.environment["LIQUIDBAR_SYSTEM_INDICATOR_README_PATH"],
+              !outputPath.isEmpty else { return }
+
+        let rows: [(label: String, preset: SystemIndicatorChipPreset, appearance: SystemIndicatorAppearance)] = [
+            ("Compact Glass", .compact, .glass),
+            ("Compact Flat", .compact, .flat),
+            ("Compact Underline", .compact, .underline),
+            ("Dense Flat", .dense, .flat),
+            ("Dense Underline", .dense, .underline),
+            ("Dense Minimal", .dense, .minimal),
+            ("Micro Minimal", .micro, .minimal),
+        ]
+        let rowHeight: CGFloat = 36
+        let rowGap: CGFloat = 6
+        let labelWidth: CGFloat = 142
+        let barWidth: CGFloat = 430
+        let horizontalPadding: CGFloat = 14
+        let verticalPadding: CGFloat = 12
+        let displayScale: CGFloat = 2
+        let displayId = CGDirectDisplayID(91)
+
+        func makeConfig(
+            preset: SystemIndicatorChipPreset,
+            appearance: SystemIndicatorAppearance
+        ) -> Config {
+            var config = Config(
+                taskbarHeight: Int(rowHeight),
+                iconSize: 20,
+                itemSizing: .auto,
+                systemIndicatorRefreshIntervalMs: 250,
+                systemIndicatorThermalEnabled: true
+            )
+            config.systemIndicatorChipPreset = preset
+            config.systemIndicatorAppearance = appearance
+            config.systemIndicatorCpuVisualMode = .bar
+            config.systemIndicatorGpuVisualMode = .bar
+            config.systemIndicatorRamVisualMode = .bar
+            config.systemIndicatorThermalVisualMode = .bar
+            return config
+        }
+
+        let provider = SystemMetricsProvider()
+        let warmConfig = makeConfig(preset: .compact, appearance: .flat)
+        for _ in 0..<3 {
+            _ = provider.payload(config: warmConfig, now: CFAbsoluteTimeGetCurrent(), screenId: displayId)
+            Thread.sleep(forTimeInterval: 0.28)
+        }
+        let probePayload = provider.payload(config: warmConfig, now: CFAbsoluteTimeGetCurrent(), screenId: displayId, refresh: false)
+        let gpuItem = try #require(probePayload.items.first { $0.bundleId == "custom:text:system.gpu" })
+        #expect(!gpuItem.displayTitle(iconsOnly: false).contains("--"))
+
+        let contentWidth = labelWidth + barWidth
+        let contentHeight = CGFloat(rows.count) * rowHeight + CGFloat(rows.count - 1) * rowGap
+        let container = NSView(frame: NSRect(
+            x: 0,
+            y: 0,
+            width: contentWidth + horizontalPadding * 2,
+            height: contentHeight + verticalPadding * 2
+        ))
+        container.wantsLayer = true
+        container.layer?.backgroundColor = NSColor.clear.cgColor
+
+        for (offset, row) in rows.enumerated() {
+            let y = verticalPadding + CGFloat(rows.count - offset - 1) * (rowHeight + rowGap)
+            let rowBackground = NSView(frame: NSRect(
+                x: horizontalPadding,
+                y: y,
+                width: contentWidth,
+                height: rowHeight
+            ))
+            rowBackground.wantsLayer = true
+            rowBackground.layer?.backgroundColor = NSColor(srgbRed: 0.08, green: 0.09, blue: 0.11, alpha: 0.78).cgColor
+            rowBackground.layer?.cornerRadius = 10
+            container.addSubview(rowBackground)
+
+            let label = NSTextField(labelWithString: row.label)
+            label.frame = NSRect(x: horizontalPadding + 10, y: y + 9, width: labelWidth - 18, height: 17)
+            label.font = NSFont.systemFont(ofSize: 12, weight: .semibold)
+            label.textColor = NSColor.white.withAlphaComponent(0.82)
+            label.alignment = .right
+            container.addSubview(label)
+
+            let rowDisplayId = displayId + CGDirectDisplayID(offset)
+            let config = makeConfig(preset: row.preset, appearance: row.appearance)
+            let payload = provider.payload(
+                config: config,
+                now: CFAbsoluteTimeGetCurrent(),
+                screenId: rowDisplayId,
+                refresh: false
+            )
+
+            let renderer = NativeBarRenderer()
+            renderer.registerPanel(displayId: rowDisplayId, barWidth: Float(barWidth), barHeight: Float(rowHeight), scale: Float(displayScale))
+            let view = NativeBarView(frame: NSRect(
+                x: horizontalPadding + labelWidth,
+                y: y,
+                width: barWidth,
+                height: rowHeight
+            ))
+            view.configure(scale: displayScale)
+            renderer.updateItems(
+                payload.items,
+                config: config,
+                iconCache: IconCache(),
+                displayId: rowDisplayId,
+                systemIndicatorVisuals: payload.visuals
+            )
+            if let snapshot = renderer.snapshot(displayId: rowDisplayId) {
+                view.applySnapshot(snapshot, fontSize: CGFloat(config.fontSize), barHeight: rowHeight)
+            }
+            container.addSubview(view)
+            view.displayIfNeeded()
+            renderer.shutdown()
+        }
+
+        container.displayIfNeeded()
+        try writeViewSnapshot(container, to: URL(fileURLWithPath: outputPath))
+    }
+
+    @Test func systemIndicatorSingleRowReadmeShowcaseCanBeExported() throws {
+        guard let outputPath = ProcessInfo.processInfo.environment["LIQUIDBAR_SYSTEM_INDICATOR_SINGLE_ROW_PATH"],
+              !outputPath.isEmpty else { return }
+
+        let barWidth: CGFloat = 620
+        let barHeight: CGFloat = 40
+        let displayId = CGDirectDisplayID(109)
+        var config = Config(
+            taskbarHeight: Int(barHeight),
+            iconSize: 20,
+            itemSizing: .auto,
+            systemIndicatorRefreshIntervalMs: 250,
+            systemIndicatorThermalEnabled: true
+        )
+        config.systemIndicatorChipPreset = .compact
+        config.systemIndicatorAppearance = .flat
+        config.systemIndicatorCpuVisualMode = .bar
+        config.systemIndicatorGpuVisualMode = .bar
+        config.systemIndicatorRamVisualMode = .bar
+        config.systemIndicatorThermalVisualMode = .bar
+
+        let provider = SystemMetricsProvider()
+        _ = provider.payload(config: config, now: CFAbsoluteTimeGetCurrent(), screenId: displayId)
+        Thread.sleep(forTimeInterval: 0.35)
+        let payload = provider.payload(config: config, now: CFAbsoluteTimeGetCurrent(), screenId: displayId)
+        let gpuItem = try #require(payload.items.first { $0.bundleId == "custom:text:system.gpu" })
+        #expect(!gpuItem.displayTitle(iconsOnly: false).contains("--"))
+
+        let renderer = NativeBarRenderer()
+        renderer.registerPanel(displayId: displayId, barWidth: Float(barWidth), barHeight: Float(barHeight), scale: 2)
+        let view = NativeBarView(frame: NSRect(x: 0, y: 0, width: barWidth, height: barHeight))
+        view.configure(scale: 2)
+        renderer.updateItems(
+            payload.items,
+            config: config,
+            iconCache: IconCache(),
+            displayId: displayId,
+            systemIndicatorVisuals: payload.visuals
+        )
+        if let snapshot = renderer.snapshot(displayId: displayId) {
+            view.applySnapshot(snapshot, fontSize: CGFloat(config.fontSize), barHeight: barHeight)
+        }
+
+        let container = NSView(frame: NSRect(x: 0, y: 0, width: barWidth, height: barHeight))
+        container.wantsLayer = true
+        container.layer?.backgroundColor = NSColor.clear.cgColor
+        container.addSubview(view)
+        view.displayIfNeeded()
+        container.displayIfNeeded()
+
+        try writeViewSnapshot(container, to: URL(fileURLWithPath: outputPath))
+        renderer.shutdown()
+    }
+
     private func systemIndicatorFixtureText(
         metric: SystemIndicatorMetric,
         preset: SystemIndicatorChipPreset,
