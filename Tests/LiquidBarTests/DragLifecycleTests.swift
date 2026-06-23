@@ -246,6 +246,60 @@ struct DragLifecycleTests {
         }
     }
 
+    @Test func rightCornerSystemIndicatorsStayPinnedDuringWindowDrag() throws {
+        let renderer = NativeBarRenderer()
+        renderer.registerPanel(displayId: 1, barWidth: 520, barHeight: 32, scale: 2)
+
+        let items: [TaskbarItem] = [
+            .window(id: WindowId(1), bundleId: "com.app.one", title: "One window", appName: "One", isHidden: false, isMinimized: false, screenId: 1),
+            .window(id: WindowId(2), bundleId: "com.app.two", title: "Two window", appName: "Two", isHidden: false, isMinimized: false, screenId: 1),
+            .customText(id: "system.cpu", text: "CPU 55%", screenId: nil),
+            .customText(id: "system.ram", text: "RAM 74%", screenId: nil),
+        ]
+        var config = Config(iconSize: 20, iconsOnly: false, itemSizing: .auto)
+        config.systemIndicatorPlacement = .rightCorner
+
+        renderer.updateItems(
+            items,
+            config: config,
+            iconCache: IconCache(),
+            displayId: 1,
+            systemIndicatorVisuals: [
+                "system.cpu": systemVisual(metric: .cpu, mode: .bar, valueText: "55%", value: 55, history: []),
+                "system.ram": systemVisual(metric: .ram, mode: .bar, valueText: "74%", value: 74, history: []),
+            ]
+        )
+
+        let before = try #require(renderer.snapshot(displayId: 1))
+        let cpuRect = before.items[2].rect
+        let ramRect = before.items[3].rect
+
+        renderer.startDrag(
+            sourceIndex: 0,
+            cursorX: Float(before.visualRects[0].midX),
+            cursorOffsetInItem: Float(before.visualRects[0].width / 2),
+            config: config,
+            displayId: 1
+        )
+        renderer.updateDragCursor(
+            cursorX: Float(cpuRect.midX),
+            insertionIndex: 3,
+            displayId: 1
+        )
+
+        let targets = renderer.debugDragSpringTargets(displayId: 1)
+        #expect(abs(targets[2] - Float(cpuRect.minX)) < 0.5)
+        #expect(abs(targets[3] - Float(ramRect.minX)) < 0.5)
+
+        let during = try #require(renderer.snapshot(displayId: 1))
+        #expect(abs(during.items[2].rect.minX - cpuRect.minX) < 0.001)
+        #expect(abs(during.items[3].rect.minX - ramRect.minX) < 0.001)
+        #expect(during.items[2].alpha == 1.0)
+        #expect(during.items[3].alpha == 1.0)
+
+        renderer.shutdown()
+    }
+
     // MARK: - Tick and Rebuild
 
     @Test func testTickWithNoDragReturnsFalse() throws {

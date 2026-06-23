@@ -763,8 +763,9 @@ final class NativeBarRenderer {
             return
         }
         let visualDepth = panelConfigs[displayId]?.visualDepth ?? .balanced
+        let participants = Set(dragParticipantIndices(layouts: layouts, sourceIndex: anim.sourceIndex, displayId: displayId))
 
-        for index in presentations.indices where index != anim.sourceIndex {
+        for index in presentations.indices where index != anim.sourceIndex && participants.contains(index) {
             let dx = CGFloat(anim.springs[index].current - layouts[index].x)
             presentations[index].rect.origin.x += dx
             presentations[index].iconRect.origin.x += dx
@@ -1256,12 +1257,20 @@ final class NativeBarRenderer {
         layouts: [(x: Float, width: Float)],
         displayId: CGDirectDisplayID
     ) {
-        let nonSource = layouts.indices.filter { $0 != anim.sourceIndex }
-        let insert = anim.insertionIndex <= anim.sourceIndex
-            ? min(max(anim.insertionIndex, 0), nonSource.count)
-            : min(max(anim.insertionIndex - 1, 0), nonSource.count)
+        let participants = dragParticipantIndices(layouts: layouts, sourceIndex: anim.sourceIndex, displayId: displayId)
+        let participantSet = Set(participants)
+        let nonSource = participants.filter { $0 != anim.sourceIndex }
+        let insert = dragInsertionSlot(
+            participants: participants,
+            sourceIndex: anim.sourceIndex,
+            insertionIndex: anim.insertionIndex
+        )
         var sequence = nonSource.map { DragLayoutElement.item($0) }
         sequence.insert(.gap, at: insert)
+
+        for index in layouts.indices where !participantSet.contains(index) {
+            anim.springs[index].target = layouts[index].x
+        }
 
         let items = panelItems[displayId] ?? []
         let config = panelConfigs[displayId] ?? Config()
@@ -1297,11 +1306,19 @@ final class NativeBarRenderer {
         layouts: [(x: Float, width: Float)],
         displayId: CGDirectDisplayID
     ) {
-        var finalOrder = layouts.indices.filter { $0 != anim.sourceIndex }
-        let insert = anim.insertionIndex <= anim.sourceIndex
-            ? min(anim.insertionIndex, finalOrder.count)
-            : min(anim.insertionIndex - 1, finalOrder.count)
+        let participants = dragParticipantIndices(layouts: layouts, sourceIndex: anim.sourceIndex, displayId: displayId)
+        let participantSet = Set(participants)
+        var finalOrder = participants.filter { $0 != anim.sourceIndex }
+        let insert = dragInsertionSlot(
+            participants: participants,
+            sourceIndex: anim.sourceIndex,
+            insertionIndex: anim.insertionIndex
+        )
         finalOrder.insert(anim.sourceIndex, at: max(0, insert))
+
+        for index in layouts.indices where !participantSet.contains(index) {
+            anim.springs[index].target = layouts[index].x
+        }
 
         let items = panelItems[displayId] ?? []
         let config = panelConfigs[displayId] ?? Config()
@@ -1321,6 +1338,45 @@ final class NativeBarRenderer {
             anim.springs[itemIdx].target = x
             x += layouts[itemIdx].width
         }
+    }
+
+    private func dragParticipantIndices(
+        layouts: [(x: Float, width: Float)],
+        sourceIndex: Int,
+        displayId: CGDirectDisplayID
+    ) -> [Int] {
+        let allIndices = Array(layouts.indices)
+        let indicatorIndices = cornerAffixedSystemIndicatorIndices(displayId: displayId)
+        guard !indicatorIndices.isEmpty else { return allIndices }
+
+        if indicatorIndices.contains(sourceIndex) {
+            return allIndices.filter { indicatorIndices.contains($0) }
+        }
+        return allIndices.filter { !indicatorIndices.contains($0) }
+    }
+
+    private func dragInsertionSlot(
+        participants: [Int],
+        sourceIndex: Int,
+        insertionIndex: Int
+    ) -> Int {
+        guard let sourceSlot = participants.firstIndex(of: sourceIndex) else { return 0 }
+        let slot = participants.filter { $0 < insertionIndex }.count
+        let boundedSlot = min(max(slot, 0), participants.count)
+        let adjusted = boundedSlot <= sourceSlot ? boundedSlot : boundedSlot - 1
+        return min(max(adjusted, 0), max(0, participants.count - 1))
+    }
+
+    private func cornerAffixedSystemIndicatorIndices(displayId: CGDirectDisplayID) -> Set<Int> {
+        guard let config = panelConfigs[displayId],
+              config.taskbarPosition.isHorizontal,
+              config.systemIndicatorPlacement == .leftCorner || config.systemIndicatorPlacement == .rightCorner else {
+            return []
+        }
+
+        let items = panelItems[displayId] ?? []
+        let systemIndicatorVisuals = systemIndicatorVisualsByDisplay[displayId] ?? [:]
+        return Set(items.indices.filter { isSystemIndicatorItem(items[$0], visuals: systemIndicatorVisuals) })
     }
 
     private func spacingBetweenDragElements(
