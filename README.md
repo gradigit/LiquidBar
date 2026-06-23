@@ -28,6 +28,8 @@ LiquidBar is for users who want:
 
 ### Cmd-Tab, But For Windows
 
+![LiquidBar Cmd-Tab switcher animation](Assets/Screenshots/cmd-tab-switcher.gif)
+
 LiquidBar turns Cmd-Tab into a real window switcher: large thumbnails, MRU
 back-and-forth behavior, Cmd-Shift-Tab reverse traversal, click-to-select, and
 aspect-aware cards for wide, square, and portrait windows.
@@ -39,12 +41,6 @@ aspect-aware cards for wide, square, and portrait windows.
 LiquidBar supports labeled windows, icon-only mode, app grouping, pinned apps,
 custom items, launcher/search entries, and per-display panels. The v1 default
 is an icon-first 32 px bottom bar with Liquid Glass styling.
-
-### Hover To Pick The Exact Window
-
-Grouped apps expose thumbnail previews so you can pick the exact window before
-switching. Portrait and wide windows keep their shape instead of being forced
-into one generic tile size.
 
 ### System Indicators
 
