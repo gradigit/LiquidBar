@@ -7,15 +7,15 @@
 **An open-source Liquid Glass taskbar and Cmd-Tab window switcher for macOS.**
 
 LiquidBar gives Mac power users the window control they keep missing: a real
-taskbar, large window thumbnails, Windows-style switching, system indicators,
-and deep configuration without replacing the desktop shell.
+taskbar, large window thumbnails, Windows Alt-Tab style switching, system
+indicators, and deep configuration without taking over macOS.
 
 ## Open By Design
 
 Many macOS taskbar utilities are closed source while asking for Accessibility,
 Screen Recording, or Input Monitoring permissions. LiquidBar takes the opposite
 approach: the code is inspectable, the release path is documented, and the
-permission-sensitive pieces are isolated enough to review, build, and disable.
+permission-sensitive pieces are kept small enough to review, build, and disable.
 
 LiquidBar is for users who want:
 
@@ -28,11 +28,11 @@ LiquidBar is for users who want:
 
 ## Highlights
 
-### Cmd-Tab, But For Windows
+### Cmd-Tab, But Window-First
 
 ![LiquidBar Cmd-Tab switcher animation](Assets/Screenshots/cmd-tab-switcher.gif)
 
-LiquidBar turns Cmd-Tab into a real window switcher: large thumbnails, MRU
+LiquidBar turns Cmd-Tab into a window switcher: large thumbnails, MRU
 back-and-forth behavior, Cmd-Shift-Tab reverse traversal, click-to-select, and
 aspect-aware cards for wide, square, and portrait windows.
 
@@ -43,6 +43,14 @@ aspect-aware cards for wide, square, and portrait windows.
 LiquidBar supports labeled windows, icon-only mode, app grouping, pinned apps,
 custom items, launcher/search entries, and per-display panels. The v1 default
 is an icon-first 32 px bottom bar with Liquid Glass styling.
+
+### Right-Click Controls
+
+<img src="Assets/Screenshots/taskbar-context-menu.png" alt="LiquidBar taskbar right-click menu" width="260">
+
+Right-click a window to rename it, apply a color, close it, pin it, hide it
+from the bar, reload config, or open preferences. Window actions stay at the
+top; app controls stay at the bottom.
 
 ### System Indicators
 
@@ -66,6 +74,8 @@ multi-monitor behavior, language, previews, permissions, diagnostics, and plugin
   Core Animation rendering rather than a permanent full-surface render loop.
 - **Window control:** focus, hide, minimize, close, cycle, group, and show
   hidden/minimized windows from the bar.
+- **Context menus:** right-click taskbar items for focused window actions,
+  pinning, hiding, config reload, preferences, and quit.
 - **Keyboard switcher:** Cmd-Tab by default, Cmd-Shift-Tab for reverse
   traversal, click-to-select thumbnails, all-display scope, and MRU-style
   back-and-forth switching.
@@ -112,10 +122,10 @@ experience uses macOS privacy permissions:
 - **Automation** may appear for optional provider/media-control actions that
   control another app.
 
-Other system-facing features are narrower: update checks read GitHub release
-metadata from the canonical `gradigit/LiquidBar` repository, Launch at Login
-uses a user-visible LaunchAgent, and Dock auto-hide changes the standard macOS
-Dock preference only when that setting is enabled.
+Other system-facing features are narrower in scope: update checks read GitHub
+release metadata from the canonical `gradigit/LiquidBar` repository, Launch at
+Login uses a user-visible LaunchAgent, and Dock auto-hide changes the standard
+macOS Dock preference only when that setting is enabled.
 
 These permissions are powerful. The advantage here is that LiquidBar is open
 source: you can inspect the code, build the app yourself, verify the release
@@ -145,8 +155,8 @@ LIQUIDBAR_CREATE_DMG=1 LIQUIDBAR_CREATE_ZIP=0 ./scripts/build_release_app.sh
 open build/release/LiquidBar.app
 ```
 
-The release builder can produce `build/release/LiquidBar-1.0.0.dmg` and
-ad-hoc signs by default. Early GitHub binaries may be published this way when
+The release builder can produce `build/release/LiquidBar-1.0.0.dmg` and applies
+ad-hoc signing by default. Early GitHub binaries may be published this way when
 they are clearly labeled as unsigned/ad-hoc; macOS Gatekeeper will warn until
 Developer ID signing and notarization are added. See `docs/RELEASE.md`.
 
@@ -174,7 +184,7 @@ swift run LiquidBar -- --print-default-config
 swift run LiquidBar -- --write-default-config
 ```
 
-The v1 default config enables the icon-first taskbar, right-pinned system
+The v1 default config enables the icon-first taskbar, right-aligned system
 indicators, Cmd-Tab switcher, all-display switcher scope, and Liquid Glass
 styling. Developer performance logging is disabled by default.
 
@@ -215,10 +225,10 @@ and notarized assets when available; unsigned/ad-hoc assets must be labeled.
 
 ## Status
 
-LiquidBar v1 is the first public release line. The initial binary may be
-ad-hoc signed and labeled as unsigned while Developer ID notarization remains
-pending. Sidebar mode and provider plugins remain experimental and are not part
-of the primary v1 showcase until their UX is release-grade.
+LiquidBar v1 is the first public release line. Initial binaries may be ad-hoc
+signed and clearly labeled unsigned/ad-hoc while Developer ID notarization
+remains pending. Sidebar mode and provider plugins remain experimental and are
+not part of the primary v1 showcase until their UX is release-grade.
 
 ## License
 
