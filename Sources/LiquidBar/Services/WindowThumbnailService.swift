@@ -561,35 +561,35 @@ final class WindowThumbnailService {
         // Note: macOS typically does not list an app in Screen Recording privacy settings
         // until it has attempted to request access. We only request when the user has
         // explicitly enabled previews (this codepath).
-        if !CGPreflightScreenCaptureAccess() {
+        let screenRecordingMissingAtStart = !CGPreflightScreenCaptureAccess()
+        if screenRecordingMissingAtStart {
             if !didLogScreenRecordingMissing {
                 Log.event.warning("Screen Recording permission missing; window previews will be blank until enabled in System Settings -> Privacy & Security -> Screen Recording.")
                 didLogScreenRecordingMissing = true
             }
 
-            // Trigger the system prompt once per launch (unless disabled). This makes the
-            // app appear in the Screen Recording permission list so the user can toggle it.
             let env = ProcessInfo.processInfo.environment
-            let isUITestMode = env["LIQUIDBAR_TEST_CONTROL"] == "1"
-            if !isUITestMode,
-               !didRequestScreenRecordingAccess,
-               env["LIQUIDBAR_DISABLE_SCREEN_RECORDING_PROMPT"] != "1" {
+            guard Self.shouldAttemptScreenCapturePermissionFlow(environment: env) else {
+                recordThumbnailCaptureEvent(
+                    request: request,
+                    outcome: "screen_recording_missing",
+                    queuedAt: queuedAt,
+                    captureStart: captureStart,
+                    image: nil,
+                    success: false
+                )
+                completeCapture(request: request, image: nil)
+                return
+            }
+
+            // Trigger the system prompt once per launch and continue into ScreenCaptureKit.
+            // SCShareableContent can also cause macOS to list the app for approval.
+            if !didRequestScreenRecordingAccess {
                 didRequestScreenRecordingAccess = true
                 Task { @MainActor in
                     _ = CGRequestScreenCaptureAccess()
                 }
             }
-
-            recordThumbnailCaptureEvent(
-                request: request,
-                outcome: "screen_recording_missing",
-                queuedAt: queuedAt,
-                captureStart: captureStart,
-                image: nil,
-                success: false
-            )
-            completeCapture(request: request, image: nil)
-            return
         }
 
         resolveSCWindow(windowId: request.windowId) { [weak self] scWindow in
@@ -597,7 +597,7 @@ final class WindowThumbnailService {
             guard let scWindow else {
                 self.recordThumbnailCaptureEvent(
                     request: request,
-                    outcome: "window_missing",
+                    outcome: screenRecordingMissingAtStart ? "screen_recording_missing" : "window_missing",
                     queuedAt: queuedAt,
                     captureStart: captureStart,
                     image: nil,
@@ -681,6 +681,13 @@ final class WindowThumbnailService {
                 }
             }
         }
+    }
+
+    nonisolated static func shouldAttemptScreenCapturePermissionFlow(
+        environment: [String: String] = ProcessInfo.processInfo.environment
+    ) -> Bool {
+        environment["LIQUIDBAR_TEST_CONTROL"] != "1" &&
+        environment["LIQUIDBAR_DISABLE_SCREEN_RECORDING_PROMPT"] != "1"
     }
 
     private func completeCapture(request: CaptureRequest, image: NSImage?) {

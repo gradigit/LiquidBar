@@ -16,6 +16,10 @@ targets:
     platform: macOS
     sources:
       - path: Sources/LiquidBar
+        excludes:
+          - Resources/**
+      - path: Sources/LiquidBar/Resources
+        buildPhase: resources
       - path: Assets/AppIcon/LiquidBar.icns
         buildPhase: resources
       - path: Assets/MenuBar/liquidbar-menubar-template.png
@@ -28,6 +32,7 @@ targets:
         GENERATE_INFOPLIST_FILE: YES
         INFOPLIST_KEY_CFBundleDisplayName: LiquidBar
         INFOPLIST_KEY_CFBundleIconFile: LiquidBar
+        INFOPLIST_KEY_NSScreenCaptureUsageDescription: LiquidBar uses Screen Recording permission to capture static window thumbnails for taskbar previews and the window switcher.
         ENABLE_TESTABILITY: true
 
   LiquidBarFixture:

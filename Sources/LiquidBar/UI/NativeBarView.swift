@@ -1001,19 +1001,19 @@ final class NativeBarView: NSView {
         switch item {
         case .customSpacer(let id, _, _):
             if userCustomItemIds.contains(id) {
-                let edit = NSMenuItem(title: "Edit Spacer…", action: #selector(contextEditCustomItem(_:)), keyEquivalent: "")
+                let edit = NSMenuItem(title: L10n.tr("Edit Spacer…"), action: #selector(contextEditCustomItem(_:)), keyEquivalent: "")
                 edit.target = self
                 edit.tag = index
                 edit.representedObject = id
                 menu.addItem(edit)
 
-                let delete = NSMenuItem(title: "Delete Spacer", action: #selector(contextDeleteCustomItem(_:)), keyEquivalent: "")
+                let delete = NSMenuItem(title: L10n.tr("Delete Spacer"), action: #selector(contextDeleteCustomItem(_:)), keyEquivalent: "")
                 delete.target = self
                 delete.tag = index
                 delete.representedObject = id
                 menu.addItem(delete)
             } else {
-                let info = NSMenuItem(title: "Provided by plugin", action: nil, keyEquivalent: "")
+                let info = NSMenuItem(title: L10n.tr("Provided by plugin"), action: nil, keyEquivalent: "")
                 info.isEnabled = false
                 menu.addItem(info)
             }
@@ -1022,19 +1022,19 @@ final class NativeBarView: NSView {
 
         case .customText(let id, _, _):
             if userCustomItemIds.contains(id) {
-                let edit = NSMenuItem(title: "Edit Label…", action: #selector(contextEditCustomItem(_:)), keyEquivalent: "")
+                let edit = NSMenuItem(title: L10n.tr("Edit Label…"), action: #selector(contextEditCustomItem(_:)), keyEquivalent: "")
                 edit.target = self
                 edit.tag = index
                 edit.representedObject = id
                 menu.addItem(edit)
 
-                let delete = NSMenuItem(title: "Delete Label", action: #selector(contextDeleteCustomItem(_:)), keyEquivalent: "")
+                let delete = NSMenuItem(title: L10n.tr("Delete Label"), action: #selector(contextDeleteCustomItem(_:)), keyEquivalent: "")
                 delete.target = self
                 delete.tag = index
                 delete.representedObject = id
                 menu.addItem(delete)
             } else {
-                let info = NSMenuItem(title: "Provided by plugin", action: nil, keyEquivalent: "")
+                let info = NSMenuItem(title: L10n.tr("Provided by plugin"), action: nil, keyEquivalent: "")
                 info.isEnabled = false
                 menu.addItem(info)
             }
@@ -1042,7 +1042,7 @@ final class NativeBarView: NSView {
             return menu
 
         case .customLink(let id, _, _, _, _):
-            let open = NSMenuItem(title: "Open Link", action: #selector(contextOpenCustomItem(_:)), keyEquivalent: "")
+            let open = NSMenuItem(title: L10n.tr("Open Link"), action: #selector(contextOpenCustomItem(_:)), keyEquivalent: "")
             open.target = self
             open.tag = index
             open.representedObject = id
@@ -1051,20 +1051,20 @@ final class NativeBarView: NSView {
             if userCustomItemIds.contains(id) {
                 menu.addItem(.separator())
 
-                let edit = NSMenuItem(title: "Edit Link…", action: #selector(contextEditCustomItem(_:)), keyEquivalent: "")
+                let edit = NSMenuItem(title: L10n.tr("Edit Link…"), action: #selector(contextEditCustomItem(_:)), keyEquivalent: "")
                 edit.target = self
                 edit.tag = index
                 edit.representedObject = id
                 menu.addItem(edit)
 
-                let delete = NSMenuItem(title: "Delete Link", action: #selector(contextDeleteCustomItem(_:)), keyEquivalent: "")
+                let delete = NSMenuItem(title: L10n.tr("Delete Link"), action: #selector(contextDeleteCustomItem(_:)), keyEquivalent: "")
                 delete.target = self
                 delete.tag = index
                 delete.representedObject = id
                 menu.addItem(delete)
             } else {
                 menu.addItem(.separator())
-                let info = NSMenuItem(title: "Provided by plugin", action: nil, keyEquivalent: "")
+                let info = NSMenuItem(title: L10n.tr("Provided by plugin"), action: nil, keyEquivalent: "")
                 info.isEnabled = false
                 menu.addItem(info)
             }
@@ -1072,7 +1072,7 @@ final class NativeBarView: NSView {
             return menu
 
         case .customFolder(let id, _, _, _, _):
-            let open = NSMenuItem(title: "Open Folder", action: #selector(contextOpenCustomItem(_:)), keyEquivalent: "")
+            let open = NSMenuItem(title: L10n.tr("Open Folder"), action: #selector(contextOpenCustomItem(_:)), keyEquivalent: "")
             open.target = self
             open.tag = index
             open.representedObject = id
@@ -1081,20 +1081,20 @@ final class NativeBarView: NSView {
             if userCustomItemIds.contains(id) {
                 menu.addItem(.separator())
 
-                let edit = NSMenuItem(title: "Edit Folder…", action: #selector(contextEditCustomItem(_:)), keyEquivalent: "")
+                let edit = NSMenuItem(title: L10n.tr("Edit Folder…"), action: #selector(contextEditCustomItem(_:)), keyEquivalent: "")
                 edit.target = self
                 edit.tag = index
                 edit.representedObject = id
                 menu.addItem(edit)
 
-                let delete = NSMenuItem(title: "Delete Folder", action: #selector(contextDeleteCustomItem(_:)), keyEquivalent: "")
+                let delete = NSMenuItem(title: L10n.tr("Delete Folder"), action: #selector(contextDeleteCustomItem(_:)), keyEquivalent: "")
                 delete.target = self
                 delete.tag = index
                 delete.representedObject = id
                 menu.addItem(delete)
             } else {
                 menu.addItem(.separator())
-                let info = NSMenuItem(title: "Provided by plugin", action: nil, keyEquivalent: "")
+                let info = NSMenuItem(title: L10n.tr("Provided by plugin"), action: nil, keyEquivalent: "")
                 info.isEnabled = false
                 menu.addItem(info)
             }
@@ -1102,21 +1102,21 @@ final class NativeBarView: NSView {
             return menu
 
         case .tabGroup(let groupId, _, _, _, _, _, _, _):
-            let rename = NSMenuItem(title: "Rename Tab Group…", action: #selector(contextRenameTabGroup(_:)), keyEquivalent: "")
+            let rename = NSMenuItem(title: L10n.tr("Rename Tab Group…"), action: #selector(contextRenameTabGroup(_:)), keyEquivalent: "")
             rename.target = self
             rename.tag = index
             rename.representedObject = groupId
             menu.addItem(rename)
 
             menu.addItem(makeColorMenu(
-                title: "Color Tab Group",
+                title: L10n.tr("Color Tab Group"),
                 index: index,
                 setAction: #selector(contextSetTabGroupColor(_:)),
-                resetTitle: "Clear Tab Group Color",
+                resetTitle: L10n.tr("Clear Tab Group Color"),
                 resetAction: #selector(contextSetTabGroupColor(_:))
             ))
 
-            let delete = NSMenuItem(title: "Delete Tab Group", action: #selector(contextDeleteTabGroup(_:)), keyEquivalent: "")
+            let delete = NSMenuItem(title: L10n.tr("Delete Tab Group"), action: #selector(contextDeleteTabGroup(_:)), keyEquivalent: "")
             delete.target = self
             delete.tag = index
             delete.representedObject = groupId
@@ -1132,27 +1132,27 @@ final class NativeBarView: NSView {
             return makeAppContextMenu()
 
         case .window(let id, _, _, _, _, _, _):
-            let rename = NSMenuItem(title: "Rename Window…", action: #selector(contextRenameWindow(_:)), keyEquivalent: "")
+            let rename = NSMenuItem(title: L10n.tr("Rename Window…"), action: #selector(contextRenameWindow(_:)), keyEquivalent: "")
             rename.target = self
             rename.tag = index
             menu.addItem(rename)
 
             menu.addItem(makeColorMenu(
-                title: "Color Window",
+                title: L10n.tr("Color Window"),
                 index: index,
                 setAction: #selector(contextSetWindowColor(_:)),
-                resetTitle: "Clear Window Color",
+                resetTitle: L10n.tr("Clear Window Color"),
                 resetAction: #selector(contextResetWindowColor(_:))
             ))
 
-            let resetTitle = NSMenuItem(title: "Reset Window Title", action: #selector(contextResetWindowTitle(_:)), keyEquivalent: "")
+            let resetTitle = NSMenuItem(title: L10n.tr("Reset Window Title"), action: #selector(contextResetWindowTitle(_:)), keyEquivalent: "")
             resetTitle.target = self
             resetTitle.tag = index
             menu.addItem(resetTitle)
 
             menu.addItem(.separator())
 
-            let closeItem = NSMenuItem(title: "Close Window", action: #selector(contextClose(_:)), keyEquivalent: "")
+            let closeItem = NSMenuItem(title: L10n.tr("Close Window"), action: #selector(contextClose(_:)), keyEquivalent: "")
             closeItem.target = self
             closeItem.tag = index
             menu.addItem(closeItem)
@@ -1168,18 +1168,18 @@ final class NativeBarView: NSView {
             }
 
             if isPinned {
-                let unpinItem = NSMenuItem(title: "Unpin from Taskbar", action: #selector(contextUnpin(_:)), keyEquivalent: "")
+                let unpinItem = NSMenuItem(title: L10n.tr("Unpin from Taskbar"), action: #selector(contextUnpin(_:)), keyEquivalent: "")
                 unpinItem.target = self
                 unpinItem.tag = index
                 menu.addItem(unpinItem)
             } else {
-                let pinItem = NSMenuItem(title: "Pin to Taskbar", action: #selector(contextPin(_:)), keyEquivalent: "")
+                let pinItem = NSMenuItem(title: L10n.tr("Pin to Taskbar"), action: #selector(contextPin(_:)), keyEquivalent: "")
                 pinItem.target = self
                 pinItem.tag = index
                 menu.addItem(pinItem)
             }
 
-            let hideItem = NSMenuItem(title: "Hide from Taskbar", action: #selector(contextBlacklist(_:)), keyEquivalent: "")
+            let hideItem = NSMenuItem(title: L10n.tr("Hide from Taskbar"), action: #selector(contextBlacklist(_:)), keyEquivalent: "")
             hideItem.target = self
             hideItem.tag = index
             menu.addItem(hideItem)
@@ -1187,13 +1187,13 @@ final class NativeBarView: NSView {
             if windowTabGroupsEnabled {
                 menu.addItem(.separator())
 
-                let createGroup = NSMenuItem(title: "Create Tab Group…", action: #selector(contextCreateTabGroup(_:)), keyEquivalent: "")
+                let createGroup = NSMenuItem(title: L10n.tr("Create Tab Group…"), action: #selector(contextCreateTabGroup(_:)), keyEquivalent: "")
                 createGroup.target = self
                 createGroup.tag = index
                 menu.addItem(createGroup)
 
                 if let existingGroupId = windowIdToTabGroupId[id.raw] {
-                    let remove = NSMenuItem(title: "Remove from Tab Group", action: #selector(contextRemoveFromTabGroup(_:)), keyEquivalent: "")
+                    let remove = NSMenuItem(title: L10n.tr("Remove from Tab Group"), action: #selector(contextRemoveFromTabGroup(_:)), keyEquivalent: "")
                     remove.target = self
                     remove.tag = index
                     remove.representedObject = existingGroupId
@@ -1201,7 +1201,7 @@ final class NativeBarView: NSView {
                 }
 
                 if !tabGroups.isEmpty {
-                    let addItem = NSMenuItem(title: "Add to Tab Group", action: nil, keyEquivalent: "")
+                    let addItem = NSMenuItem(title: L10n.tr("Add to Tab Group"), action: nil, keyEquivalent: "")
                     let addSub = NSMenu()
                     for group in tabGroups {
                         let titlePrefix = (group.emoji?.isEmpty == false) ? "\(group.emoji!) " : ""
@@ -1233,18 +1233,18 @@ final class NativeBarView: NSView {
         }
 
         if isPinned {
-            let unpinItem = NSMenuItem(title: "Unpin from Taskbar", action: #selector(contextUnpin(_:)), keyEquivalent: "")
+            let unpinItem = NSMenuItem(title: L10n.tr("Unpin from Taskbar"), action: #selector(contextUnpin(_:)), keyEquivalent: "")
             unpinItem.target = self
             unpinItem.tag = index
             menu.addItem(unpinItem)
         } else {
-            let pinItem = NSMenuItem(title: "Pin to Taskbar", action: #selector(contextPin(_:)), keyEquivalent: "")
+            let pinItem = NSMenuItem(title: L10n.tr("Pin to Taskbar"), action: #selector(contextPin(_:)), keyEquivalent: "")
             pinItem.target = self
             pinItem.tag = index
             menu.addItem(pinItem)
         }
 
-        let hideItem = NSMenuItem(title: "Hide from Taskbar", action: #selector(contextBlacklist(_:)), keyEquivalent: "")
+        let hideItem = NSMenuItem(title: L10n.tr("Hide from Taskbar"), action: #selector(contextBlacklist(_:)), keyEquivalent: "")
         hideItem.target = self
         hideItem.tag = index
         menu.addItem(hideItem)
@@ -1263,7 +1263,7 @@ final class NativeBarView: NSView {
         let colorItem = NSMenuItem(title: title, action: nil, keyEquivalent: "")
         let submenu = NSMenu()
         for entry in PresentationColorPalette.entries {
-            let item = NSMenuItem(title: entry.name, action: setAction, keyEquivalent: "")
+            let item = NSMenuItem(title: L10n.tr(entry.name), action: setAction, keyEquivalent: "")
             item.target = self
             item.tag = index
             item.representedObject = entry.hex
@@ -1289,18 +1289,18 @@ final class NativeBarView: NSView {
             menu.addItem(.separator())
         }
 
-        let preferences = NSMenuItem(title: "Preferences\u{2026}", action: #selector(contextOpenPreferences(_:)), keyEquivalent: ",")
+        let preferences = NSMenuItem(title: L10n.tr("Preferences…"), action: #selector(contextOpenPreferences(_:)), keyEquivalent: ",")
         preferences.target = self
         preferences.keyEquivalentModifierMask = .command
         menu.addItem(preferences)
 
-        let reload = NSMenuItem(title: "Reload config.json", action: #selector(contextReloadConfig(_:)), keyEquivalent: "")
+        let reload = NSMenuItem(title: L10n.tr("Reload config.json"), action: #selector(contextReloadConfig(_:)), keyEquivalent: "")
         reload.target = self
         menu.addItem(reload)
 
         menu.addItem(.separator())
 
-        let quit = NSMenuItem(title: "Quit LiquidBar", action: #selector(contextQuit(_:)), keyEquivalent: "q")
+        let quit = NSMenuItem(title: L10n.tr("Quit LiquidBar"), action: #selector(contextQuit(_:)), keyEquivalent: "q")
         quit.target = self
         quit.keyEquivalentModifierMask = .command
         menu.addItem(quit)

@@ -21,10 +21,10 @@ struct ProviderPanelState: Codable, Sendable, Equatable {
     var health: ProviderHealth
     var actions: [ProviderActionDescriptor]
 
-    static func disconnected(title: String, subtitle: String = "Provider unavailable") -> ProviderPanelState {
+    static func disconnected(title: String, subtitle: String? = nil) -> ProviderPanelState {
         ProviderPanelState(
             title: title,
-            subtitle: subtitle,
+            subtitle: subtitle ?? L10n.tr("Provider unavailable"),
             progressCurrent: nil,
             progressTotal: nil,
             health: .disconnected,
@@ -164,11 +164,11 @@ actor ProviderRuntime {
         fallbackTitle: String
     ) async -> ProviderPanelState {
         guard let provider = providers[providerId] else {
-            return .disconnected(title: fallbackTitle, subtitle: "Provider not found")
+            return .disconnected(title: fallbackTitle, subtitle: L10n.tr("Provider not found"))
         }
 
         if (failureCounts[providerId] ?? 0) >= circuitBreakerThreshold {
-            return .disconnected(title: fallbackTitle, subtitle: "Provider circuit open")
+            return .disconnected(title: fallbackTitle, subtitle: L10n.tr("Provider circuit open"))
         }
 
         do {
@@ -192,7 +192,7 @@ actor ProviderRuntime {
         } catch {
             failureCounts[providerId, default: 0] += 1
             Log.plugins.warning("Provider fetch failed id=\(providerId, privacy: .public): \(error.localizedDescription, privacy: .public)")
-            return .disconnected(title: fallbackTitle, subtitle: "Provider timeout/error")
+            return .disconnected(title: fallbackTitle, subtitle: L10n.tr("Provider timeout/error"))
         }
     }
 
@@ -310,15 +310,15 @@ struct MediaControlProvider: PluginProvider {
 
     func fetchState() async throws -> ProviderPanelState {
         ProviderPanelState(
-            title: "Media",
-            subtitle: "Local provider",
+            title: L10n.tr("Media"),
+            subtitle: L10n.tr("Local provider"),
             progressCurrent: nil,
             progressTotal: nil,
             health: .normal,
             actions: [
-                ProviderActionDescriptor(id: "previous", title: "Prev", symbol: "backward.fill", isEnabled: true),
-                ProviderActionDescriptor(id: "play_pause", title: "Play/Pause", symbol: "playpause.fill", isEnabled: true),
-                ProviderActionDescriptor(id: "next", title: "Next", symbol: "forward.fill", isEnabled: true),
+                ProviderActionDescriptor(id: "previous", title: L10n.tr("Prev"), symbol: "backward.fill", isEnabled: true),
+                ProviderActionDescriptor(id: "play_pause", title: L10n.tr("Play/Pause"), symbol: "playpause.fill", isEnabled: true),
+                ProviderActionDescriptor(id: "next", title: L10n.tr("Next"), symbol: "forward.fill", isEnabled: true),
             ]
         )
     }

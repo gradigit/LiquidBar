@@ -198,4 +198,14 @@ struct WindowThumbnailServicePolicyTests {
         #expect(switcher == 8.0)
         #expect(prewarm == switcher)
     }
+
+    @Test func permissionFlowContinuesOutsideUITestAndDisabledPromptModes() {
+        #expect(WindowThumbnailService.shouldAttemptScreenCapturePermissionFlow(environment: [:]))
+        #expect(!WindowThumbnailService.shouldAttemptScreenCapturePermissionFlow(
+            environment: ["LIQUIDBAR_TEST_CONTROL": "1"]
+        ))
+        #expect(!WindowThumbnailService.shouldAttemptScreenCapturePermissionFlow(
+            environment: ["LIQUIDBAR_DISABLE_SCREEN_RECORDING_PROMPT": "1"]
+        ))
+    }
 }

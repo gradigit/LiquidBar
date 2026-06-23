@@ -1,6 +1,7 @@
 import Foundation
 import Carbon
 import ApplicationServices
+import IOKit.hidsystem
 
 struct HotkeyShortcut: Sendable, Equatable {
     let keyCode: UInt32
@@ -403,11 +404,20 @@ final class HotkeyMonitor {
     }
 
     static func listenEventAccessGranted() -> Bool {
-        CGPreflightListenEventAccess()
+        CGPreflightListenEventAccess() || inputMonitoringAccessGranted()
+    }
+
+    static func inputMonitoringAccessGranted() -> Bool {
+        IOHIDCheckAccess(kIOHIDRequestTypeListenEvent) == kIOHIDAccessTypeGranted
     }
 
     static func requestListenEventAccess() -> Bool {
-        CGRequestListenEventAccess()
+        let hidGranted = IOHIDRequestAccess(kIOHIDRequestTypeListenEvent)
+        if hidGranted {
+            return true
+        }
+        let cgGranted = CGRequestListenEventAccess()
+        return cgGranted || listenEventAccessGranted()
     }
 
     static func matchesEventTapEvent(

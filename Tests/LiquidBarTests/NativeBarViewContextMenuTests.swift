@@ -11,9 +11,9 @@ struct NativeBarViewContextMenuTests {
         let menu = try #require(view.menu(for: Self.rightClick(at: NSPoint(x: 12, y: 15))))
         let titles = Self.titles(in: menu)
 
-        #expect(titles.contains("Preferences\u{2026}"))
-        #expect(titles.contains("Reload config.json"))
-        #expect(titles.contains("Quit LiquidBar"))
+        #expect(titles.contains(L10n.tr("Preferences…")))
+        #expect(titles.contains(L10n.tr("Reload config.json")))
+        #expect(titles.contains(L10n.tr("Quit LiquidBar")))
     }
 
     @Test func launcherItemShowsAppControls() throws {
@@ -26,7 +26,7 @@ struct NativeBarViewContextMenuTests {
         let menu = try #require(view.menu(for: Self.rightClick(at: NSPoint(x: 20, y: 15))))
         let titles = Self.titles(in: menu)
 
-        #expect(titles == ["Preferences\u{2026}", "Reload config.json", "Quit LiquidBar"])
+        #expect(titles == [L10n.tr("Preferences…"), L10n.tr("Reload config.json"), L10n.tr("Quit LiquidBar")])
     }
 
     @Test func windowItemKeepsWindowControlsAndAddsAppControls() throws {
@@ -49,15 +49,15 @@ struct NativeBarViewContextMenuTests {
         let menu = try #require(view.menu(for: Self.rightClick(at: NSPoint(x: 20, y: 15))))
         let titles = Self.titles(in: menu)
 
-        #expect(titles.contains("Close Window"))
-        #expect(titles.contains("Rename Window\u{2026}"))
-        #expect(titles.contains("Color Window"))
-        #expect(titles.contains("Reset Window Title"))
-        #expect(titles.contains("Pin to Taskbar"))
-        #expect(titles.contains("Hide from Taskbar"))
-        #expect(titles.contains("Preferences\u{2026}"))
-        #expect(titles.contains("Reload config.json"))
-        #expect(titles.contains("Quit LiquidBar"))
+        #expect(titles.contains(L10n.tr("Close Window")))
+        #expect(titles.contains(L10n.tr("Rename Window…")))
+        #expect(titles.contains(L10n.tr("Color Window")))
+        #expect(titles.contains(L10n.tr("Reset Window Title")))
+        #expect(titles.contains(L10n.tr("Pin to Taskbar")))
+        #expect(titles.contains(L10n.tr("Hide from Taskbar")))
+        #expect(titles.contains(L10n.tr("Preferences…")))
+        #expect(titles.contains(L10n.tr("Reload config.json")))
+        #expect(titles.contains(L10n.tr("Quit LiquidBar")))
     }
 
     @Test func windowPresentationItemsDispatchActions() throws {
@@ -81,10 +81,10 @@ struct NativeBarViewContextMenuTests {
         view.onContextAction = { actions.append(($0, $1, $2)) }
 
         let menu = try #require(view.menu(for: Self.rightClick(at: NSPoint(x: 20, y: 15))))
-        try Self.perform(menu, title: "Rename Window\u{2026}")
-        try Self.performSubmenu(menu, title: "Color Window", itemTitle: "Blue")
-        try Self.perform(menu, title: "Reset Window Title")
-        try Self.performSubmenu(menu, title: "Color Window", itemTitle: "Clear Window Color")
+        try Self.perform(menu, title: L10n.tr("Rename Window…"))
+        try Self.performSubmenu(menu, title: L10n.tr("Color Window"), itemTitle: L10n.tr("Blue"))
+        try Self.perform(menu, title: L10n.tr("Reset Window Title"))
+        try Self.performSubmenu(menu, title: L10n.tr("Color Window"), itemTitle: L10n.tr("Clear Window Color"))
 
         #expect(actions.map { $0.1 } == [.renameWindow, .setWindowColor, .resetWindowTitle, .resetWindowColor])
         #expect(actions[1].2 == "#4A90E2")
@@ -114,12 +114,12 @@ struct NativeBarViewContextMenuTests {
         let menu = try #require(view.menu(for: Self.rightClick(at: NSPoint(x: 20, y: 15))))
         let titles = Self.titles(in: menu)
 
-        #expect(titles.contains("Rename Tab Group\u{2026}"))
-        #expect(titles.contains("Color Tab Group"))
-        #expect(titles.contains("Delete Tab Group"))
+        #expect(titles.contains(L10n.tr("Rename Tab Group…")))
+        #expect(titles.contains(L10n.tr("Color Tab Group")))
+        #expect(titles.contains(L10n.tr("Delete Tab Group")))
 
-        try Self.performSubmenu(menu, title: "Color Tab Group", itemTitle: "Purple")
-        try Self.performSubmenu(menu, title: "Color Tab Group", itemTitle: "Clear Tab Group Color")
+        try Self.performSubmenu(menu, title: L10n.tr("Color Tab Group"), itemTitle: L10n.tr("Purple"))
+        try Self.performSubmenu(menu, title: L10n.tr("Color Tab Group"), itemTitle: L10n.tr("Clear Tab Group Color"))
 
         #expect(actions.map { $0.1 } == [.setTabGroupColor, .setTabGroupColor])
         #expect(actions[0].2 == "#AF52DE")
@@ -132,9 +132,9 @@ struct NativeBarViewContextMenuTests {
         view.onAppContextAction = { actions.append($0) }
 
         let menu = try #require(view.menu(for: Self.rightClick(at: NSPoint(x: 12, y: 15))))
-        try Self.perform(menu, title: "Preferences\u{2026}")
-        try Self.perform(menu, title: "Reload config.json")
-        try Self.perform(menu, title: "Quit LiquidBar")
+        try Self.perform(menu, title: L10n.tr("Preferences…"))
+        try Self.perform(menu, title: L10n.tr("Reload config.json"))
+        try Self.perform(menu, title: L10n.tr("Quit LiquidBar"))
 
         #expect(actions == [.openPreferences, .reloadConfig, .quit])
     }

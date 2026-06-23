@@ -47,19 +47,19 @@ enum ThermalLevel: String, Sendable {
 
     var label: String {
         switch self {
-        case .nominal: "Nominal"
-        case .fair: "Fair"
-        case .serious: "Serious"
-        case .critical: "Critical"
+        case .nominal: L10n.tr("Nominal")
+        case .fair: L10n.tr("Fair")
+        case .serious: L10n.tr("Serious")
+        case .critical: L10n.tr("Critical")
         }
     }
 
     var compactLabel: String {
         switch self {
-        case .nominal: "Nom"
-        case .fair: "Fair"
-        case .serious: "Hot"
-        case .critical: "Crit"
+        case .nominal: L10n.tr("Nom")
+        case .fair: L10n.tr("Fair")
+        case .serious: L10n.tr("Hot")
+        case .critical: L10n.tr("Crit")
         }
     }
 

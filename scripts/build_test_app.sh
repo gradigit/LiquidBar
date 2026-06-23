@@ -59,6 +59,8 @@ cat > "${APP_PATH}/Contents/Info.plist" <<'PLIST'
   <string>26.0</string>
   <key>LSUIElement</key>
   <true/>
+  <key>NSScreenCaptureUsageDescription</key>
+  <string>LiquidBar uses Screen Recording permission to capture static window thumbnails for taskbar previews and the window switcher.</string>
   <key>NSSupportsAutomaticTermination</key>
   <false/>
   <key>NSSupportsSuddenTermination</key>

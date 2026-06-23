@@ -1,11 +1,18 @@
 import Cocoa
 import ApplicationServices
+@preconcurrency import ScreenCaptureKit
 import UniformTypeIdentifiers
 
 enum SettingsIconSizeRange {
     static let minimum = 16
     static let maximum = 48
     static let tickCount = 9
+}
+
+private enum SettingsWindowLayout {
+    static let contentWidth: CGFloat = 680
+    static let scrollViewportHeight: CGFloat = 560
+    static let footerHeight: CGFloat = 52
 }
 
 private final class SettingsBarPreviewView: NSView {
@@ -133,6 +140,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTe
     private var secondClickPopup: NSPopUpButton!
     private var hideDockCheckbox: NSButton!
     private var showMenuBarIconCheckbox: NSButton!
+    private var appLanguagePopup: NSPopUpButton!
     private var loginCheckbox: NSButton!
     private var itemSizingPopup: NSPopUpButton!
     private var maxItemWidthSlider: NSSlider!
@@ -219,12 +227,17 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTe
 
     init(configOverride: Config? = nil) {
         let window = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 560, height: 620),
+            contentRect: NSRect(
+                x: 0,
+                y: 0,
+                width: SettingsWindowLayout.contentWidth,
+                height: SettingsWindowLayout.scrollViewportHeight + SettingsWindowLayout.footerHeight
+            ),
             styleMask: [.titled, .closable, .miniaturizable],
             backing: .buffered,
             defer: false
         )
-        window.title = "LiquidBar Preferences"
+        window.title = L10n.tr("LiquidBar Preferences")
         window.center()
         window.isReleasedWhenClosed = false
         window.toolbarStyle = .preference
@@ -261,59 +274,76 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTe
         let generalVC = NSViewController()
         generalVC.view = wrapWithApplyButton(buildGeneralTab())
         generalVC.preferredContentSize = generalVC.view.frame.size
-        generalVC.title = "General"
+        generalVC.title = L10n.tr("General")
         let generalItem = NSTabViewItem(viewController: generalVC)
-        generalItem.image = NSImage(systemSymbolName: "gearshape", accessibilityDescription: "General")
+        generalItem.image = NSImage(systemSymbolName: "gearshape", accessibilityDescription: L10n.tr("General"))
         tabViewController.addTabViewItem(generalItem)
 
         // Appearance tab
         let appearanceVC = NSViewController()
         appearanceVC.view = wrapWithApplyButton(buildAppearanceTab())
         appearanceVC.preferredContentSize = appearanceVC.view.frame.size
-        appearanceVC.title = "Appearance"
+        appearanceVC.title = L10n.tr("Appearance")
         let appearanceItem = NSTabViewItem(viewController: appearanceVC)
-        appearanceItem.image = NSImage(systemSymbolName: "paintpalette", accessibilityDescription: "Appearance")
+        appearanceItem.image = NSImage(systemSymbolName: "paintpalette", accessibilityDescription: L10n.tr("Appearance"))
         tabViewController.addTabViewItem(appearanceItem)
 
         // Apps tab
         let appsVC = NSViewController()
         appsVC.view = wrapWithApplyButton(buildAppsTab())
         appsVC.preferredContentSize = appsVC.view.frame.size
-        appsVC.title = "Apps"
+        appsVC.title = L10n.tr("Apps")
         let appsItem = NSTabViewItem(viewController: appsVC)
-        appsItem.image = NSImage(systemSymbolName: "app.badge.checkmark", accessibilityDescription: "Apps")
+        appsItem.image = NSImage(systemSymbolName: "app.badge.checkmark", accessibilityDescription: L10n.tr("Apps"))
         tabViewController.addTabViewItem(appsItem)
 
         // Advanced tab
         let advancedVC = NSViewController()
         advancedVC.view = wrapWithApplyButton(buildAdvancedTab())
         advancedVC.preferredContentSize = advancedVC.view.frame.size
-        advancedVC.title = "Advanced"
+        advancedVC.title = L10n.tr("Advanced")
         let advancedItem = NSTabViewItem(viewController: advancedVC)
-        advancedItem.image = NSImage(systemSymbolName: "slider.horizontal.3", accessibilityDescription: "Advanced")
+        advancedItem.image = NSImage(systemSymbolName: "slider.horizontal.3", accessibilityDescription: L10n.tr("Advanced"))
         tabViewController.addTabViewItem(advancedItem)
 
         // About tab
         let aboutVC = NSViewController()
         aboutVC.view = wrapWithApplyButton(buildAboutTab())
         aboutVC.preferredContentSize = aboutVC.view.frame.size
-        aboutVC.title = "About"
+        aboutVC.title = L10n.tr("About")
         let aboutItem = NSTabViewItem(viewController: aboutVC)
-        aboutItem.image = NSImage(systemSymbolName: "info.circle", accessibilityDescription: "About")
+        aboutItem.image = NSImage(systemSymbolName: "info.circle", accessibilityDescription: L10n.tr("About"))
         tabViewController.addTabViewItem(aboutItem)
 
         // NSTabViewController with .toolbar style creates toolbar items automatically
         window.contentViewController = tabViewController
         // Ensure the full tab content (including lower controls) is visible.
         window.setContentSize(generalVC.view.frame.size)
-        window.minSize = NSSize(width: 540, height: 560)
+        window.minSize = NSSize(width: 620, height: 560)
+    }
+
+    private func rebuildUI(applying config: Config) {
+        guard let window else { return }
+        let selectedIndex = max(0, tabViewController.selectedTabViewItemIndex)
+        applyButtons.removeAll()
+        liveApplyCheckboxes.removeAll()
+        for item in tabViewController.tabViewItems.reversed() {
+            tabViewController.removeTabViewItem(item)
+        }
+        window.title = L10n.tr("LiquidBar Preferences")
+        buildUI()
+        if selectedIndex < tabViewController.tabViewItems.count {
+            tabViewController.selectedTabViewItemIndex = selectedIndex
+        }
+        applyConfigToControls(config)
+        scrollSelectedTabToTop()
     }
 
     /// Wraps tab content in a container with an Apply button at the bottom-right.
     private func wrapWithApplyButton(_ contentView: NSView) -> NSView {
-        let footerHeight: CGFloat = 52
-        let scrollViewportHeight: CGFloat = 560
-        let containerW = max(540, contentView.frame.width)
+        let footerHeight = SettingsWindowLayout.footerHeight
+        let scrollViewportHeight = SettingsWindowLayout.scrollViewportHeight
+        let containerW = max(SettingsWindowLayout.contentWidth, contentView.frame.width)
         let containerH = scrollViewportHeight + footerHeight
         let container = NSView(frame: NSRect(x: 0, y: 0, width: containerW, height: containerH))
 
@@ -323,7 +353,19 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTe
         scrollView.hasHorizontalScroller = false
         scrollView.borderType = .noBorder
         scrollView.drawsBackground = false
-        scrollView.contentInsets = NSEdgeInsets(top: 14, left: 0, bottom: 18, right: 0)
+        scrollView.contentInsets = NSEdgeInsets(top: 0, left: 0, bottom: 0, right: 0)
+
+        let topPadding: CGFloat = 10
+        let bottomPadding: CGFloat = 24
+        let minimumSubviewY = contentView.subviews
+            .filter { !$0.isHidden && !$0.frame.isEmpty }
+            .map(\.frame.minY)
+            .min() ?? 0
+        let bottomShift = max(bottomPadding, bottomPadding - minimumSubviewY)
+        for subview in contentView.subviews {
+            subview.frame.origin.y += bottomShift
+        }
+        contentView.frame.size.height += topPadding + bottomShift
 
         let minimumDocumentHeight = scrollViewportHeight
         let documentHeightDelta = max(0, minimumDocumentHeight - contentView.frame.height)
@@ -354,50 +396,65 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTe
 
         let liveCb = NSButton(frame: NSRect(x: 18, y: 17, width: 152, height: 18))
         liveCb.setButtonType(.switch)
-        liveCb.title = "Auto Apply"
+        liveCb.title = L10n.tr("Auto Apply")
         liveCb.font = NSFont.systemFont(ofSize: 12)
         liveCb.target = self
         liveCb.action = #selector(liveApplyToggled(_:))
         footer.addSubview(liveCb)
         liveApplyCheckboxes.append(liveCb)
 
-        let resetBtn = NSButton(frame: NSRect(x: containerW - 358, y: 10, width: 94, height: 30))
-        resetBtn.bezelStyle = .rounded
-        resetBtn.title = "Reset Tab"
-        resetBtn.target = self
-        resetBtn.action = #selector(resetSelectedTabClicked(_:))
-        resetBtn.autoresizingMask = [.minXMargin]
-        footer.addSubview(resetBtn)
+        let trailingPadding: CGFloat = 18
+        let buttonGap: CGFloat = 10
+        let resetWidth: CGFloat = 112
+        let revertWidth: CGFloat = 94
+        let reloadWidth: CGFloat = 126
+        let applyWidth: CGFloat = 84
+        var trailingX = containerW - trailingPadding
 
-        let revertBtn = NSButton(frame: NSRect(x: containerW - 258, y: 10, width: 82, height: 30))
-        revertBtn.bezelStyle = .rounded
-        revertBtn.title = "Revert"
-        revertBtn.target = self
-        revertBtn.action = #selector(revertClicked(_:))
-        revertBtn.autoresizingMask = [.minXMargin]
-        footer.addSubview(revertBtn)
-
-        let reloadBtn = NSButton(frame: NSRect(x: containerW - 170, y: 10, width: 74, height: 30))
-        reloadBtn.bezelStyle = .rounded
-        reloadBtn.title = "Reload"
-        reloadBtn.target = self
-        reloadBtn.action = #selector(reloadConfigClicked(_:))
-        reloadBtn.autoresizingMask = [.minXMargin]
-        footer.addSubview(reloadBtn)
-
-        let applyBtn = NSButton(frame: NSRect(x: containerW - 90, y: 10, width: 72, height: 30))
+        let applyBtn = NSButton(frame: NSRect(x: trailingX - applyWidth, y: 10, width: applyWidth, height: 30))
+        trailingX = applyBtn.frame.minX - buttonGap
         if let glassStyle = NSButton.BezelStyle(rawValue: 16) {
             applyBtn.bezelStyle = glassStyle
         } else {
             applyBtn.bezelStyle = .rounded
         }
-        applyBtn.title = "Apply"
+        applyBtn.title = L10n.tr("Apply")
+        applyBtn.toolTip = applyBtn.title
         applyBtn.keyEquivalent = "\r"
         applyBtn.target = self
         applyBtn.action = #selector(applyClicked(_:))
         applyBtn.autoresizingMask = [.minXMargin]
         footer.addSubview(applyBtn)
         applyButtons.append(applyBtn)
+
+        let reloadBtn = NSButton(frame: NSRect(x: trailingX - reloadWidth, y: 10, width: reloadWidth, height: 30))
+        trailingX = reloadBtn.frame.minX - buttonGap
+        reloadBtn.bezelStyle = .rounded
+        reloadBtn.title = L10n.tr("Reload")
+        reloadBtn.toolTip = L10n.tr("Reload config.json")
+        reloadBtn.target = self
+        reloadBtn.action = #selector(reloadConfigClicked(_:))
+        reloadBtn.autoresizingMask = [.minXMargin]
+        footer.addSubview(reloadBtn)
+
+        let revertBtn = NSButton(frame: NSRect(x: trailingX - revertWidth, y: 10, width: revertWidth, height: 30))
+        trailingX = revertBtn.frame.minX - buttonGap
+        revertBtn.bezelStyle = .rounded
+        revertBtn.title = L10n.tr("Revert")
+        revertBtn.toolTip = revertBtn.title
+        revertBtn.target = self
+        revertBtn.action = #selector(revertClicked(_:))
+        revertBtn.autoresizingMask = [.minXMargin]
+        footer.addSubview(revertBtn)
+
+        let resetBtn = NSButton(frame: NSRect(x: trailingX - resetWidth, y: 10, width: resetWidth, height: 30))
+        resetBtn.bezelStyle = .rounded
+        resetBtn.title = L10n.tr("Reset Tab")
+        resetBtn.toolTip = resetBtn.title
+        resetBtn.target = self
+        resetBtn.action = #selector(resetSelectedTabClicked(_:))
+        resetBtn.autoresizingMask = [.minXMargin]
+        footer.addSubview(resetBtn)
 
         updateApplyControls()
 
@@ -407,16 +464,16 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTe
     // MARK: - Tab Builders
 
     private func buildGeneralTab() -> NSView {
-        let view = NSView(frame: NSRect(x: 0, y: 0, width: 540, height: 1160))
+        let view = NSView(frame: NSRect(x: 0, y: 0, width: 540, height: 1200))
         var y: CGFloat = view.bounds.height - 30
         let labelW: CGFloat = 160
         let controlX: CGFloat = 180
 
-        addSectionHeader("Taskbar", at: NSPoint(x: 15, y: y), width: 500, to: view)
+        addSectionHeader(L10n.tr("Taskbar"), at: NSPoint(x: 15, y: y), width: 500, to: view)
         y -= 34
 
         // Taskbar height slider + label
-        addLabel("Taskbar Height:", at: NSPoint(x: 15, y: y), width: labelW, to: view)
+        addLabel(L10n.tr("Taskbar Height:"), at: NSPoint(x: 15, y: y), width: labelW, to: view)
         heightSlider = NSSlider(frame: NSRect(x: controlX, y: y, width: 180, height: 22))
         heightSlider.minValue = 32
         heightSlider.maxValue = 64
@@ -430,28 +487,28 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTe
         y -= 36
 
         // Position popup (top/bottom/left/right)
-        addLabel("Position:", at: NSPoint(x: 15, y: y), width: labelW, to: view)
+        addLabel(L10n.tr("Position:"), at: NSPoint(x: 15, y: y), width: labelW, to: view)
         positionPopup = NSPopUpButton(frame: NSRect(x: controlX, y: y - 2, width: 180, height: 26), pullsDown: false)
-        positionPopup.addItems(withTitles: ["Top", "Bottom", "Left", "Right"])
+        positionPopup.addItems(withTitles: localizedItems(["Top", "Bottom", "Left", "Right"]))
         positionPopup.target = self
         positionPopup.action = #selector(controlChanged(_:))
         view.addSubview(positionPopup)
 
         y -= 36
 
-        addSectionHeader("Layout", at: NSPoint(x: 15, y: y), width: 500, to: view)
+        addSectionHeader(L10n.tr("Layout"), at: NSPoint(x: 15, y: y), width: 500, to: view)
         y -= 30
 
-        addLabel("Item Sizing:", at: NSPoint(x: 15, y: y + 2), width: labelW, to: view)
+        addLabel(L10n.tr("Item Sizing:"), at: NSPoint(x: 15, y: y + 2), width: labelW, to: view)
         itemSizingPopup = NSPopUpButton(frame: NSRect(x: controlX, y: y - 2, width: 180, height: 26), pullsDown: false)
-        itemSizingPopup.addItems(withTitles: ["Uniform", "Auto"])
+        itemSizingPopup.addItems(withTitles: localizedItems(["Uniform", "Auto"]))
         itemSizingPopup.target = self
         itemSizingPopup.action = #selector(controlChanged(_:))
         view.addSubview(itemSizingPopup)
 
         y -= 36
 
-        addLabel("Max Item Width:", at: NSPoint(x: 15, y: y), width: labelW, to: view)
+        addLabel(L10n.tr("Max Item Width:"), at: NSPoint(x: 15, y: y), width: labelW, to: view)
         maxItemWidthSlider = NSSlider(frame: NSRect(x: controlX, y: y, width: 210, height: 22))
         maxItemWidthSlider.minValue = 60
         maxItemWidthSlider.maxValue = 360
@@ -467,7 +524,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTe
 
         y -= 36
 
-        addLabel("Max Title Width:", at: NSPoint(x: 15, y: y), width: labelW, to: view)
+        addLabel(L10n.tr("Max Title Width:"), at: NSPoint(x: 15, y: y), width: labelW, to: view)
         maxTitleWidthSlider = NSSlider(frame: NSRect(x: controlX, y: y, width: 210, height: 22))
         maxTitleWidthSlider.minValue = 20
         maxTitleWidthSlider.maxValue = 240
@@ -483,77 +540,77 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTe
 
         y -= 32
 
-        centerItemsCheckbox = makeCheckbox("Center icons-only bottom bar", at: NSPoint(x: 15, y: y))
+        centerItemsCheckbox = makeCheckbox(L10n.tr("Center icons-only bottom bar"), at: NSPoint(x: 15, y: y))
         centerItemsCheckbox.target = self
         centerItemsCheckbox.action = #selector(controlChanged(_:))
         view.addSubview(centerItemsCheckbox)
 
         y -= 36
 
-        addSectionHeader("Displays", at: NSPoint(x: 15, y: y), width: 500, to: view)
+        addSectionHeader(L10n.tr("Displays"), at: NSPoint(x: 15, y: y), width: 500, to: view)
         y -= 30
 
-        addLabel("Bar Displays:", at: NSPoint(x: 15, y: y + 2), width: labelW, to: view)
+        addLabel(L10n.tr("Bar Displays:"), at: NSPoint(x: 15, y: y + 2), width: labelW, to: view)
         multiMonitorPopup = NSPopUpButton(frame: NSRect(x: controlX, y: y - 2, width: 180, height: 26), pullsDown: false)
-        multiMonitorPopup.addItems(withTitles: ["All Displays", "Main Display Only"])
+        multiMonitorPopup.addItems(withTitles: localizedItems(["All Displays", "Main Display Only"]))
         multiMonitorPopup.target = self
         multiMonitorPopup.action = #selector(controlChanged(_:))
         view.addSubview(multiMonitorPopup)
 
         y -= 36
 
-        addLabel("Window Scope:", at: NSPoint(x: 15, y: y + 2), width: labelW, to: view)
+        addLabel(L10n.tr("Window Scope:"), at: NSPoint(x: 15, y: y + 2), width: labelW, to: view)
         windowDisplayPopup = NSPopUpButton(frame: NSRect(x: controlX, y: y - 2, width: 220, height: 26), pullsDown: false)
-        windowDisplayPopup.addItems(withTitles: ["Per Display", "All Windows Everywhere"])
+        windowDisplayPopup.addItems(withTitles: localizedItems(["Per Display", "All Windows Everywhere"]))
         windowDisplayPopup.target = self
         windowDisplayPopup.action = #selector(controlChanged(_:))
         view.addSubview(windowDisplayPopup)
 
         y -= 36
 
-        addSectionHeader("Sidebar", at: NSPoint(x: 15, y: y), width: 500, to: view)
+        addSectionHeader(L10n.tr("Sidebar"), at: NSPoint(x: 15, y: y), width: 500, to: view)
         y -= 30
 
-        sidebarModeCheckbox = makeCheckbox("Enable sidebar mode", at: NSPoint(x: 15, y: y))
+        sidebarModeCheckbox = makeCheckbox(L10n.tr("Enable sidebar mode"), at: NSPoint(x: 15, y: y))
         sidebarModeCheckbox.target = self
         sidebarModeCheckbox.action = #selector(controlChanged(_:))
         view.addSubview(sidebarModeCheckbox)
 
         y -= 32
 
-        addLabel("Sidebar Default:", at: NSPoint(x: 15, y: y + 2), width: labelW, to: view)
+        addLabel(L10n.tr("Sidebar Default:"), at: NSPoint(x: 15, y: y + 2), width: labelW, to: view)
         sidebarStatePopup = NSPopUpButton(frame: NSRect(x: controlX, y: y - 2, width: 180, height: 26), pullsDown: false)
-        sidebarStatePopup.addItems(withTitles: ["Expanded", "Compact Icons", "Hidden Peek"])
+        sidebarStatePopup.addItems(withTitles: localizedItems(["Expanded", "Compact Icons", "Hidden Peek"]))
         sidebarStatePopup.target = self
         sidebarStatePopup.action = #selector(controlChanged(_:))
         view.addSubview(sidebarStatePopup)
 
         y -= 32
 
-        addLabel("Sidebar Trigger:", at: NSPoint(x: 15, y: y + 2), width: labelW, to: view)
+        addLabel(L10n.tr("Sidebar Trigger:"), at: NSPoint(x: 15, y: y + 2), width: labelW, to: view)
         sidebarExpandTriggerPopup = NSPopUpButton(frame: NSRect(x: controlX, y: y - 2, width: 180, height: 26), pullsDown: false)
-        sidebarExpandTriggerPopup.addItems(withTitles: ["Click", "Hover", "Hybrid"])
+        sidebarExpandTriggerPopup.addItems(withTitles: localizedItems(["Click", "Hover", "Hybrid"]))
         sidebarExpandTriggerPopup.target = self
         sidebarExpandTriggerPopup.action = #selector(controlChanged(_:))
         view.addSubview(sidebarExpandTriggerPopup)
 
         y -= 32
 
-        tileZoneCheckbox = makeCheckbox("Enable sidebar tile zone", at: NSPoint(x: 15, y: y))
+        tileZoneCheckbox = makeCheckbox(L10n.tr("Enable sidebar tile zone"), at: NSPoint(x: 15, y: y))
         tileZoneCheckbox.target = self
         tileZoneCheckbox.action = #selector(controlChanged(_:))
         view.addSubview(tileZoneCheckbox)
 
         y -= 28
 
-        tilePopupSingletonCheckbox = makeCheckbox("Tile popups: one at a time", at: NSPoint(x: 15, y: y))
+        tilePopupSingletonCheckbox = makeCheckbox(L10n.tr("Tile popups: one at a time"), at: NSPoint(x: 15, y: y))
         tilePopupSingletonCheckbox.target = self
         tilePopupSingletonCheckbox.action = #selector(controlChanged(_:))
         view.addSubview(tilePopupSingletonCheckbox)
 
         y -= 32
 
-        addLabel("Overlay Hover Delay:", at: NSPoint(x: 15, y: y + 2), width: labelW, to: view)
+        addLabel(L10n.tr("Overlay Hover Delay:"), at: NSPoint(x: 15, y: y + 2), width: labelW, to: view)
         hoverDelayField = makeNumberField(frame: NSRect(x: controlX, y: y - 1, width: 80, height: 22), min: 0, max: 2000)
         hoverDelayField.delegate = self
         hoverDelayField.target = self
@@ -566,24 +623,24 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTe
 
         y -= 28
 
-        hoverIntentGuardCheckbox = makeCheckbox("Enable hover intent guard", at: NSPoint(x: 15, y: y))
+        hoverIntentGuardCheckbox = makeCheckbox(L10n.tr("Enable hover intent guard"), at: NSPoint(x: 15, y: y))
         hoverIntentGuardCheckbox.target = self
         hoverIntentGuardCheckbox.action = #selector(controlChanged(_:))
         view.addSubview(hoverIntentGuardCheckbox)
 
         y -= 28
 
-        addSectionHeader("Switcher", at: NSPoint(x: 15, y: y), width: 500, to: view)
+        addSectionHeader(L10n.tr("Switcher"), at: NSPoint(x: 15, y: y), width: 500, to: view)
         y -= 30
 
-        switcherEnabledCheckbox = makeCheckbox("Enable keyboard switcher overlay", at: NSPoint(x: 15, y: y))
+        switcherEnabledCheckbox = makeCheckbox(L10n.tr("Enable keyboard switcher overlay"), at: NSPoint(x: 15, y: y))
         switcherEnabledCheckbox.target = self
         switcherEnabledCheckbox.action = #selector(controlChanged(_:))
         view.addSubview(switcherEnabledCheckbox)
 
         y -= 32
 
-        addLabel("Switcher Hotkey:", at: NSPoint(x: 15, y: y + 2), width: labelW, to: view)
+        addLabel(L10n.tr("Switcher Hotkey:"), at: NSPoint(x: 15, y: y + 2), width: labelW, to: view)
         switcherHotkeyField = NSTextField(frame: NSRect(x: controlX, y: y - 1, width: 160, height: 22))
         switcherHotkeyField.placeholderString = "option+tab"
         switcherHotkeyField.font = NSFont.monospacedSystemFont(ofSize: 12, weight: .regular)
@@ -594,41 +651,41 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTe
 
         y -= 32
 
-        addLabel("Switcher Windows:", at: NSPoint(x: 15, y: y + 2), width: labelW, to: view)
+        addLabel(L10n.tr("Switcher Windows:"), at: NSPoint(x: 15, y: y + 2), width: labelW, to: view)
         switcherScopePopup = NSPopUpButton(frame: NSRect(x: controlX, y: y - 2, width: 210, height: 26), pullsDown: false)
-        switcherScopePopup.addItems(withTitles: ["All displays", "Focused display"])
+        switcherScopePopup.addItems(withTitles: localizedItems(["All displays", "Focused display"]))
         switcherScopePopup.target = self
         switcherScopePopup.action = #selector(controlChanged(_:))
         view.addSubview(switcherScopePopup)
 
         y -= 32
 
-        addLabel("Scroll Wheel:", at: NSPoint(x: 15, y: y + 2), width: labelW, to: view)
+        addLabel(L10n.tr("Scroll Wheel:"), at: NSPoint(x: 15, y: y + 2), width: labelW, to: view)
         scrollWheelPopup = NSPopUpButton(frame: NSRect(x: controlX, y: y - 2, width: 210, height: 26), pullsDown: false)
-        scrollWheelPopup.addItems(withTitles: ["Cycle Windows", "Hide / Show Bar", "System Volume", "Off"])
+        scrollWheelPopup.addItems(withTitles: localizedItems(["Cycle Windows", "Hide / Show Bar", "System Volume", "Off"]))
         scrollWheelPopup.target = self
         scrollWheelPopup.action = #selector(controlChanged(_:))
         view.addSubview(scrollWheelPopup)
 
         y -= 36
 
-        launcherEnabledCheckbox = makeCheckbox("Show launcher button", at: NSPoint(x: 15, y: y))
+        launcherEnabledCheckbox = makeCheckbox(L10n.tr("Show launcher button"), at: NSPoint(x: 15, y: y))
         launcherEnabledCheckbox.target = self
         launcherEnabledCheckbox.action = #selector(controlChanged(_:))
         view.addSubview(launcherEnabledCheckbox)
 
         y -= 32
 
-        addLabel("Launcher Action:", at: NSPoint(x: 15, y: y + 2), width: labelW, to: view)
+        addLabel(L10n.tr("Launcher Action:"), at: NSPoint(x: 15, y: y + 2), width: labelW, to: view)
         launcherActionPopup = NSPopUpButton(frame: NSRect(x: controlX, y: y - 2, width: 180, height: 26), pullsDown: false)
-        launcherActionPopup.addItems(withTitles: ["Spotlight", "Raycast", "Alfred", "Custom URL"])
+        launcherActionPopup.addItems(withTitles: localizedItems(["Spotlight", "Raycast", "Alfred", "Custom URL"]))
         launcherActionPopup.target = self
         launcherActionPopup.action = #selector(controlChanged(_:))
         view.addSubview(launcherActionPopup)
 
         y -= 32
 
-        addLabel("Custom URL:", at: NSPoint(x: 15, y: y + 2), width: labelW, to: view)
+        addLabel(L10n.tr("Custom URL:"), at: NSPoint(x: 15, y: y + 2), width: labelW, to: view)
         launcherCustomUrlField = NSTextField(frame: NSRect(x: controlX, y: y - 1, width: 260, height: 22))
         launcherCustomUrlField.placeholderString = "raycast://extensions/..."
         launcherCustomUrlField.font = NSFont.systemFont(ofSize: 12)
@@ -639,11 +696,11 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTe
 
         y -= 36
 
-        addSectionHeader("Window Behavior", at: NSPoint(x: 15, y: y), width: 500, to: view)
+        addSectionHeader(L10n.tr("Window Behavior"), at: NSPoint(x: 15, y: y), width: 500, to: view)
         y -= 30
 
         // Icons only checkbox
-        iconsOnlyCheckbox = makeCheckbox("Icons only (hide window titles)", at: NSPoint(x: 15, y: y))
+        iconsOnlyCheckbox = makeCheckbox(L10n.tr("Icons only (hide window titles)"), at: NSPoint(x: 15, y: y))
         iconsOnlyCheckbox.target = self
         iconsOnlyCheckbox.action = #selector(controlChanged(_:))
         view.addSubview(iconsOnlyCheckbox)
@@ -651,7 +708,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTe
         y -= 28
 
         // Group by app checkbox
-        groupByAppCheckbox = makeCheckbox("Group windows by app", at: NSPoint(x: 15, y: y))
+        groupByAppCheckbox = makeCheckbox(L10n.tr("Group windows by app"), at: NSPoint(x: 15, y: y))
         groupByAppCheckbox.target = self
         groupByAppCheckbox.action = #selector(controlChanged(_:))
         view.addSubview(groupByAppCheckbox)
@@ -659,7 +716,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTe
         y -= 28
 
         // Tabbed taskbar checkbox
-        tabbedTaskbarCheckbox = makeCheckbox("Tabbed taskbar (focused item expanded)", at: NSPoint(x: 15, y: y))
+        tabbedTaskbarCheckbox = makeCheckbox(L10n.tr("Tabbed taskbar (focused item expanded)"), at: NSPoint(x: 15, y: y))
         tabbedTaskbarCheckbox.target = self
         tabbedTaskbarCheckbox.action = #selector(controlChanged(_:))
         view.addSubview(tabbedTaskbarCheckbox)
@@ -667,7 +724,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTe
         y -= 28
 
         // Show hidden apps checkbox
-        showHiddenCheckbox = makeCheckbox("Show hidden apps (dimmed)", at: NSPoint(x: 15, y: y))
+        showHiddenCheckbox = makeCheckbox(L10n.tr("Show hidden apps (dimmed)"), at: NSPoint(x: 15, y: y))
         showHiddenCheckbox.target = self
         showHiddenCheckbox.action = #selector(controlChanged(_:))
         view.addSubview(showHiddenCheckbox)
@@ -675,9 +732,9 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTe
         y -= 32
 
         // Hidden window mode popup
-        addLabel("Hidden Mode:", at: NSPoint(x: 15, y: y + 2), width: labelW, to: view)
+        addLabel(L10n.tr("Hidden Mode:"), at: NSPoint(x: 15, y: y + 2), width: labelW, to: view)
         hiddenModePopup = NSPopUpButton(frame: NSRect(x: controlX, y: y - 2, width: 180, height: 26), pullsDown: false)
-        hiddenModePopup.addItems(withTitles: ["In-place (dimmed)", "Collapsed to right"])
+        hiddenModePopup.addItems(withTitles: localizedItems(["In-place (dimmed)", "Collapsed to right"]))
         hiddenModePopup.target = self
         hiddenModePopup.action = #selector(controlChanged(_:))
         view.addSubview(hiddenModePopup)
@@ -685,7 +742,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTe
         y -= 32
 
         // Show minimized windows checkbox
-        showMinimizedCheckbox = makeCheckbox("Show minimized windows (dimmed)", at: NSPoint(x: 15, y: y))
+        showMinimizedCheckbox = makeCheckbox(L10n.tr("Show minimized windows (dimmed)"), at: NSPoint(x: 15, y: y))
         showMinimizedCheckbox.target = self
         showMinimizedCheckbox.action = #selector(controlChanged(_:))
         view.addSubview(showMinimizedCheckbox)
@@ -693,7 +750,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTe
         y -= 28
 
         // Adjust windows to avoid taskbar (AX)
-        adjustWindowsCheckbox = makeCheckbox("Adjust windows for taskbar (Accessibility)", at: NSPoint(x: 15, y: y))
+        adjustWindowsCheckbox = makeCheckbox(L10n.tr("Adjust windows for taskbar (Accessibility)"), at: NSPoint(x: 15, y: y))
         adjustWindowsCheckbox.target = self
         adjustWindowsCheckbox.action = #selector(controlChanged(_:))
         view.addSubview(adjustWindowsCheckbox)
@@ -701,9 +758,9 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTe
         y -= 32
 
         // Minimized window mode popup
-        addLabel("Minimized Mode:", at: NSPoint(x: 15, y: y + 2), width: labelW, to: view)
+        addLabel(L10n.tr("Minimized Mode:"), at: NSPoint(x: 15, y: y + 2), width: labelW, to: view)
         minimizedModePopup = NSPopUpButton(frame: NSRect(x: controlX, y: y - 2, width: 180, height: 26), pullsDown: false)
-        minimizedModePopup.addItems(withTitles: ["In-place (dimmed)", "Collapsed to right"])
+        minimizedModePopup.addItems(withTitles: localizedItems(["In-place (dimmed)", "Collapsed to right"]))
         minimizedModePopup.target = self
         minimizedModePopup.action = #selector(controlChanged(_:))
         view.addSubview(minimizedModePopup)
@@ -711,27 +768,36 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTe
         y -= 32
 
         // Second click action popup
-        addLabel("Second Click:", at: NSPoint(x: 15, y: y + 2), width: labelW, to: view)
+        addLabel(L10n.tr("Second Click:"), at: NSPoint(x: 15, y: y + 2), width: labelW, to: view)
         secondClickPopup = NSPopUpButton(frame: NSRect(x: controlX, y: y - 2, width: 220, height: 26), pullsDown: false)
-        secondClickPopup.addItems(withTitles: ["Hide app (Cmd+H)", "Minimize window", "Do nothing"])
+        secondClickPopup.addItems(withTitles: localizedItems(["Hide app (Cmd+H)", "Minimize window", "Do nothing"]))
         secondClickPopup.target = self
         secondClickPopup.action = #selector(controlChanged(_:))
         view.addSubview(secondClickPopup)
 
         y -= 32
 
-        addSectionHeader("System", at: NSPoint(x: 15, y: y), width: 500, to: view)
+        addSectionHeader(L10n.tr("System"), at: NSPoint(x: 15, y: y), width: 500, to: view)
         y -= 30
 
+        addLabel(L10n.tr("Language:"), at: NSPoint(x: 15, y: y + 2), width: labelW, to: view)
+        appLanguagePopup = NSPopUpButton(frame: NSRect(x: controlX, y: y - 2, width: 180, height: 26), pullsDown: false)
+        appLanguagePopup.addItems(withTitles: localizedItems(["System", "English", "Korean"]))
+        appLanguagePopup.target = self
+        appLanguagePopup.action = #selector(controlChanged(_:))
+        view.addSubview(appLanguagePopup)
+
+        y -= 36
+
         // Hide dock checkbox
-        hideDockCheckbox = makeCheckbox("Auto-hide macOS Dock", at: NSPoint(x: 15, y: y))
+        hideDockCheckbox = makeCheckbox(L10n.tr("Auto-hide macOS Dock"), at: NSPoint(x: 15, y: y))
         hideDockCheckbox.target = self
         hideDockCheckbox.action = #selector(controlChanged(_:))
         view.addSubview(hideDockCheckbox)
 
         y -= 28
 
-        showMenuBarIconCheckbox = makeCheckbox("Show menu bar icon", at: NSPoint(x: 15, y: y))
+        showMenuBarIconCheckbox = makeCheckbox(L10n.tr("Show menu bar icon"), at: NSPoint(x: 15, y: y))
         showMenuBarIconCheckbox.target = self
         showMenuBarIconCheckbox.action = #selector(controlChanged(_:))
         view.addSubview(showMenuBarIconCheckbox)
@@ -739,7 +805,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTe
         y -= 28
 
         // Launch at login checkbox
-        loginCheckbox = makeCheckbox("Launch at login", at: NSPoint(x: 15, y: y))
+        loginCheckbox = makeCheckbox(L10n.tr("Launch at login"), at: NSPoint(x: 15, y: y))
         loginCheckbox.target = self
         loginCheckbox.action = #selector(controlChanged(_:))
         view.addSubview(loginCheckbox)
@@ -753,7 +819,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTe
         let labelW: CGFloat = 160
         let controlX: CGFloat = 180
 
-        addSectionHeader("Preview", at: NSPoint(x: 15, y: y), width: 500, to: view)
+        addSectionHeader(L10n.tr("Preview"), at: NSPoint(x: 15, y: y), width: 500, to: view)
         y -= 110
 
         appearancePreviewView = SettingsBarPreviewView(frame: NSRect(x: 34, y: y, width: 472, height: 88))
@@ -761,13 +827,13 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTe
 
         y -= 38
 
-        addSectionHeader("Surface", at: NSPoint(x: 15, y: y), width: 500, to: view)
+        addSectionHeader(L10n.tr("Surface"), at: NSPoint(x: 15, y: y), width: 500, to: view)
         y -= 34
 
         // Theme popup
-        addLabel("Theme:", at: NSPoint(x: 15, y: y), width: labelW, to: view)
+        addLabel(L10n.tr("Theme:"), at: NSPoint(x: 15, y: y), width: labelW, to: view)
         themePopup = NSPopUpButton(frame: NSRect(x: controlX, y: y - 2, width: 180, height: 26), pullsDown: false)
-        themePopup.addItems(withTitles: ["System", "Light", "Dark"])
+        themePopup.addItems(withTitles: localizedItems(["System", "Light", "Dark"]))
         themePopup.target = self
         themePopup.action = #selector(controlChanged(_:))
         view.addSubview(themePopup)
@@ -775,9 +841,9 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTe
         y -= 40
 
         // Bar style popup
-        addLabel("Bar Style:", at: NSPoint(x: 15, y: y), width: labelW, to: view)
+        addLabel(L10n.tr("Bar Style:"), at: NSPoint(x: 15, y: y), width: labelW, to: view)
         barStylePopup = NSPopUpButton(frame: NSRect(x: controlX, y: y - 2, width: 180, height: 26), pullsDown: false)
-        barStylePopup.addItems(withTitles: ["Flush (full-width)", "Floating (rounded)"])
+        barStylePopup.addItems(withTitles: localizedItems(["Flush (full-width)", "Floating (rounded)"]))
         barStylePopup.target = self
         barStylePopup.action = #selector(controlChanged(_:))
         view.addSubview(barStylePopup)
@@ -785,16 +851,16 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTe
         y -= 40
 
         // Glass style popup
-        addLabel("Glass Style:", at: NSPoint(x: 15, y: y), width: labelW, to: view)
+        addLabel(L10n.tr("Glass Style:"), at: NSPoint(x: 15, y: y), width: labelW, to: view)
         glassStylePopup = NSPopUpButton(frame: NSRect(x: controlX, y: y - 2, width: 220, height: 26), pullsDown: false)
-        glassStylePopup.addItems(withTitles: ["Regular", "Clear"])
+        glassStylePopup.addItems(withTitles: localizedItems(["Regular", "Clear"]))
         glassStylePopup.target = self
         glassStylePopup.action = #selector(controlChanged(_:))
         view.addSubview(glassStylePopup)
 
         y -= 40
 
-        addLabel("Icon Size:", at: NSPoint(x: 15, y: y), width: labelW, to: view)
+        addLabel(L10n.tr("Icon Size:"), at: NSPoint(x: 15, y: y), width: labelW, to: view)
         iconSizeSlider = NSSlider(frame: NSRect(x: controlX, y: y, width: 210, height: 22))
         iconSizeSlider.minValue = Double(SettingsIconSizeRange.minimum)
         iconSizeSlider.maxValue = Double(SettingsIconSizeRange.maximum)
@@ -810,7 +876,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTe
 
         y -= 40
 
-        addLabel("Title Font Size:", at: NSPoint(x: 15, y: y), width: labelW, to: view)
+        addLabel(L10n.tr("Title Font Size:"), at: NSPoint(x: 15, y: y), width: labelW, to: view)
         titleFontSizeSlider = NSSlider(frame: NSRect(x: controlX, y: y, width: 210, height: 22))
         titleFontSizeSlider.minValue = 10
         titleFontSizeSlider.maxValue = 16
@@ -826,44 +892,44 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTe
 
         y -= 40
 
-        addSectionHeader("Motion & Depth", at: NSPoint(x: 15, y: y), width: 500, to: view)
+        addSectionHeader(L10n.tr("Motion & Depth"), at: NSPoint(x: 15, y: y), width: 500, to: view)
         y -= 34
 
         // Hover highlight intensity popup
-        addLabel("Hover Highlight:", at: NSPoint(x: 15, y: y), width: labelW, to: view)
+        addLabel(L10n.tr("Hover Highlight:"), at: NSPoint(x: 15, y: y), width: labelW, to: view)
         hoverIntensityPopup = NSPopUpButton(frame: NSRect(x: controlX, y: y - 2, width: 180, height: 26), pullsDown: false)
-        hoverIntensityPopup.addItems(withTitles: ["Subtle", "Medium", "Pronounced"])
+        hoverIntensityPopup.addItems(withTitles: localizedItems(["Subtle", "Medium", "Pronounced"]))
         hoverIntensityPopup.target = self
         hoverIntensityPopup.action = #selector(controlChanged(_:))
         view.addSubview(hoverIntensityPopup)
 
         y -= 40
 
-        addLabel("Visual Depth:", at: NSPoint(x: 15, y: y), width: labelW, to: view)
+        addLabel(L10n.tr("Visual Depth:"), at: NSPoint(x: 15, y: y), width: labelW, to: view)
         visualDepthPopup = NSPopUpButton(frame: NSRect(x: controlX, y: y - 2, width: 180, height: 26), pullsDown: false)
-        visualDepthPopup.addItems(withTitles: ["Subtle", "Balanced", "Rich"])
+        visualDepthPopup.addItems(withTitles: localizedItems(["Subtle", "Balanced", "Rich"]))
         visualDepthPopup.target = self
         visualDepthPopup.action = #selector(controlChanged(_:))
         view.addSubview(visualDepthPopup)
 
         y -= 40
 
-        addLabel("Animation Profile:", at: NSPoint(x: 15, y: y), width: labelW, to: view)
+        addLabel(L10n.tr("Animation Profile:"), at: NSPoint(x: 15, y: y), width: labelW, to: view)
         animationProfilePopup = NSPopUpButton(frame: NSRect(x: controlX, y: y - 2, width: 210, height: 26), pullsDown: false)
-        animationProfilePopup.addItems(withTitles: ["Balanced Spring", "Snappy Minimal", "Rich Expressive"])
+        animationProfilePopup.addItems(withTitles: localizedItems(["Balanced Spring", "Snappy Minimal", "Rich Expressive"]))
         animationProfilePopup.target = self
         animationProfilePopup.action = #selector(controlChanged(_:))
         view.addSubview(animationProfilePopup)
 
         y -= 40
 
-        addSectionHeader("Focus & Groups", at: NSPoint(x: 15, y: y), width: 500, to: view)
+        addSectionHeader(L10n.tr("Focus & Groups"), at: NSPoint(x: 15, y: y), width: 500, to: view)
         y -= 34
 
         // Focus indicator style
-        addLabel("Focused Indicator:", at: NSPoint(x: 15, y: y), width: labelW, to: view)
+        addLabel(L10n.tr("Focused Indicator:"), at: NSPoint(x: 15, y: y), width: labelW, to: view)
         focusIndicatorPopup = NSPopUpButton(frame: NSRect(x: controlX, y: y - 2, width: 180, height: 26), pullsDown: false)
-        focusIndicatorPopup.addItems(withTitles: ["Tile highlight", "Dot"])
+        focusIndicatorPopup.addItems(withTitles: localizedItems(["Tile highlight", "Dot"]))
         focusIndicatorPopup.target = self
         focusIndicatorPopup.action = #selector(controlChanged(_:))
         view.addSubview(focusIndicatorPopup)
@@ -871,32 +937,32 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTe
         y -= 40
 
         // App group stack style (icons-only + group-by-app)
-        addLabel("Group Stacks:", at: NSPoint(x: 15, y: y), width: labelW, to: view)
+        addLabel(L10n.tr("Group Stacks:"), at: NSPoint(x: 15, y: y), width: labelW, to: view)
         stackStylePopup = NSPopUpButton(frame: NSRect(x: controlX, y: y - 2, width: 200, height: 26), pullsDown: false)
-        stackStylePopup.addItems(withTitles: ["Filled glass", "Outline panes"])
+        stackStylePopup.addItems(withTitles: localizedItems(["Filled glass", "Outline panes"]))
         stackStylePopup.target = self
         stackStylePopup.action = #selector(controlChanged(_:))
         view.addSubview(stackStylePopup)
 
         y -= 40
 
-        addLabel("Stack Geometry:", at: NSPoint(x: 15, y: y), width: labelW, to: view)
+        addLabel(L10n.tr("Stack Geometry:"), at: NSPoint(x: 15, y: y), width: labelW, to: view)
         stackGeometryPopup = NSPopUpButton(frame: NSRect(x: controlX, y: y - 2, width: 180, height: 26), pullsDown: false)
-        stackGeometryPopup.addItems(withTitles: ["Subtle", "Strong"])
+        stackGeometryPopup.addItems(withTitles: localizedItems(["Subtle", "Strong"]))
         stackGeometryPopup.target = self
         stackGeometryPopup.action = #selector(controlChanged(_:))
         view.addSubview(stackGeometryPopup)
 
         y -= 30
 
-        stackHoverSpreadCheckbox = makeCheckbox("Spread stacks on hover", at: NSPoint(x: 15, y: y))
+        stackHoverSpreadCheckbox = makeCheckbox(L10n.tr("Spread stacks on hover"), at: NSPoint(x: 15, y: y))
         stackHoverSpreadCheckbox.target = self
         stackHoverSpreadCheckbox.action = #selector(controlChanged(_:))
         view.addSubview(stackHoverSpreadCheckbox)
 
         y -= 28
 
-        stackCountBadgeCheckbox = makeCheckbox("Show group count badge", at: NSPoint(x: 15, y: y))
+        stackCountBadgeCheckbox = makeCheckbox(L10n.tr("Show group count badge"), at: NSPoint(x: 15, y: y))
         stackCountBadgeCheckbox.frame.size.width = 300
         stackCountBadgeCheckbox.target = self
         stackCountBadgeCheckbox.action = #selector(controlChanged(_:))
@@ -904,37 +970,37 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTe
 
         y -= 32
 
-        addLabel("Badge Style:", at: NSPoint(x: 15, y: y + 2), width: labelW, to: view)
+        addLabel(L10n.tr("Badge Style:"), at: NSPoint(x: 15, y: y + 2), width: labelW, to: view)
         stackCountBadgeStylePopup = NSPopUpButton(frame: NSRect(x: controlX, y: y - 2, width: 180, height: 26), pullsDown: false)
-        stackCountBadgeStylePopup.addItems(withTitles: ["Minimal", "Pill", "Separator"])
+        stackCountBadgeStylePopup.addItems(withTitles: localizedItems(["Minimal", "Pill", "Separator"]))
         stackCountBadgeStylePopup.target = self
         stackCountBadgeStylePopup.action = #selector(controlChanged(_:))
         view.addSubview(stackCountBadgeStylePopup)
 
         y -= 42
 
-        addSectionHeader("System Indicators", at: NSPoint(x: 15, y: y), width: 500, to: view)
+        addSectionHeader(L10n.tr("System Indicators"), at: NSPoint(x: 15, y: y), width: 500, to: view)
         y -= 30
 
-        systemIndicatorsCheckbox = makeCheckbox("Show system indicators", at: NSPoint(x: 15, y: y))
+        systemIndicatorsCheckbox = makeCheckbox(L10n.tr("Show system indicators"), at: NSPoint(x: 15, y: y))
         systemIndicatorsCheckbox.target = self
         systemIndicatorsCheckbox.action = #selector(controlChanged(_:))
         view.addSubview(systemIndicatorsCheckbox)
 
         y -= 32
 
-        addLabel("Placement:", at: NSPoint(x: 15, y: y + 2), width: labelW, to: view)
+        addLabel(L10n.tr("Placement:"), at: NSPoint(x: 15, y: y + 2), width: labelW, to: view)
         systemIndicatorPlacementPopup = NSPopUpButton(frame: NSRect(x: controlX, y: y - 2, width: 180, height: 26), pullsDown: false)
-        systemIndicatorPlacementPopup.addItems(withTitles: ["Free", "Leading", "Trailing", "Pinned Left", "Pinned Right"])
+        systemIndicatorPlacementPopup.addItems(withTitles: localizedItems(["Free", "Leading", "Trailing", "Pinned Left", "Pinned Right"]))
         systemIndicatorPlacementPopup.target = self
         systemIndicatorPlacementPopup.action = #selector(controlChanged(_:))
         view.addSubview(systemIndicatorPlacementPopup)
 
         y -= 36
 
-        addLabel("Display:", at: NSPoint(x: 15, y: y + 2), width: labelW, to: view)
+        addLabel(L10n.tr("Display:"), at: NSPoint(x: 15, y: y + 2), width: labelW, to: view)
         systemIndicatorDisplayScopePopup = NSPopUpButton(frame: NSRect(x: controlX, y: y - 2, width: 180, height: 26), pullsDown: false)
-        systemIndicatorDisplayScopePopup.addItems(withTitles: ["Every Display", "Selected Display"])
+        systemIndicatorDisplayScopePopup.addItems(withTitles: localizedItems(["Every Display", "Selected Display"]))
         systemIndicatorDisplayScopePopup.target = self
         systemIndicatorDisplayScopePopup.action = #selector(controlChanged(_:))
         view.addSubview(systemIndicatorDisplayScopePopup)
@@ -946,34 +1012,34 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTe
 
         y -= 36
 
-        addLabel("Chip Size:", at: NSPoint(x: 15, y: y + 2), width: labelW, to: view)
+        addLabel(L10n.tr("Chip Size:"), at: NSPoint(x: 15, y: y + 2), width: labelW, to: view)
         systemIndicatorChipPresetPopup = NSPopUpButton(frame: NSRect(x: controlX, y: y - 2, width: 180, height: 26), pullsDown: false)
-        systemIndicatorChipPresetPopup.addItems(withTitles: ["Compact", "Dense", "Micro"])
+        systemIndicatorChipPresetPopup.addItems(withTitles: localizedItems(["Compact", "Dense", "Micro"]))
         systemIndicatorChipPresetPopup.target = self
         systemIndicatorChipPresetPopup.action = #selector(controlChanged(_:))
         view.addSubview(systemIndicatorChipPresetPopup)
 
         y -= 36
 
-        addLabel("Appearance:", at: NSPoint(x: 15, y: y + 2), width: labelW, to: view)
+        addLabel(L10n.tr("Appearance:"), at: NSPoint(x: 15, y: y + 2), width: labelW, to: view)
         systemIndicatorAppearancePopup = NSPopUpButton(frame: NSRect(x: controlX, y: y - 2, width: 180, height: 26), pullsDown: false)
-        systemIndicatorAppearancePopup.addItems(withTitles: ["Glass", "Flat", "Underline", "Minimal"])
+        systemIndicatorAppearancePopup.addItems(withTitles: localizedItems(["Glass", "Flat", "Underline", "Minimal"]))
         systemIndicatorAppearancePopup.target = self
         systemIndicatorAppearancePopup.action = #selector(controlChanged(_:))
         view.addSubview(systemIndicatorAppearancePopup)
 
         y -= 36
 
-        addLabel("Temperature:", at: NSPoint(x: 15, y: y + 2), width: labelW, to: view)
+        addLabel(L10n.tr("Temperature:"), at: NSPoint(x: 15, y: y + 2), width: labelW, to: view)
         systemIndicatorTemperatureUnitPopup = NSPopUpButton(frame: NSRect(x: controlX, y: y - 2, width: 180, height: 26), pullsDown: false)
-        systemIndicatorTemperatureUnitPopup.addItems(withTitles: ["Celsius", "Fahrenheit"])
+        systemIndicatorTemperatureUnitPopup.addItems(withTitles: localizedItems(["Celsius", "Fahrenheit"]))
         systemIndicatorTemperatureUnitPopup.target = self
         systemIndicatorTemperatureUnitPopup.action = #selector(controlChanged(_:))
         view.addSubview(systemIndicatorTemperatureUnitPopup)
 
         y -= 36
 
-        addLabel("Refresh:", at: NSPoint(x: 15, y: y + 2), width: labelW, to: view)
+        addLabel(L10n.tr("Refresh:"), at: NSPoint(x: 15, y: y + 2), width: labelW, to: view)
         systemIndicatorRefreshField = makeNumberField(frame: NSRect(x: controlX, y: y - 1, width: 80, height: 22), min: 250, max: 10000)
         systemIndicatorRefreshField.delegate = self
         systemIndicatorRefreshField.target = self
@@ -987,7 +1053,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTe
 
         let indicatorColorX = controlX + 162
 
-        systemIndicatorCpuCheckbox = makeCheckbox("CPU", at: NSPoint(x: 15, y: y))
+        systemIndicatorCpuCheckbox = makeCheckbox(L10n.tr("CPU"), at: NSPoint(x: 15, y: y))
         systemIndicatorCpuCheckbox.target = self
         systemIndicatorCpuCheckbox.action = #selector(controlChanged(_:))
         view.addSubview(systemIndicatorCpuCheckbox)
@@ -998,7 +1064,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTe
 
         y -= 30
 
-        systemIndicatorGpuCheckbox = makeCheckbox("GPU", at: NSPoint(x: 15, y: y))
+        systemIndicatorGpuCheckbox = makeCheckbox(L10n.tr("GPU"), at: NSPoint(x: 15, y: y))
         systemIndicatorGpuCheckbox.target = self
         systemIndicatorGpuCheckbox.action = #selector(controlChanged(_:))
         view.addSubview(systemIndicatorGpuCheckbox)
@@ -1009,7 +1075,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTe
 
         y -= 30
 
-        systemIndicatorRamCheckbox = makeCheckbox("RAM", at: NSPoint(x: 15, y: y))
+        systemIndicatorRamCheckbox = makeCheckbox(L10n.tr("RAM"), at: NSPoint(x: 15, y: y))
         systemIndicatorRamCheckbox.target = self
         systemIndicatorRamCheckbox.action = #selector(controlChanged(_:))
         view.addSubview(systemIndicatorRamCheckbox)
@@ -1020,7 +1086,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTe
 
         y -= 30
 
-        systemIndicatorThermalCheckbox = makeCheckbox("Temperature", at: NSPoint(x: 15, y: y))
+        systemIndicatorThermalCheckbox = makeCheckbox(L10n.tr("Temperature"), at: NSPoint(x: 15, y: y))
         systemIndicatorThermalCheckbox.target = self
         systemIndicatorThermalCheckbox.action = #selector(controlChanged(_:))
         view.addSubview(systemIndicatorThermalCheckbox)
@@ -1031,7 +1097,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTe
 
         y -= 36
 
-        addLabel("Graph Samples:", at: NSPoint(x: 15, y: y + 2), width: labelW, to: view)
+        addLabel(L10n.tr("Graph Samples:"), at: NSPoint(x: 15, y: y + 2), width: labelW, to: view)
         systemIndicatorGraphSamplesSlider = NSSlider(frame: NSRect(x: controlX, y: y, width: 210, height: 22))
         systemIndicatorGraphSamplesSlider.minValue = 4
         systemIndicatorGraphSamplesSlider.maxValue = 32
@@ -1054,11 +1120,11 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTe
         let labelW: CGFloat = 160
         let controlX: CGFloat = 180
 
-        addSectionHeader("App Rules", at: NSPoint(x: 15, y: y), width: 500, to: view)
+        addSectionHeader(L10n.tr("App Rules"), at: NSPoint(x: 15, y: y), width: 500, to: view)
         y -= 34
 
         // Blacklisted apps
-        addLabel("Blacklisted Apps:", at: NSPoint(x: 15, y: y + 4), width: labelW, to: view)
+        addLabel(L10n.tr("Blacklisted Apps:"), at: NSPoint(x: 15, y: y + 4), width: labelW, to: view)
         blacklistField = NSTextField(frame: NSRect(x: controlX, y: y, width: 320, height: 22))
         blacklistField.placeholderString = "com.app.one, com.app.two"
         blacklistField.font = NSFont.systemFont(ofSize: 11)
@@ -1068,7 +1134,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTe
         y -= 34
 
         let addBlacklistedAppBtn = makeActionButton(
-            title: "Add App...",
+            title: L10n.tr("Add App..."),
             symbolName: "plus.app",
             frame: NSRect(x: controlX, y: y, width: 122, height: 28),
             action: #selector(addBlacklistedAppClicked(_:))
@@ -1076,7 +1142,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTe
         view.addSubview(addBlacklistedAppBtn)
 
         let clearBlacklistBtn = makeActionButton(
-            title: "Clear",
+            title: L10n.tr("Clear"),
             symbolName: "xmark.circle",
             frame: NSRect(x: controlX + 132, y: y, width: 88, height: 28),
             action: #selector(clearBlacklistClicked(_:))
@@ -1086,7 +1152,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTe
         y -= 44
 
         // Pinned apps (read-only)
-        addLabel("Pinned Apps:", at: NSPoint(x: 15, y: y + 4), width: labelW, to: view)
+        addLabel(L10n.tr("Pinned Apps:"), at: NSPoint(x: 15, y: y + 4), width: labelW, to: view)
         pinnedAppsLabel = makeLabel("", at: NSPoint(x: controlX, y: y), width: 320)
         pinnedAppsLabel.font = NSFont.systemFont(ofSize: 11)
         pinnedAppsLabel.textColor = .secondaryLabelColor
@@ -1095,7 +1161,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTe
         y -= 34
 
         let clearPinnedAppsBtn = makeActionButton(
-            title: "Clear Pinned Apps",
+            title: L10n.tr("Clear Pinned Apps"),
             symbolName: "pin.slash",
             frame: NSRect(x: controlX, y: y, width: 158, height: 28),
             action: #selector(clearPinnedAppsClicked(_:))
@@ -1104,12 +1170,12 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTe
 
         y -= 42
 
-        addSectionHeader("Pinned Scope", at: NSPoint(x: 15, y: y), width: 500, to: view)
+        addSectionHeader(L10n.tr("Pinned Scope"), at: NSPoint(x: 15, y: y), width: 500, to: view)
         y -= 34
 
-        addLabel("Pinned Apps:", at: NSPoint(x: 15, y: y + 2), width: labelW, to: view)
+        addLabel(L10n.tr("Pinned Apps:"), at: NSPoint(x: 15, y: y + 2), width: labelW, to: view)
         pinnedAppsScopePopup = NSPopUpButton(frame: NSRect(x: controlX, y: y - 2, width: 220, height: 26), pullsDown: false)
-        pinnedAppsScopePopup.addItems(withTitles: ["Global", "Per Space (Experimental)"])
+        pinnedAppsScopePopup.addItems(withTitles: localizedItems(["Global", "Per Space (Experimental)"]))
         pinnedAppsScopePopup.target = self
         pinnedAppsScopePopup.action = #selector(controlChanged(_:))
         view.addSubview(pinnedAppsScopePopup)
@@ -1118,76 +1184,80 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTe
     }
 
     private func buildAdvancedTab() -> NSView {
-        let view = NSView(frame: NSRect(x: 0, y: 0, width: 540, height: 940))
+        let view = NSView(frame: NSRect(x: 0, y: 0, width: SettingsWindowLayout.contentWidth, height: 940))
         var y: CGFloat = view.bounds.height - 30
-        let labelW: CGFloat = 160
-        let controlX: CGFloat = 180
-        let contentWidth: CGFloat = 510
+        let labelW: CGFloat = 176
+        let controlX: CGFloat = 206
+        let permissionStatusW: CGFloat = 166
+        let permissionButtonW: CGFloat = 150
+        let permissionRefreshW: CGFloat = 118
+        let permissionButtonX = controlX + permissionStatusW + 10
+        let contentWidth: CGFloat = SettingsWindowLayout.contentWidth - 30
 
-        addSectionHeader("Permissions", at: NSPoint(x: 15, y: y), width: contentWidth, to: view)
+        addSectionHeader(L10n.tr("Permissions"), at: NSPoint(x: 15, y: y), width: contentWidth, to: view)
         y -= 36
 
-        addLabel("Accessibility:", at: NSPoint(x: 15, y: y + 4), width: labelW, to: view)
-        accessibilityStatusLabel = makeLabel("", at: NSPoint(x: controlX, y: y + 4), width: 110)
+        addLabel(L10n.tr("Accessibility:"), at: NSPoint(x: 15, y: y + 4), width: labelW, to: view)
+        accessibilityStatusLabel = makeLabel("", at: NSPoint(x: controlX, y: y + 4), width: permissionStatusW)
         accessibilityStatusLabel.textColor = .secondaryLabelColor
         view.addSubview(accessibilityStatusLabel)
         let accessibilityBtn = makeActionButton(
-            title: "Open Settings",
+            title: L10n.tr("Open Settings"),
             symbolName: "figure",
-            frame: NSRect(x: controlX + 120, y: y, width: 142, height: 28),
+            frame: NSRect(x: permissionButtonX, y: y, width: permissionButtonW, height: 28),
             action: #selector(openAccessibilitySettings(_:))
         )
         view.addSubview(accessibilityBtn)
 
         y -= 34
 
-        addLabel("Input Monitoring:", at: NSPoint(x: 15, y: y + 4), width: labelW, to: view)
-        inputMonitoringStatusLabel = makeLabel("", at: NSPoint(x: controlX, y: y + 4), width: 110)
+        addLabel(L10n.tr("Input Monitoring:"), at: NSPoint(x: 15, y: y + 4), width: labelW, to: view)
+        inputMonitoringStatusLabel = makeLabel("", at: NSPoint(x: controlX, y: y + 4), width: permissionStatusW)
         inputMonitoringStatusLabel.textColor = .secondaryLabelColor
         view.addSubview(inputMonitoringStatusLabel)
         let inputBtn = makeActionButton(
-            title: "Open Settings",
+            title: L10n.tr("Open Settings"),
             symbolName: "keyboard",
-            frame: NSRect(x: controlX + 120, y: y, width: 142, height: 28),
+            frame: NSRect(x: permissionButtonX, y: y, width: permissionButtonW, height: 28),
             action: #selector(openInputMonitoringSettings(_:))
         )
         view.addSubview(inputBtn)
 
         y -= 34
 
-        addLabel("Screen Recording:", at: NSPoint(x: 15, y: y + 4), width: labelW, to: view)
-        screenRecordingStatusLabel = makeLabel("", at: NSPoint(x: controlX, y: y + 4), width: 110)
+        addLabel(L10n.tr("Screen Recording:"), at: NSPoint(x: 15, y: y + 4), width: labelW, to: view)
+        screenRecordingStatusLabel = makeLabel("", at: NSPoint(x: controlX, y: y + 4), width: permissionStatusW)
         screenRecordingStatusLabel.textColor = .secondaryLabelColor
         view.addSubview(screenRecordingStatusLabel)
         let screenBtn = makeActionButton(
-            title: "Open Settings",
+            title: L10n.tr("Open Settings"),
             symbolName: "rectangle.on.rectangle",
-            frame: NSRect(x: controlX + 120, y: y, width: 132, height: 28),
+            frame: NSRect(x: permissionButtonX, y: y, width: permissionButtonW, height: 28),
             action: #selector(openScreenRecordingSettings(_:))
         )
         view.addSubview(screenBtn)
 
         let refreshBtn = makeActionButton(
-            title: "Refresh",
+            title: L10n.tr("Refresh"),
             symbolName: "arrow.clockwise",
-            frame: NSRect(x: controlX + 258, y: y, width: 88, height: 28),
+            frame: NSRect(x: permissionButtonX + permissionButtonW + 8, y: y, width: permissionRefreshW, height: 28),
             action: #selector(refreshPermissionStatusClicked(_:))
         )
         view.addSubview(refreshBtn)
 
         y -= 46
 
-        addSectionHeader("Previews", at: NSPoint(x: 15, y: y), width: contentWidth, to: view)
+        addSectionHeader(L10n.tr("Previews"), at: NSPoint(x: 15, y: y), width: contentWidth, to: view)
         y -= 34
 
-        previewsEnabledCheckbox = makeCheckbox("Show window previews", at: NSPoint(x: 15, y: y))
+        previewsEnabledCheckbox = makeCheckbox(L10n.tr("Show window previews"), at: NSPoint(x: 15, y: y))
         previewsEnabledCheckbox.target = self
         previewsEnabledCheckbox.action = #selector(controlChanged(_:))
         view.addSubview(previewsEnabledCheckbox)
 
         y -= 32
 
-        addLabel("Preview Delay:", at: NSPoint(x: 15, y: y + 2), width: labelW, to: view)
+        addLabel(L10n.tr("Preview Delay:"), at: NSPoint(x: 15, y: y + 2), width: labelW, to: view)
         previewHoverDelayField = makeNumberField(frame: NSRect(x: controlX, y: y - 1, width: 80, height: 22), min: 0, max: 2000)
         previewHoverDelayField.delegate = self
         previewHoverDelayField.target = self
@@ -1199,18 +1269,18 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTe
 
         y -= 46
 
-        addSectionHeader("Providers", at: NSPoint(x: 15, y: y), width: contentWidth, to: view)
+        addSectionHeader(L10n.tr("Providers"), at: NSPoint(x: 15, y: y), width: contentWidth, to: view)
         y -= 34
 
-        addLabel("Provider Runtime:", at: NSPoint(x: 15, y: y + 2), width: labelW, to: view)
-        providerRuntimeCheckbox = makeCheckbox("Enable provider runtime", at: NSPoint(x: controlX, y: y - 2))
+        addLabel(L10n.tr("Provider Runtime:"), at: NSPoint(x: 15, y: y + 2), width: labelW, to: view)
+        providerRuntimeCheckbox = makeCheckbox(L10n.tr("Enable provider runtime"), at: NSPoint(x: controlX, y: y - 2))
         providerRuntimeCheckbox.target = self
         providerRuntimeCheckbox.action = #selector(controlChanged(_:))
         view.addSubview(providerRuntimeCheckbox)
 
         y -= 34
 
-        addLabel("Provider Timeout:", at: NSPoint(x: 15, y: y + 2), width: labelW, to: view)
+        addLabel(L10n.tr("Provider Timeout:"), at: NSPoint(x: 15, y: y + 2), width: labelW, to: view)
         providerTimeoutField = makeNumberField(frame: NSRect(x: controlX, y: y - 1, width: 80, height: 22), min: 150, max: 5000)
         providerTimeoutField.delegate = self
         providerTimeoutField.target = self
@@ -1222,7 +1292,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTe
 
         y -= 34
 
-        addLabel("Circuit Breaker:", at: NSPoint(x: 15, y: y + 2), width: labelW, to: view)
+        addLabel(L10n.tr("Circuit Breaker:"), at: NSPoint(x: 15, y: y + 2), width: labelW, to: view)
         providerCircuitBreakerField = makeNumberField(frame: NSRect(x: controlX, y: y - 1, width: 80, height: 22), min: 1, max: 20)
         providerCircuitBreakerField.delegate = self
         providerCircuitBreakerField.target = self
@@ -1231,34 +1301,34 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTe
 
         y -= 46
 
-        addSectionHeader("Configuration", at: NSPoint(x: 15, y: y), width: contentWidth, to: view)
+        addSectionHeader(L10n.tr("Configuration"), at: NSPoint(x: 15, y: y), width: contentWidth, to: view)
         y -= 42
 
         let openConfigBtn = makeActionButton(
-            title: "Open Config",
+            title: L10n.tr("Open Config"),
             symbolName: "doc.text",
-            frame: NSRect(x: controlX, y: y, width: 142, height: 30),
+            frame: NSRect(x: controlX, y: y, width: 154, height: 30),
             action: #selector(openConfigFile(_:))
         )
         view.addSubview(openConfigBtn)
 
         let revealConfigBtn = makeActionButton(
-            title: "Show in Finder",
+            title: L10n.tr("Show in Finder"),
             symbolName: "folder",
-            frame: NSRect(x: controlX + 154, y: y, width: 150, height: 30),
+            frame: NSRect(x: controlX + 166, y: y, width: 162, height: 30),
             action: #selector(revealConfigFile(_:))
         )
         view.addSubview(revealConfigBtn)
 
         let resetAllBtn = makeActionButton(
-            title: "Reset All",
+            title: L10n.tr("Reset All"),
             symbolName: "arrow.counterclockwise",
             frame: NSRect(x: controlX, y: y - 36, width: 112, height: 30),
             action: #selector(resetAllSettingsClicked(_:))
         )
         view.addSubview(resetAllBtn)
 
-        configPathLabel = NSTextField(frame: NSRect(x: controlX, y: y - 67, width: 330, height: 20))
+        configPathLabel = NSTextField(frame: NSRect(x: controlX, y: y - 67, width: contentWidth - controlX - 15, height: 20))
         configPathLabel.stringValue = Self.displayPath(for: Config.configPath)
         configPathLabel.isEditable = false
         configPathLabel.isBordered = false
@@ -1273,24 +1343,24 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTe
 
         y -= 106
 
-        addSectionHeader("Diagnostics", at: NSPoint(x: 15, y: y), width: contentWidth, to: view)
+        addSectionHeader(L10n.tr("Diagnostics"), at: NSPoint(x: 15, y: y), width: contentWidth, to: view)
         y -= 34
 
-        perfLoggingCheckbox = makeCheckbox("Performance logging", at: NSPoint(x: 15, y: y))
+        perfLoggingCheckbox = makeCheckbox(L10n.tr("Performance logging"), at: NSPoint(x: 15, y: y))
         perfLoggingCheckbox.target = self
         perfLoggingCheckbox.action = #selector(controlChanged(_:))
         view.addSubview(perfLoggingCheckbox)
 
         y -= 34
 
-        perfHangDiagnosticsCheckbox = makeCheckbox("Hang diagnostics", at: NSPoint(x: 15, y: y))
+        perfHangDiagnosticsCheckbox = makeCheckbox(L10n.tr("Hang diagnostics"), at: NSPoint(x: 15, y: y))
         perfHangDiagnosticsCheckbox.target = self
         perfHangDiagnosticsCheckbox.action = #selector(controlChanged(_:))
         view.addSubview(perfHangDiagnosticsCheckbox)
 
         y -= 34
 
-        addLabel("Log Interval:", at: NSPoint(x: 15, y: y + 2), width: labelW, to: view)
+        addLabel(L10n.tr("Log Interval:"), at: NSPoint(x: 15, y: y + 2), width: labelW, to: view)
         perfLogIntervalField = makeNumberField(frame: NSRect(x: controlX, y: y - 1, width: 80, height: 22), min: 250, max: 10000)
         perfLogIntervalField.delegate = self
         perfLogIntervalField.target = self
@@ -1302,24 +1372,24 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTe
 
         y -= 46
 
-        addSectionHeader("Experimental", at: NSPoint(x: 15, y: y), width: contentWidth, to: view)
+        addSectionHeader(L10n.tr("Experimental"), at: NSPoint(x: 15, y: y), width: contentWidth, to: view)
         y -= 34
 
-        pluginsEnabledCheckbox = makeCheckbox("Enable plugins", at: NSPoint(x: 15, y: y))
+        pluginsEnabledCheckbox = makeCheckbox(L10n.tr("Enable plugins"), at: NSPoint(x: 15, y: y))
         pluginsEnabledCheckbox.target = self
         pluginsEnabledCheckbox.action = #selector(controlChanged(_:))
         view.addSubview(pluginsEnabledCheckbox)
 
         y -= 30
 
-        windowTabGroupsCheckbox = makeCheckbox("Enable window tab groups", at: NSPoint(x: 15, y: y))
+        windowTabGroupsCheckbox = makeCheckbox(L10n.tr("Enable window tab groups"), at: NSPoint(x: 15, y: y))
         windowTabGroupsCheckbox.target = self
         windowTabGroupsCheckbox.action = #selector(controlChanged(_:))
         view.addSubview(windowTabGroupsCheckbox)
 
         y -= 34
 
-        addLabel("Group Hover Delay:", at: NSPoint(x: 15, y: y + 2), width: labelW, to: view)
+        addLabel(L10n.tr("Group Hover Delay:"), at: NSPoint(x: 15, y: y + 2), width: labelW, to: view)
         tabGroupHoverDelayField = makeNumberField(frame: NSRect(x: controlX, y: y - 1, width: 80, height: 22), min: 100, max: 5000)
         tabGroupHoverDelayField.delegate = self
         tabGroupHoverDelayField.target = self
@@ -1331,7 +1401,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTe
 
         y -= 30
 
-        tabGroupCollapseCheckbox = makeCheckbox("Collapse group on outside click", at: NSPoint(x: 15, y: y))
+        tabGroupCollapseCheckbox = makeCheckbox(L10n.tr("Collapse group on outside click"), at: NSPoint(x: 15, y: y))
         tabGroupCollapseCheckbox.target = self
         tabGroupCollapseCheckbox.action = #selector(controlChanged(_:))
         view.addSubview(tabGroupCollapseCheckbox)
@@ -1368,9 +1438,9 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTe
 
         let version = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? Updater.currentVersion
         let build = Bundle.main.infoDictionary?["CFBundleVersion"] as? String
-        var versionString = "Version \(version)"
+        var versionString = L10n.tr("Version %@", version)
         if let build, !build.isEmpty, build != version {
-            versionString += " (\(build))"
+            versionString = L10n.tr("Version %@ (%@)", version, build)
         }
         y -= 22
 
@@ -1402,7 +1472,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTe
         let actionStartX = centerX - actionButtonWidth - actionGap / 2
 
         let updateBtn = makeActionButton(
-            title: "Check for Updates",
+            title: L10n.tr("Check for Updates"),
             symbolName: "arrow.triangle.2.circlepath",
             frame: NSRect(x: actionStartX, y: y, width: actionButtonWidth, height: 30),
             action: #selector(checkForUpdatesClicked(_:))
@@ -1410,7 +1480,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTe
         view.addSubview(updateBtn)
 
         let githubBtn = makeActionButton(
-            title: "GitHub",
+            title: L10n.tr("GitHub"),
             symbolName: "arrow.up.right.square",
             frame: NSRect(x: actionStartX + actionButtonWidth + actionGap, y: y, width: actionButtonWidth, height: 30),
             action: #selector(openGitHub(_:))
@@ -1423,12 +1493,13 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTe
     // MARK: - Config
 
     private func loadConfig() {
-        applyConfigToControls(Config.load())
+        let config = Config.load()
+        applyConfigToControls(config)
     }
 
     private func applyConfigToControls(_ config: Config) {
         heightSlider.integerValue = config.taskbarHeight
-        heightLabel.stringValue = "\(config.taskbarHeight) px"
+        heightLabel.stringValue = formatPixels(config.taskbarHeight)
         switch config.taskbarPosition {
         case .top: positionPopup.selectItem(at: 0)
         case .bottom: positionPopup.selectItem(at: 1)
@@ -1440,9 +1511,9 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTe
         case .auto: itemSizingPopup.selectItem(at: 1)
         }
         maxItemWidthSlider.integerValue = config.maxItemWidth
-        maxItemWidthLabel.stringValue = "\(config.maxItemWidth) px"
+        maxItemWidthLabel.stringValue = formatPixels(config.maxItemWidth)
         maxTitleWidthSlider.integerValue = config.maxTitleWidth
-        maxTitleWidthLabel.stringValue = "\(config.maxTitleWidth) px"
+        maxTitleWidthLabel.stringValue = formatPixels(config.maxTitleWidth)
         centerItemsCheckbox.state = config.centerItems ? .on : .off
         switch config.multiMonitorMode {
         case .allDisplays: multiMonitorPopup.selectItem(at: 0)
@@ -1510,6 +1581,11 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTe
         }
         hideDockCheckbox.state = config.hideDock ? .on : .off
         showMenuBarIconCheckbox.state = config.showMenuBarIcon ? .on : .off
+        switch config.appLanguage {
+        case .system: appLanguagePopup.selectItem(at: 0)
+        case .english: appLanguagePopup.selectItem(at: 1)
+        case .korean: appLanguagePopup.selectItem(at: 2)
+        }
         loginCheckbox.state = LoginItem.isEnabled() ? .on : .off
 
         switch config.theme {
@@ -1527,7 +1603,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTe
         }
         updateIconSizeControl(for: config.iconSize)
         titleFontSizeSlider.integerValue = config.fontSize
-        titleFontSizeLabel.stringValue = "\(config.fontSize) pt"
+        titleFontSizeLabel.stringValue = formatPoints(config.fontSize)
         switch config.hoverIntensity {
         case .subtle: hoverIntensityPopup.selectItem(at: 0)
         case .medium: hoverIntensityPopup.selectItem(at: 1)
@@ -1609,7 +1685,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTe
 
         blacklistField.stringValue = Self.uniquePreservingOrder(config.blacklistedApps).joined(separator: ", ")
         pendingPinnedApps = nil
-        pinnedAppsLabel.stringValue = config.pinnedApps.isEmpty ? "(none)" : config.pinnedApps.joined(separator: ", ")
+        pinnedAppsLabel.stringValue = config.pinnedApps.isEmpty ? L10n.tr("(none)") : config.pinnedApps.joined(separator: ", ")
         switch config.pinnedAppsScope {
         case .global: pinnedAppsScopePopup.selectItem(at: 0)
         case .perSpace: pinnedAppsScopePopup.selectItem(at: 1)
@@ -1646,31 +1722,31 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTe
     // MARK: - Actions
 
     @objc private func heightChanged(_ sender: NSSlider) {
-        heightLabel.stringValue = "\(sender.integerValue) px"
+        heightLabel.stringValue = formatPixels(sender.integerValue)
         updateAppearancePreview()
         scheduleAutoApply()
     }
 
     @objc private func iconSizeChanged(_ sender: NSSlider) {
-        iconSizeLabel.stringValue = "\(sender.integerValue) px"
+        iconSizeLabel.stringValue = formatPixels(sender.integerValue)
         updateAppearancePreview()
         scheduleAutoApply()
     }
 
     @objc private func titleFontSizeChanged(_ sender: NSSlider) {
-        titleFontSizeLabel.stringValue = "\(sender.integerValue) pt"
+        titleFontSizeLabel.stringValue = formatPoints(sender.integerValue)
         updateAppearancePreview()
         scheduleAutoApply()
     }
 
     @objc private func maxItemWidthChanged(_ sender: NSSlider) {
-        maxItemWidthLabel.stringValue = "\(sender.integerValue) px"
+        maxItemWidthLabel.stringValue = formatPixels(sender.integerValue)
         updateAppearancePreview()
         scheduleAutoApply()
     }
 
     @objc private func maxTitleWidthChanged(_ sender: NSSlider) {
-        maxTitleWidthLabel.stringValue = "\(sender.integerValue) px"
+        maxTitleWidthLabel.stringValue = formatPixels(sender.integerValue)
         updateAppearancePreview()
         scheduleAutoApply()
     }
@@ -1754,6 +1830,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTe
             config.secondClickAction = defaults.secondClickAction
             config.hideDock = defaults.hideDock
             config.showMenuBarIcon = defaults.showMenuBarIcon
+            config.appLanguage = defaults.appLanguage
         case 1:
             config.theme = defaults.theme
             config.barStyle = defaults.barStyle
@@ -1914,7 +1991,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTe
     }
 
     private func updateIconSizeControl(for iconSize: Int) {
-        iconSizeLabel.stringValue = "\(iconSize) px"
+        iconSizeLabel.stringValue = formatPixels(iconSize)
         iconSizeSlider.integerValue = iconSize
     }
 
@@ -1936,11 +2013,11 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTe
             guard let displayId = screen.displayId ?? (index == 0 ? fallbackDisplayId : nil) else {
                 return nil
             }
-            let title = screen.localizedName.isEmpty ? "Display \(index + 1)" : screen.localizedName
+            let title = screen.localizedName.isEmpty ? L10n.tr("Display %d", index + 1) : screen.localizedName
             return (title, displayId)
         }
 
-        let nonEmptyEntries = entries.isEmpty ? [("Main Display", fallbackDisplayId)] : entries
+        let nonEmptyEntries = entries.isEmpty ? [(L10n.tr("Main Display"), fallbackDisplayId)] : entries
         for (index, entry) in nonEmptyEntries.enumerated() {
             let title = nonEmptyEntries.count == 1 ? entry.title : "\(entry.title) \(index + 1)"
             popup.addItem(withTitle: title)
@@ -2030,7 +2107,8 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTe
                 .filter { !$0.isEmpty }
         )
 
-        var config = Config.load()
+        let previousConfig = Config.load()
+        var config = previousConfig
         config.taskbarHeight = heightSlider.integerValue
         switch positionPopup.indexOfSelectedItem {
         case 0: config.taskbarPosition = .top
@@ -2134,6 +2212,12 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTe
 
         config.hideDock = hideDockCheckbox.state == .on
         config.showMenuBarIcon = showMenuBarIconCheckbox.state == .on
+        switch appLanguagePopup.indexOfSelectedItem {
+        case 0: config.appLanguage = .system
+        case 1: config.appLanguage = .english
+        case 2: config.appLanguage = .korean
+        default: break
+        }
 
         // Appearance
         switch themePopup.indexOfSelectedItem {
@@ -2289,6 +2373,8 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTe
         config.tabGroupCollapseOnOutsideClick = tabGroupCollapseCheckbox.state == .on
         config.validate()
         config.save()
+        L10n.applyAppLanguage(config.appLanguage)
+        let languageChanged = config.appLanguage != previousConfig.appLanguage
 
         if config.adjustWindowsForTaskbar && !previousAdjustWindows {
             AccessibilityService.requestPermission()
@@ -2305,20 +2391,24 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTe
                 LoginItem.disable()
             }
         }
+
+        if languageChanged {
+            rebuildUI(applying: config)
+        }
     }
 
     @objc private func checkForUpdatesClicked(_ sender: Any) {
-        updateStatusLabel.stringValue = "Checking..."
+        updateStatusLabel.stringValue = L10n.tr("Checking...")
         Task {
             do {
                 if let update = try await Updater.checkForUpdate() {
-                    updateStatusLabel.stringValue = "Update available: v\(update.latest)"
+                    updateStatusLabel.stringValue = L10n.tr("Update available: v%@", update.latest)
                     Updater.openReleasePage(url: update.url)
                 } else {
-                    updateStatusLabel.stringValue = "You're up to date."
+                    updateStatusLabel.stringValue = L10n.tr("You're up to date.")
                 }
             } catch {
-                updateStatusLabel.stringValue = "Update check failed."
+                updateStatusLabel.stringValue = L10n.tr("Update check failed.")
             }
         }
     }
@@ -2330,7 +2420,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTe
     @objc private func addBlacklistedAppClicked(_ sender: Any) {
         guard let window else { return }
         let panel = NSOpenPanel()
-        panel.title = "Choose an app to hide from LiquidBar"
+        panel.title = L10n.tr("Choose an app to hide from LiquidBar")
         panel.canChooseDirectories = false
         panel.canChooseFiles = true
         panel.allowsMultipleSelection = false
@@ -2354,7 +2444,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTe
 
     @objc private func clearPinnedAppsClicked(_ sender: Any) {
         pendingPinnedApps = []
-        pinnedAppsLabel.stringValue = "(none)"
+        pinnedAppsLabel.stringValue = L10n.tr("(none)")
         scheduleAutoApply()
     }
 
@@ -2372,8 +2462,11 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTe
 
     @objc private func openScreenRecordingSettings(_ sender: Any) {
         _ = CGRequestScreenCaptureAccess()
-        openPrivacyPane("Privacy_ScreenCapture")
-        refreshPermissionStatus()
+        Self.primeScreenCaptureKitPermissionListing()
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) { [weak self] in
+            self?.openPrivacyPane("Privacy_ScreenCapture")
+            self?.refreshPermissionStatus()
+        }
     }
 
     @objc private func refreshPermissionStatusClicked(_ sender: Any) {
@@ -2382,11 +2475,11 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTe
 
     @objc private func resetAllSettingsClicked(_ sender: Any) {
         let alert = NSAlert()
-        alert.messageText = "Reset all LiquidBar settings?"
-        alert.informativeText = "This restores default preferences and keeps the current app installed."
+        alert.messageText = L10n.tr("Reset all LiquidBar settings?")
+        alert.informativeText = L10n.tr("This restores default preferences and keeps the current app installed.")
         alert.alertStyle = .warning
-        alert.addButton(withTitle: "Reset All")
-        alert.addButton(withTitle: "Cancel")
+        alert.addButton(withTitle: L10n.tr("Reset All"))
+        alert.addButton(withTitle: L10n.tr("Cancel"))
         let response: NSApplication.ModalResponse
         if let window {
             response = alert.runModal()
@@ -2399,6 +2492,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTe
         var defaults = Config()
         defaults.validate()
         defaults.save()
+        L10n.applyAppLanguage(defaults.appLanguage)
         applyConfigToControls(defaults)
         onConfigChanged?()
     }
@@ -2432,14 +2526,29 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTe
     }
 
     private func refreshPermissionStatus() {
-        accessibilityStatusLabel?.stringValue = AXIsProcessTrusted() ? "Allowed" : "Needs Access"
-        inputMonitoringStatusLabel?.stringValue = HotkeyMonitor.listenEventAccessGranted() ? "Allowed" : "Needs Access"
-        screenRecordingStatusLabel?.stringValue = CGPreflightScreenCaptureAccess() ? "Allowed" : "Needs Access"
+        let accessibilityAllowed = AXIsProcessTrusted()
+        accessibilityStatusLabel?.stringValue = accessibilityAllowed ? L10n.tr("Allowed") : L10n.tr("Needs Access")
+        if HotkeyMonitor.inputMonitoringAccessGranted() {
+            inputMonitoringStatusLabel?.stringValue = L10n.tr("Allowed")
+        } else if accessibilityAllowed && HotkeyMonitor.listenEventAccessGranted() {
+            inputMonitoringStatusLabel?.stringValue = L10n.tr("Allowed via Accessibility")
+        } else {
+            inputMonitoringStatusLabel?.stringValue = L10n.tr("Needs Access")
+        }
+        screenRecordingStatusLabel?.stringValue = CGPreflightScreenCaptureAccess() ? L10n.tr("Allowed") : L10n.tr("Needs Access")
     }
 
     private func openPrivacyPane(_ anchor: String) {
         guard let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?\(anchor)") else { return }
         NSWorkspace.shared.open(url)
+    }
+
+    private static func primeScreenCaptureKitPermissionListing() {
+        SCShareableContent.getExcludingDesktopWindows(true, onScreenWindowsOnly: false) { _, error in
+            if let error {
+                Log.event.debug("ScreenCaptureKit permission prime failed from Preferences: \(String(describing: error))")
+            }
+        }
     }
 
     private func clearTransientTextFocus() {
@@ -2471,6 +2580,18 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTe
     }
 
     // MARK: - UI Helpers
+
+    private func localizedItems(_ keys: [String]) -> [String] {
+        keys.map { L10n.tr($0) }
+    }
+
+    private func formatPixels(_ value: Int) -> String {
+        L10n.tr("%d px", value)
+    }
+
+    private func formatPoints(_ value: Int) -> String {
+        L10n.tr("%d pt", value)
+    }
 
     @discardableResult
     private func addLabel(_ text: String, at point: NSPoint, width: CGFloat, to parent: NSView) -> NSTextField {
@@ -2507,16 +2628,20 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTe
         let button = NSButton(frame: frame)
         button.bezelStyle = .rounded
         button.title = title
+        button.toolTip = title
         button.image = NSImage(systemSymbolName: symbolName, accessibilityDescription: nil)
         button.imagePosition = .imageLeading
         button.target = self
         button.action = action
+        if let cell = button.cell as? NSButtonCell {
+            cell.lineBreakMode = .byTruncatingTail
+        }
         return button
     }
 
     private func makeSystemIndicatorModePopup(at point: NSPoint) -> NSPopUpButton {
         let popup = NSPopUpButton(frame: NSRect(x: point.x, y: point.y, width: 150, height: 26), pullsDown: false)
-        popup.addItems(withTitles: ["Percent", "Bar", "Graph"])
+        popup.addItems(withTitles: localizedItems(["Percent", "Bar", "Graph"]))
         popup.target = self
         popup.action = #selector(controlChanged(_:))
         return popup
@@ -2527,8 +2652,9 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTe
         well.color = SystemIndicatorColorPalette.defaultColor(for: metric, severity: 0.2)
         well.target = self
         well.action = #selector(controlChanged(_:))
-        well.toolTip = "\(metric.label) color"
-        well.setAccessibilityLabel("\(metric.label) color")
+        let label = L10n.tr("%@ color", metric.label)
+        well.toolTip = label
+        well.setAccessibilityLabel(label)
         return well
     }
 
@@ -2593,17 +2719,21 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTe
         label.backgroundColor = .clear
         label.font = NSFont.systemFont(ofSize: 11, weight: .semibold)
         label.textColor = .secondaryLabelColor
+        let labelWidth = min(max(90, ceil(label.intrinsicContentSize.width) + 10), width * 0.45)
+        label.frame.size.width = labelWidth
         parent.addSubview(label)
 
-        let separator = NSBox(frame: NSRect(x: point.x + 150, y: point.y + 7, width: max(0, width - 150), height: 1))
+        let separatorX = point.x + labelWidth + 10
+        let separator = NSBox(frame: NSRect(x: separatorX, y: point.y + 7, width: max(0, point.x + width - separatorX), height: 1))
         separator.boxType = .separator
         parent.addSubview(separator)
     }
 
     private func makeCheckbox(_ title: String, at point: NSPoint) -> NSButton {
-        let cb = NSButton(frame: NSRect(x: point.x, y: point.y, width: 300, height: 22))
+        let cb = NSButton(frame: NSRect(x: point.x, y: point.y, width: 420, height: 22))
         cb.setButtonType(.switch)
         cb.title = title
+        cb.toolTip = title
         cb.font = NSFont.systemFont(ofSize: 13)
         return cb
     }

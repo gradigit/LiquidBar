@@ -13,8 +13,12 @@ SIGN_IDENTITY="${LIQUIDBAR_CODESIGN_IDENTITY:-}"
 VOLUME_NAME="${LIQUIDBAR_DMG_VOLUME_NAME:-LiquidBar}"
 
 if [[ -z "$SIGN_IDENTITY" ]]; then
-  SIGN_IDENTITY="-"
+  # Prefer a stable local signing identity so macOS TCC permissions persist
+  # across local rebuilds. CI/release machines without an identity fall back
+  # to ad-hoc signing below.
+  SIGN_IDENTITY="$(security find-identity -v -p codesigning 2>/dev/null | awk '/Apple Development:/{print $2; exit}' || true)"
 fi
+SIGN_IDENTITY="${SIGN_IDENTITY:--}"
 
 cd "$ROOT_DIR"
 
@@ -49,6 +53,11 @@ cat > "${APP_PATH}/Contents/Info.plist" <<PLIST
   <string>LiquidBar</string>
   <key>CFBundleInfoDictionaryVersion</key>
   <string>6.0</string>
+  <key>CFBundleLocalizations</key>
+  <array>
+    <string>en</string>
+    <string>ko</string>
+  </array>
   <key>CFBundleName</key>
   <string>LiquidBar</string>
   <key>CFBundlePackageType</key>
@@ -63,6 +72,8 @@ cat > "${APP_PATH}/Contents/Info.plist" <<PLIST
   <string>26.0</string>
   <key>LSUIElement</key>
   <true/>
+  <key>NSScreenCaptureUsageDescription</key>
+  <string>LiquidBar uses Screen Recording permission to capture static window thumbnails for taskbar previews and the window switcher.</string>
   <key>NSSupportsAutomaticTermination</key>
   <false/>
   <key>NSSupportsSuddenTermination</key>
@@ -77,6 +88,17 @@ cp -f "$BIN_PATH" "${APP_PATH}/Contents/MacOS/LiquidBar"
 cp -f "${ROOT_DIR}/Assets/AppIcon/LiquidBar.icns" "${APP_PATH}/Contents/Resources/LiquidBar.icns"
 cp -f "${ROOT_DIR}/Assets/MenuBar/liquidbar-menubar-template.png" "${APP_PATH}/Contents/Resources/liquidbar-menubar-template.png"
 cp -f "${ROOT_DIR}/Assets/Brand/liquidbar-brand-bar-transparent.png" "${APP_PATH}/Contents/Resources/liquidbar-brand-bar-transparent.png"
+
+shopt -s nullglob
+resource_bundles=("${BIN_DIR}"/LiquidBar_*.bundle)
+shopt -u nullglob
+if [[ ${#resource_bundles[@]} -eq 0 ]]; then
+  echo "error: expected SwiftPM resource bundle for localized resources in: $BIN_DIR" >&2
+  exit 1
+fi
+for resource_bundle in "${resource_bundles[@]}"; do
+  ditto --norsrc --noextattr --noqtn "$resource_bundle" "${APP_PATH}/Contents/Resources/$(basename "$resource_bundle")"
+done
 
 codesign_args=(--force --sign "$SIGN_IDENTITY" --options runtime)
 if [[ "$SIGN_IDENTITY" != "-" ]]; then

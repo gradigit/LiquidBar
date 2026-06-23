@@ -133,7 +133,7 @@ struct ProviderRuntimeTests {
             fallbackTitle: "Fallback"
         )
         #expect(third.health == .disconnected)
-        #expect(third.subtitle.contains("circuit open"))
+        #expect(third.subtitle == L10n.tr("Provider circuit open"))
     }
 
     @Test func testFetchMissingProviderReturnsDisconnected() async {
@@ -145,7 +145,7 @@ struct ProviderRuntimeTests {
             fallbackTitle: "Fallback"
         )
         #expect(state.health == .disconnected)
-        #expect(state.subtitle.contains("not found"))
+        #expect(state.subtitle == L10n.tr("Provider not found"))
     }
 
     @Test func testRegisterProvidersSkipsInvalidXPCProviderManifest() async {
@@ -171,7 +171,7 @@ struct ProviderRuntimeTests {
             fallbackTitle: "Fallback"
         )
         #expect(state.health == .disconnected)
-        #expect(state.subtitle.contains("not found"))
+        #expect(state.subtitle == L10n.tr("Provider not found"))
     }
 
     @Test func testRegisterProvidersSupportsXPCBridgePath() async {
@@ -197,6 +197,6 @@ struct ProviderRuntimeTests {
             fallbackTitle: "Fallback"
         )
         #expect(state.health == .disconnected)
-        #expect(state.subtitle.contains("timeout/error"))
+        #expect(state.subtitle == L10n.tr("Provider timeout/error"))
     }
 }

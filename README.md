@@ -1,5 +1,7 @@
 # LiquidBar
 
+[한국어](README.ko.md)
+
 ![LiquidBar wordmark](Assets/Brand/liquidbar-brand-bar-transparent.png)
 
 **An open-source Liquid Glass taskbar and Cmd-Tab window switcher for macOS.**
@@ -56,7 +58,7 @@ by metric, color, placement, display scope, refresh interval, and visual style.
 
 Most v1 behavior can be tuned without editing JSON by hand: bar size, icon
 size, glass style, hover intensity, visual depth, animations, indicators,
-multi-monitor behavior, previews, permissions, diagnostics, and plugins.
+multi-monitor behavior, language, previews, permissions, diagnostics, and plugins.
 
 ## Features
 
@@ -175,6 +177,9 @@ swift run LiquidBar -- --write-default-config
 The v1 default config enables the icon-first taskbar, right-pinned system
 indicators, Cmd-Tab switcher, all-display switcher scope, and Liquid Glass
 styling. Developer performance logging is disabled by default.
+
+Change the app language in **Preferences -> General -> System -> Language**.
+Choose System, English, or Korean.
 
 Set `LIQUIDBAR_CONFIG_DIR` during development or tests to isolate config and
 state files:

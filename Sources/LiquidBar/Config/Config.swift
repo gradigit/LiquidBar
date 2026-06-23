@@ -36,6 +36,23 @@ enum Theme: String, Codable, Sendable, CaseIterable {
     case system
 }
 
+enum AppLanguage: String, Codable, Sendable, CaseIterable {
+    case system
+    case english = "en"
+    case korean = "ko"
+
+    var localeIdentifier: String? {
+        switch self {
+        case .system:
+            return nil
+        case .english:
+            return "en"
+        case .korean:
+            return "ko"
+        }
+    }
+}
+
 enum MultiMonitorMode: String, Codable, Sendable, CaseIterable {
     case allDisplays = "all_displays"
     case mainOnly = "main_only"
@@ -249,6 +266,7 @@ struct Config: Codable, Sendable, Equatable {
     var iconsOnly: Bool
     var taskbarPosition: Position
     var theme: Theme
+    var appLanguage: AppLanguage
     var itemSizing: ItemSizing
     /// Windows-style "tabbed taskbar": focused item expands; others collapse to icons.
     var tabbedTaskbarEnabled: Bool
@@ -379,6 +397,7 @@ struct Config: Codable, Sendable, Equatable {
         iconsOnly: Bool = true,
         taskbarPosition: Position = .bottom,
         theme: Theme = .system,
+        appLanguage: AppLanguage = .system,
         itemSizing: ItemSizing = .uniform,
         tabbedTaskbarEnabled: Bool = false,
         groupByApp: Bool = false,
@@ -468,6 +487,7 @@ struct Config: Codable, Sendable, Equatable {
         self.iconsOnly = iconsOnly
         self.taskbarPosition = taskbarPosition
         self.theme = theme
+        self.appLanguage = appLanguage
         self.itemSizing = itemSizing
         self.tabbedTaskbarEnabled = tabbedTaskbarEnabled
         self.groupByApp = groupByApp
@@ -562,6 +582,7 @@ struct Config: Codable, Sendable, Equatable {
         iconsOnly = try c.decode(Bool.self, forKey: .iconsOnly)
         taskbarPosition = try c.decode(Position.self, forKey: .taskbarPosition)
         theme = try c.decode(Theme.self, forKey: .theme)
+        appLanguage = try c.decodeIfPresent(AppLanguage.self, forKey: .appLanguage) ?? .system
         itemSizing = try c.decode(ItemSizing.self, forKey: .itemSizing)
         tabbedTaskbarEnabled = try c.decodeIfPresent(Bool.self, forKey: .tabbedTaskbarEnabled) ?? false
         groupByApp = try c.decode(Bool.self, forKey: .groupByApp)

@@ -14,6 +14,7 @@ struct ConfigTests {
         #expect(config.iconsOnly == true)
         #expect(config.taskbarPosition == .bottom)
         #expect(config.theme == .system)
+        #expect(config.appLanguage == .system)
         #expect(config.itemSizing == .uniform)
         #expect(config.tabbedTaskbarEnabled == false)
         #expect(config.groupByApp == false)
@@ -108,6 +109,7 @@ struct ConfigTests {
             iconsOnly: true,
             taskbarPosition: .bottom,
             theme: .dark,
+            appLanguage: .korean,
             itemSizing: .auto,
             groupByApp: true,
             showHiddenApps: false,
@@ -154,6 +156,7 @@ struct ConfigTests {
         #expect(json.contains("max_title_width"))
         #expect(json.contains("icons_only"))
         #expect(json.contains("taskbar_position"))
+        #expect(json.contains("app_language"))
         #expect(json.contains("group_by_app"))
         #expect(json.contains("sidebar_mode_enabled"))
         #expect(json.contains("sidebar_state_default"))
@@ -266,6 +269,7 @@ struct ConfigTests {
         #expect(config.switcherWindowScope == .allDisplays)
         #expect(config.providerRuntimeEnabled == true)
         #expect(config.showMenuBarIcon == true)
+        #expect(config.appLanguage == .system)
     }
 
     @Test func testHelpers() {

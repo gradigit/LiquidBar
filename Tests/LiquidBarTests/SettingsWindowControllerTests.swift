@@ -17,18 +17,22 @@ struct SettingsWindowControllerTests {
         RunLoop.main.run(until: Date(timeIntervalSinceNow: 0.1))
 
         let contentView = try #require(window.contentView)
-        let checkbox = try findButton(title: "Show menu bar icon", in: contentView)
+        let checkbox = try findButton(title: L10n.tr("Show menu bar icon"), in: contentView)
 
         #expect(checkbox.state == .off)
 
         let labels = recursiveSubviews(of: contentView).compactMap { ($0 as? NSTextField)?.stringValue }
-        #expect(labels.contains("System"))
-        #expect(labels.contains("Layout"))
-        #expect(labels.contains("Displays"))
-        #expect(labels.contains("Item Sizing:"))
-        #expect(labels.contains("Bar Displays:"))
-        #expect(labels.contains("Scroll Wheel:"))
-        #expect(labels.contains("Launcher Action:"))
+        #expect(labels.contains(L10n.tr("System")))
+        #expect(labels.contains(L10n.tr("Layout")))
+        #expect(labels.contains(L10n.tr("Displays")))
+        #expect(labels.contains(L10n.tr("Language:")))
+        #expect(labels.contains(L10n.tr("Item Sizing:")))
+        #expect(labels.contains(L10n.tr("Bar Displays:")))
+        #expect(labels.contains(L10n.tr("Scroll Wheel:")))
+        #expect(labels.contains(L10n.tr("Launcher Action:")))
+
+        let languagePopup = try findPopup(withItems: localized(["System", "English", "Korean"]), in: contentView)
+        #expect(languagePopup.indexOfSelectedItem == 0)
     }
 
     @MainActor
@@ -51,13 +55,13 @@ struct SettingsWindowControllerTests {
         #expect(iconSizeSlider.maxValue == Double(SettingsIconSizeRange.maximum))
 
         let labels = recursiveSubviews(of: contentView).compactMap { ($0 as? NSTextField)?.stringValue }
-        #expect(labels.contains("Icon Size:"))
+        #expect(labels.contains(L10n.tr("Icon Size:")))
         #expect(labels.contains("28 px"))
-        #expect(labels.contains("Title Font Size:"))
-        #expect(labels.contains("Preview"))
-        #expect(labels.contains("Visual Depth:"))
+        #expect(labels.contains(L10n.tr("Title Font Size:")))
+        #expect(labels.contains(L10n.tr("Preview")))
+        #expect(labels.contains(L10n.tr("Visual Depth:")))
 
-        let chipPresetPopup = try findPopup(withItems: ["Compact", "Dense", "Micro"], in: contentView)
+        let chipPresetPopup = try findPopup(withItems: localized(["Compact", "Dense", "Micro"]), in: contentView)
         #expect(chipPresetPopup.indexOfSelectedItem == 0)
 
         if let outputPath = ProcessInfo.processInfo.environment["LIQUIDBAR_SETTINGS_VISUAL_QA_PATH"],
@@ -104,10 +108,10 @@ struct SettingsWindowControllerTests {
         RunLoop.main.run(until: Date(timeIntervalSinceNow: 0.1))
 
         let contentView = try #require(window.contentView)
-        #expect(PresentationColorPalette.hexString(from: try findColorWell(toolTip: "CPU color", in: contentView).color) == "#AF52DE")
-        #expect(PresentationColorPalette.hexString(from: try findColorWell(toolTip: "GPU color", in: contentView).color) == "#FF9F0A")
-        #expect(PresentationColorPalette.hexString(from: try findColorWell(toolTip: "RAM color", in: contentView).color) == "#34C759")
-        #expect(PresentationColorPalette.hexString(from: try findColorWell(toolTip: "TEMP color", in: contentView).color) == "#FFD166")
+        #expect(PresentationColorPalette.hexString(from: try findColorWell(toolTip: L10n.tr("%@ color", "CPU"), in: contentView).color) == "#AF52DE")
+        #expect(PresentationColorPalette.hexString(from: try findColorWell(toolTip: L10n.tr("%@ color", "GPU"), in: contentView).color) == "#FF9F0A")
+        #expect(PresentationColorPalette.hexString(from: try findColorWell(toolTip: L10n.tr("%@ color", "RAM"), in: contentView).color) == "#34C759")
+        #expect(PresentationColorPalette.hexString(from: try findColorWell(toolTip: L10n.tr("%@ color", "TEMP"), in: contentView).color) == "#FFD166")
     }
 
     @MainActor
@@ -151,13 +155,13 @@ struct SettingsWindowControllerTests {
         let contentView = try #require(window.contentView)
         let labels = recursiveSubviews(of: contentView).compactMap { ($0 as? NSTextField)?.stringValue }
 
-        #expect(labels.contains("App Rules"))
-        #expect(labels.contains("Pinned Scope"))
-        #expect(labels.contains("Blacklisted Apps:"))
-        #expect(labels.contains("Pinned Apps:"))
-        _ = try findButton(title: "Add App...", in: contentView)
-        _ = try findButton(title: "Clear", in: contentView)
-        _ = try findButton(title: "Clear Pinned Apps", in: contentView)
+        #expect(labels.contains(L10n.tr("App Rules")))
+        #expect(labels.contains(L10n.tr("Pinned Scope")))
+        #expect(labels.contains(L10n.tr("Blacklisted Apps:")))
+        #expect(labels.contains(L10n.tr("Pinned Apps:")))
+        _ = try findButton(title: L10n.tr("Add App..."), in: contentView)
+        _ = try findButton(title: L10n.tr("Clear"), in: contentView)
+        _ = try findButton(title: L10n.tr("Clear Pinned Apps"), in: contentView)
     }
 
     @MainActor
@@ -173,16 +177,16 @@ struct SettingsWindowControllerTests {
         let contentView = try #require(window.contentView)
         let labels = recursiveSubviews(of: contentView).compactMap { ($0 as? NSTextField)?.stringValue }
 
-        #expect(labels.contains("Permissions"))
-        #expect(labels.contains("Accessibility:"))
-        #expect(labels.contains("Input Monitoring:"))
-        #expect(labels.contains("Screen Recording:"))
-        #expect(labels.contains("Previews"))
-        #expect(labels.contains("Providers"))
-        #expect(labels.contains("Configuration"))
-        #expect(labels.contains("Diagnostics"))
-        #expect(labels.contains("Experimental"))
-        #expect(labels.contains("Log Interval:"))
+        #expect(labels.contains(L10n.tr("Permissions")))
+        #expect(labels.contains(L10n.tr("Accessibility:")))
+        #expect(labels.contains(L10n.tr("Input Monitoring:")))
+        #expect(labels.contains(L10n.tr("Screen Recording:")))
+        #expect(labels.contains(L10n.tr("Previews")))
+        #expect(labels.contains(L10n.tr("Providers")))
+        #expect(labels.contains(L10n.tr("Configuration")))
+        #expect(labels.contains(L10n.tr("Diagnostics")))
+        #expect(labels.contains(L10n.tr("Experimental")))
+        #expect(labels.contains(L10n.tr("Log Interval:")))
 
         let displayConfigPath = Config.configPath.path.replacingOccurrences(
             of: FileManager.default.homeDirectoryForCurrentUser.path,
@@ -191,15 +195,58 @@ struct SettingsWindowControllerTests {
         )
         #expect(labels.contains(displayConfigPath))
 
-        _ = try findButton(title: "Open Config", in: contentView)
-        _ = try findButton(title: "Show in Finder", in: contentView)
-        _ = try findButton(title: "Reset All", in: contentView)
-        _ = try findButton(title: "Show window previews", in: contentView)
-        _ = try findButton(title: "Enable provider runtime", in: contentView)
-        _ = try findButton(title: "Performance logging", in: contentView)
-        _ = try findButton(title: "Hang diagnostics", in: contentView)
-        _ = try findButton(title: "Enable plugins", in: contentView)
-        _ = try findButton(title: "Enable window tab groups", in: contentView)
+        _ = try findButton(title: L10n.tr("Open Config"), in: contentView)
+        _ = try findButton(title: L10n.tr("Show in Finder"), in: contentView)
+        _ = try findButton(title: L10n.tr("Reset All"), in: contentView)
+        _ = try findButton(title: L10n.tr("Show window previews"), in: contentView)
+        _ = try findButton(title: L10n.tr("Enable provider runtime"), in: contentView)
+        _ = try findButton(title: L10n.tr("Performance logging"), in: contentView)
+        _ = try findButton(title: L10n.tr("Hang diagnostics"), in: contentView)
+        _ = try findButton(title: L10n.tr("Enable plugins"), in: contentView)
+        _ = try findButton(title: L10n.tr("Enable window tab groups"), in: contentView)
+    }
+
+    @MainActor
+    @Test func koreanAdvancedTabActionButtonsFitTheirFrames() throws {
+        L10n.applyAppLanguage(.korean)
+        let controller = SettingsWindowController(
+            configOverride: Config(appLanguage: .korean)
+        )
+        defer {
+            controller.close()
+            L10n.applyAppLanguage(.system)
+        }
+
+        let window = try #require(controller.window)
+        let tabController = try #require(window.contentViewController as? NSTabViewController)
+        tabController.selectedTabViewItemIndex = 3
+        RunLoop.main.run(until: Date(timeIntervalSinceNow: 0.1))
+
+        let contentView = try #require(window.contentView)
+        let titlesToCheck = [
+            "Open Settings",
+            "Refresh",
+            "Open Config",
+            "Show in Finder",
+            "Reset All",
+            "Reset Tab",
+            "Revert",
+            "Reload",
+            "Apply"
+        ].map { L10n.tr($0) }
+
+        for title in titlesToCheck {
+            let button = try findButton(title: title, in: contentView)
+            #expect(
+                button.intrinsicContentSize.width <= button.frame.width + 8,
+                "\(title) needs \(button.intrinsicContentSize.width)pt but has \(button.frame.width)pt"
+            )
+        }
+
+        if let outputPath = ProcessInfo.processInfo.environment["LIQUIDBAR_SETTINGS_ADVANCED_VISUAL_QA_PATH"],
+           !outputPath.isEmpty {
+            try writeWindowContentSnapshot(contentView, to: URL(fileURLWithPath: outputPath))
+        }
     }
 
     @MainActor
@@ -216,8 +263,8 @@ struct SettingsWindowControllerTests {
         let labels = recursiveSubviews(of: contentView).compactMap { ($0 as? NSTextField)?.stringValue }
 
         #expect(labels.contains("LiquidBar"))
-        #expect(!labels.contains("Configuration"))
-        #expect(!labels.contains("Diagnostics"))
+        #expect(!labels.contains(L10n.tr("Configuration")))
+        #expect(!labels.contains(L10n.tr("Diagnostics")))
 
         let brandImageView = recursiveSubviews(of: contentView).compactMap { $0 as? NSImageView }.first {
             $0.frame.width > $0.frame.height * 3.0
@@ -225,8 +272,8 @@ struct SettingsWindowControllerTests {
         }
         #expect(brandImageView != nil)
 
-        _ = try findButton(title: "Check for Updates", in: contentView)
-        _ = try findButton(title: "GitHub", in: contentView)
+        _ = try findButton(title: L10n.tr("Check for Updates"), in: contentView)
+        _ = try findButton(title: L10n.tr("GitHub"), in: contentView)
     }
 
     @MainActor
@@ -242,11 +289,11 @@ struct SettingsWindowControllerTests {
         #expect(generalScrollView.documentVisibleRect.maxY >= generalDocumentView.bounds.maxY - 2)
 
         let appsDocumentView = try documentView(forTabAt: 2, in: tabController)
-        let appRulesLabel = try findLabel("App Rules", in: appsDocumentView)
+        let appRulesLabel = try findLabel(L10n.tr("App Rules"), in: appsDocumentView)
         #expect(appsDocumentView.bounds.maxY - appRulesLabel.frame.maxY <= 32)
 
         let advancedDocumentView = try documentView(forTabAt: 3, in: tabController)
-        let permissionsLabel = try findLabel("Permissions", in: advancedDocumentView)
+        let permissionsLabel = try findLabel(L10n.tr("Permissions"), in: advancedDocumentView)
         #expect(advancedDocumentView.bounds.maxY - permissionsLabel.frame.maxY <= 32)
 
         let aboutDocumentView = try documentView(forTabAt: 4, in: tabController)
@@ -255,6 +302,29 @@ struct SettingsWindowControllerTests {
                 && $0.image?.accessibilityDescription == "LiquidBar"
         })
         #expect(aboutDocumentView.bounds.maxY - brandImageView.frame.maxY <= 32)
+    }
+
+    @MainActor
+    @Test func settingsTabsCanScrollToBottom() throws {
+        let controller = SettingsWindowController()
+        defer { controller.close() }
+
+        let window = try #require(controller.window)
+        let tabController = try #require(window.contentViewController as? NSTabViewController)
+
+        for index in 0..<tabController.tabViewItems.count {
+            let scrollView = try scrollView(forTabAt: index, in: tabController)
+            let documentView = try #require(scrollView.documentView)
+
+            scrollView.contentView.scroll(to: .zero)
+            scrollView.reflectScrolledClipView(scrollView.contentView)
+
+            let visibleRect = scrollView.documentVisibleRect
+            let lowestSubviewY = try #require(lowestVisibleSubviewY(in: documentView))
+            #expect(visibleRect.minY <= 2)
+            #expect(lowestSubviewY >= visibleRect.minY)
+            #expect(lowestSubviewY <= visibleRect.maxY - 8)
+        }
     }
 
     @MainActor
@@ -311,6 +381,18 @@ struct SettingsWindowControllerTests {
         return try #require(popups.first { popup in
             popup.itemArray.map(\.title) == titles
         })
+    }
+
+    private func localized(_ keys: [String]) -> [String] {
+        keys.map { L10n.tr($0) }
+    }
+
+    @MainActor
+    private func lowestVisibleSubviewY(in view: NSView) -> CGFloat? {
+        view.subviews
+            .filter { !$0.isHidden && !$0.frame.isEmpty }
+            .map(\.frame.minY)
+            .min()
     }
 
     @MainActor

@@ -56,6 +56,30 @@ struct ConfigEnumTests {
         #expect(Theme.allCases.count == 3)
     }
 
+    // MARK: - AppLanguage
+
+    @Test func testAppLanguageRawValues() {
+        #expect(AppLanguage.system.rawValue == "system")
+        #expect(AppLanguage.english.rawValue == "en")
+        #expect(AppLanguage.korean.rawValue == "ko")
+    }
+
+    @Test func testAppLanguageLocaleIdentifier() {
+        #expect(AppLanguage.system.localeIdentifier == nil)
+        #expect(AppLanguage.english.localeIdentifier == "en")
+        #expect(AppLanguage.korean.localeIdentifier == "ko")
+    }
+
+    @Test func testAppLanguageCodable() throws {
+        let encoder = JSONEncoder()
+        let decoder = JSONDecoder()
+        for language in AppLanguage.allCases {
+            let data = try encoder.encode(language)
+            let decoded = try decoder.decode(AppLanguage.self, from: data)
+            #expect(decoded == language)
+        }
+    }
+
     // MARK: - MultiMonitorMode
 
     @Test func testMultiMonitorModeRawValues() {
