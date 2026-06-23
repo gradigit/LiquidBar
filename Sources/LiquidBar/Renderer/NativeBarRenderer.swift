@@ -1447,6 +1447,10 @@ final class NativeBarRenderer {
         if let displayId {
             if let pIndex { partitionIndex[displayId] = pIndex } else { partitionIndex.removeValue(forKey: displayId) }
         }
+        let tabbedFocusedItemIndex: Int? = {
+            guard config.tabbedTaskbarEnabled, !config.iconsOnly else { return nil }
+            return focusedItemIndexForHighlight(items: items, focus: focus, config: config)
+        }()
 
         var layouts: [(x: Float, width: Float)] = []
         var minimumWidths: [Float] = []
@@ -1472,7 +1476,12 @@ final class NativeBarRenderer {
                 x += 8
             }
 
-            let tabbedCollapse = shouldCollapseForTabbedTaskbar(item: item, focus: focus, config: config)
+            let tabbedCollapse = shouldCollapseForTabbedTaskbar(
+                item: item,
+                index: index,
+                focusedItemIndex: tabbedFocusedItemIndex,
+                config: config
+            )
             let alwaysIconOnly = shouldAlwaysUseIconOnlyLayout(item)
             let metricVisual = systemIndicatorVisual(for: item, visuals: systemIndicatorVisuals)
             let isSystemIndicator = isSystemIndicatorItem(item, visuals: systemIndicatorVisuals)
@@ -2208,15 +2217,17 @@ final class NativeBarRenderer {
         return nil
     }
 
-    private func shouldCollapseForTabbedTaskbar(item: TaskbarItem, focus: FocusInfo, config: Config) -> Bool {
+    private func shouldCollapseForTabbedTaskbar(
+        item: TaskbarItem,
+        index: Int,
+        focusedItemIndex: Int?,
+        config: Config
+    ) -> Bool {
         guard config.tabbedTaskbarEnabled, !config.iconsOnly else { return false }
-        let hasFocus = focus.windowId != nil ||
-            (focus.bundleId?.isEmpty == false) ||
-            (focus.tabGroupId?.isEmpty == false)
-        guard hasFocus else { return false }
+        guard let focusedItemIndex else { return false }
         switch item {
         case .window, .appGroup, .tabGroup:
-            return focusedItemIndexForHighlight(items: [item], focus: focus, config: config) == nil
+            return index != focusedItemIndex
         default:
             return false
         }

@@ -1230,8 +1230,7 @@ final class LiquidBarE2ETests: XCTestCase {
                     attachScreenshot(name: "multimonitor-missing-taskbar-\(idx)", element: tb)
                 }
             }
-            XCTFail("Multi-monitor tests require an external display. Connect a second monitor and rerun.")
-            return
+            throw XCTSkip("Multi-monitor tests require an external display. Connect a second monitor and rerun.")
         }
 
         // Use the first two taskbars as our test pair.
@@ -1622,6 +1621,7 @@ final class LiquidBarE2ETests: XCTestCase {
             "hidden_window_mode": "in_place",
             "bar_style": "flush",
             "hover_intensity": "subtle",
+            "system_indicators_enabled": false,
         ]
 
         // Apply overrides.

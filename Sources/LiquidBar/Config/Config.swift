@@ -401,7 +401,7 @@ struct Config: Codable, Sendable, Equatable {
         customItems: [CustomItem] = [],
         systemIndicatorsEnabled: Bool = true,
         systemIndicatorRefreshIntervalMs: Int = 1000,
-        systemIndicatorPlacement: SystemIndicatorPlacement = .leading,
+        systemIndicatorPlacement: SystemIndicatorPlacement = .rightCorner,
         systemIndicatorDisplayScope: SystemIndicatorDisplayScope = .allDisplays,
         systemIndicatorSelectedDisplayId: UInt32? = nil,
         systemIndicatorCpuEnabled: Bool = true,
@@ -584,7 +584,7 @@ struct Config: Codable, Sendable, Equatable {
         customItems = try c.decodeIfPresent([CustomItem].self, forKey: .customItems) ?? []
         systemIndicatorsEnabled = try c.decodeIfPresent(Bool.self, forKey: .systemIndicatorsEnabled) ?? true
         systemIndicatorRefreshIntervalMs = try c.decodeIfPresent(Int.self, forKey: .systemIndicatorRefreshIntervalMs) ?? 1000
-        systemIndicatorPlacement = try c.decodeIfPresent(SystemIndicatorPlacement.self, forKey: .systemIndicatorPlacement) ?? .leading
+        systemIndicatorPlacement = try c.decodeIfPresent(SystemIndicatorPlacement.self, forKey: .systemIndicatorPlacement) ?? .rightCorner
         systemIndicatorDisplayScope = try c.decodeIfPresent(SystemIndicatorDisplayScope.self, forKey: .systemIndicatorDisplayScope) ?? .allDisplays
         systemIndicatorSelectedDisplayId = try c.decodeIfPresent(UInt32.self, forKey: .systemIndicatorSelectedDisplayId)
         systemIndicatorCpuEnabled = try c.decodeIfPresent(Bool.self, forKey: .systemIndicatorCpuEnabled) ?? true

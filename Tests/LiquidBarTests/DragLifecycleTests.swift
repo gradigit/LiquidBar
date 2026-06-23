@@ -65,6 +65,7 @@ struct DragLifecycleTests {
             .customText(id: "system.thermal", text: "35C", screenId: 1),
         ]
         var config = Config(itemSizing: .auto)
+        config.systemIndicatorPlacement = .leading
         config.systemIndicatorChipPreset = .dense
         config.systemIndicatorAppearance = appearance
         renderer.updateItems(
@@ -222,11 +223,15 @@ struct DragLifecycleTests {
             #expect(rects.count == 3)
 
             let source = try #require(rects.first)
+            var dragConfig = Config(itemSizing: .auto)
+            dragConfig.systemIndicatorPlacement = .leading
+            dragConfig.systemIndicatorChipPreset = .dense
+            dragConfig.systemIndicatorAppearance = appearance
             renderer.startDrag(
                 sourceIndex: 0,
                 cursorX: Float(source.midX),
                 cursorOffsetInItem: Float(source.width / 2),
-                config: Config(),
+                config: dragConfig,
                 displayId: 1
             )
             renderer.updateDragCursor(cursorX: Float(rects[1].midX), insertionIndex: 2, displayId: 1)

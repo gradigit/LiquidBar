@@ -47,7 +47,9 @@ state of the repository, not a private local worktree.
 - Keep the canonical release namespace as `gradigit/LiquidBar` unless ownership
   is intentionally changed.
 - Keep CI actions pinned to reviewed commit SHAs.
-- Do not publish unsigned or unnotarized binaries as official releases.
+- Do not present unsigned or unnotarized binaries as Gatekeeper-clean official
+  binaries. If an early release uses an ad-hoc artifact, label it clearly in the
+  release notes and replace it with a notarized build when available.
 - Do not publish `LiquidBar Test.app` or artifacts using the
   `com.liquidbar.test` bundle identifier.
 - Keep generated scan reports and local build artifacts out of git; summarize

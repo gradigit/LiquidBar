@@ -303,6 +303,7 @@ struct NativeBarRendererSnapshotTests {
             .customText(id: "system.ram", text: "74%", screenId: 1),
         ]
         var config = Config(itemSizing: .auto)
+        config.systemIndicatorPlacement = .leading
         config.systemIndicatorChipPreset = .dense
         config.systemIndicatorAppearance = .minimal
         renderer.updateItems(

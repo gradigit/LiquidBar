@@ -5,10 +5,12 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 APP_NAME="${LIQUIDBAR_APP_NAME:-LiquidBar.app}"
 APP_PATH="${LIQUIDBAR_RELEASE_APP_PATH:-${ROOT_DIR}/build/release/${APP_NAME}}"
 ZIP_PATH="${LIQUIDBAR_RELEASE_ZIP_PATH:-${ROOT_DIR}/build/release/LiquidBar-${LIQUIDBAR_RELEASE_VERSION:-1.0.0}.zip}"
+DMG_PATH="${LIQUIDBAR_RELEASE_DMG_PATH:-${ROOT_DIR}/build/release/LiquidBar-${LIQUIDBAR_RELEASE_VERSION:-1.0.0}.dmg}"
 BUNDLE_ID="${LIQUIDBAR_BUNDLE_ID:-com.gradigit.LiquidBar}"
 VERSION="${LIQUIDBAR_RELEASE_VERSION:-1.0.0}"
 BUILD="${LIQUIDBAR_RELEASE_BUILD:-$(git -C "$ROOT_DIR" rev-list --count HEAD 2>/dev/null || date +%Y%m%d%H%M)}"
 SIGN_IDENTITY="${LIQUIDBAR_CODESIGN_IDENTITY:-}"
+VOLUME_NAME="${LIQUIDBAR_DMG_VOLUME_NAME:-LiquidBar}"
 
 if [[ -z "$SIGN_IDENTITY" ]]; then
   SIGN_IDENTITY="-"
@@ -89,10 +91,34 @@ if [[ "${LIQUIDBAR_CREATE_ZIP:-1}" == "1" ]]; then
   ditto -c -k --keepParent --norsrc --noextattr --noqtn "$APP_PATH" "$ZIP_PATH"
 fi
 
+if [[ "${LIQUIDBAR_CREATE_DMG:-0}" == "1" ]]; then
+  DMG_STAGING="${ROOT_DIR}/build/release/dmg-staging"
+  if [[ "$DMG_STAGING" != "$ROOT_DIR"/build/release/* ]]; then
+    echo "error: refusing to clean staging path outside build/release: $DMG_STAGING" >&2
+    exit 1
+  fi
+  if [[ -e "$DMG_STAGING" ]]; then
+    rm -R "$DMG_STAGING"
+  fi
+  mkdir -p "$DMG_STAGING"
+  ditto --norsrc --noextattr --noqtn "$APP_PATH" "${DMG_STAGING}/${APP_NAME}"
+  ln -s /Applications "${DMG_STAGING}/Applications"
+  hdiutil create \
+    -volname "$VOLUME_NAME" \
+    -srcfolder "$DMG_STAGING" \
+    -ov \
+    -format UDZO \
+    "$DMG_PATH" >/dev/null
+  hdiutil verify "$DMG_PATH" >/dev/null
+fi
+
 echo "Built: $APP_PATH"
 if [[ "${LIQUIDBAR_CREATE_ZIP:-1}" == "1" ]]; then
   echo "Archive: $ZIP_PATH"
 fi
+if [[ "${LIQUIDBAR_CREATE_DMG:-0}" == "1" ]]; then
+  echo "DMG: $DMG_PATH"
+fi
 if [[ "$SIGN_IDENTITY" == "-" ]]; then
-  echo "note: ad-hoc signed. Use a Developer ID Application identity plus notarization for public releases." >&2
+  echo "note: ad-hoc signed. Gatekeeper will warn until a Developer ID signed and notarized build is published." >&2
 fi

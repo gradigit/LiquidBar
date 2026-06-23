@@ -195,6 +195,39 @@ struct NativeBarRendererLayoutTests {
         renderer.shutdown()
     }
 
+    @Test func testLayoutTabbedTaskbarCollapsesNonFocusedSameAppWindows() throws {
+        let renderer = NativeBarRenderer()
+        renderer.registerPanel(displayId: 1, barWidth: 800, barHeight: 30, scale: 2)
+
+        let items: [TaskbarItem] = [
+            .window(id: WindowId(1), bundleId: "com.app.shared", title: "One window title long enough", appName: "Shared App", isHidden: false, isMinimized: false, screenId: 1),
+            .window(id: WindowId(2), bundleId: "com.app.shared", title: "Focused window title long enough to expand", appName: "Shared App", isHidden: false, isMinimized: false, screenId: 1),
+            .window(id: WindowId(3), bundleId: "com.app.shared", title: "Three window title long enough", appName: "Shared App", isHidden: false, isMinimized: false, screenId: 1),
+        ]
+
+        var config = Config(iconSize: 20, iconsOnly: false, itemSizing: .auto)
+        config.tabbedTaskbarEnabled = true
+
+        let iconCache = IconCache()
+        renderer.updateItems(
+            items,
+            config: config,
+            iconCache: iconCache,
+            displayId: 1,
+            focus: FocusInfo(windowId: 2, bundleId: "com.app.shared", tabGroupId: nil)
+        )
+
+        let rects = renderer.visualItemRects(displayId: 1)
+        #expect(rects.count == 3)
+
+        let collapsedWidth = Double(max(44, config.iconSize + 20))
+        #expect(abs(rects[0].width - collapsedWidth) < 0.001)
+        #expect(rects[1].width > collapsedWidth)
+        #expect(abs(rects[2].width - collapsedWidth) < 0.001)
+
+        renderer.shutdown()
+    }
+
     @Test func testLayoutTabbedTaskbarNoFocusDoesNotCollapse() throws {
         let renderer = NativeBarRenderer()
         renderer.registerPanel(displayId: 1, barWidth: 800, barHeight: 30, scale: 2)

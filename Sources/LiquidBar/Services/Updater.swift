@@ -25,7 +25,7 @@ enum UpdaterError: Error {
 
 enum Updater {
     static let githubRepo = "gradigit/LiquidBar"
-    static let currentVersion = "0.1.0"
+    static let currentVersion = "1.0.0"
 
     static var latestReleaseAPIURL: URL {
         URL(string: "https://api.github.com/repos/\(githubRepo)/releases/latest")!

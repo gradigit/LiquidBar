@@ -13,11 +13,20 @@ git status --short --branch
 swift test -c debug
 ```
 
-For UI, windowing, permissions, or rendering changes, also run:
+For UI, windowing, permissions, or rendering changes, also run the automated UI
+suite when the local automation environment is healthy:
 
 ```sh
 ./scripts/run_all_tests.sh
 ```
+
+If the Xcode UI harness is blocked by local permissions, hardware, or
+environment-specific flake, do not treat that alone as product correctness
+evidence. Capture a live visual QA pass against the real app instead, using
+screenshots or video plus a short checklist covering taskbar rendering,
+thumbnail previews, Cmd-Tab switching, preferences, menu bar behavior, and
+permission prompts. Keep raw screenshots/videos as release artifacts only when
+they are intentionally public-safe.
 
 For performance-sensitive changes, capture a baseline/candidate pair with
 `docs/PERFORMANCE.md` and keep only the durable summary in release notes or a
@@ -28,18 +37,23 @@ tracked research note. Do not commit raw logs or local benchmark artifacts.
 Build a release-mode app bundle:
 
 ```sh
-LIQUIDBAR_RELEASE_VERSION=1.0.0 ./scripts/build_release_app.sh
+LIQUIDBAR_RELEASE_VERSION=1.0.0 \
+LIQUIDBAR_CREATE_DMG=1 \
+LIQUIDBAR_CREATE_ZIP=0 \
+./scripts/build_release_app.sh
 ```
 
 This writes:
 
 ```text
 build/release/LiquidBar.app
-build/release/LiquidBar-1.0.0.zip
+build/release/LiquidBar-1.0.0.dmg
 ```
 
-Without `LIQUIDBAR_CODESIGN_IDENTITY`, the script ad-hoc signs the bundle for
-local inspection only. Public releases must use a Developer ID Application
+Without `LIQUIDBAR_CODESIGN_IDENTITY`, the script ad-hoc signs the bundle. An
+ad-hoc binary can be attached to an early GitHub release only if the release
+notes clearly label it as unsigned/ad-hoc and mention that macOS Gatekeeper will
+warn. The preferred public distribution path is a Developer ID Application
 identity:
 
 ```sh
@@ -50,6 +64,11 @@ LIQUIDBAR_CODESIGN_IDENTITY="Developer ID Application: Example, Inc. (TEAMID)" \
 
 ## Signing And Notarization
 
+Developer ID signing and notarization are preferred for public distribution, but
+they are not required for an initial source-first or unsigned/ad-hoc release.
+When they are unavailable, skip notarization and include the unsigned/ad-hoc
+caveat in release notes.
+
 Inspect the signed bundle:
 
 ```sh
@@ -58,10 +77,10 @@ codesign --verify --strict --verbose=2 build/release/LiquidBar.app
 spctl -a -vv --type execute build/release/LiquidBar.app
 ```
 
-Submit the zip for notarization with the project Apple Developer account:
+Submit the DMG for notarization with the project Apple Developer account:
 
 ```sh
-xcrun notarytool submit build/release/LiquidBar-1.0.0.zip \
+xcrun notarytool submit build/release/LiquidBar-1.0.0.dmg \
   --keychain-profile "<notary-profile>" \
   --wait
 ```
@@ -70,11 +89,13 @@ After notarization succeeds:
 
 ```sh
 xcrun stapler staple build/release/LiquidBar.app
+xcrun stapler staple build/release/LiquidBar-1.0.0.dmg
 spctl -a -vv --type execute build/release/LiquidBar.app
-ditto -c -k --keepParent build/release/LiquidBar.app build/release/LiquidBar-1.0.0-notarized.zip
+hdiutil verify build/release/LiquidBar-1.0.0.dmg
 ```
 
-Attach only the notarized archive to the GitHub release.
+When notarization is complete, attach the notarized archive to the GitHub
+release and replace any unsigned/ad-hoc artifact.
 
 ## Release Notes
 
@@ -86,5 +107,6 @@ Release notes should include:
   Monitoring
 - known limitations or experimental features
 - the validation commands that passed
+- whether the binary is unsigned/ad-hoc, Developer ID signed, or notarized
 
 Do not publish `LiquidBar Test.app` as an official release artifact.

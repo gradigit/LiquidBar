@@ -61,7 +61,13 @@ final class WindowManager {
            !path.isEmpty {
             if let windows = TestWindowList.load(from: URL(fileURLWithPath: path)) {
                 Log.window.debug("Using test window list: \(path, privacy: .public) (\(windows.count) windows)")
-                lastFrontmostWindowId = windows.first { !$0.isHidden && !$0.isMinimized }?.id.raw
+                if let raw = ProcessInfo.processInfo.environment["LIQUIDBAR_TEST_FOCUSED_WINDOW_ID"],
+                   let focusedId = UInt32(raw),
+                   windows.contains(where: { $0.id.raw == focusedId && !$0.isHidden && !$0.isMinimized }) {
+                    lastFrontmostWindowId = focusedId
+                } else {
+                    lastFrontmostWindowId = windows.first { !$0.isHidden && !$0.isMinimized }?.id.raw
+                }
                 return Array(windows.prefix(maxWindows))
             }
         }

@@ -139,13 +139,14 @@ swift run LiquidBar
 Build the real release-mode app bundle locally:
 
 ```sh
-./scripts/build_release_app.sh
+LIQUIDBAR_CREATE_DMG=1 LIQUIDBAR_CREATE_ZIP=0 ./scripts/build_release_app.sh
 open build/release/LiquidBar.app
 ```
 
-The release builder ad-hoc signs by default for local inspection. Official
-binary releases must be Developer ID signed and notarized; see
-`docs/RELEASE.md`.
+The release builder can produce `build/release/LiquidBar-1.0.0.dmg` and
+ad-hoc signs by default. Early GitHub binaries may be published this way when
+they are clearly labeled as unsigned/ad-hoc; macOS Gatekeeper will warn until
+Developer ID signing and notarization are added. See `docs/RELEASE.md`.
 
 The developer test bundle still exists for local TCC reset/regrant workflows,
 but it is not a release artifact:
@@ -171,9 +172,9 @@ swift run LiquidBar -- --print-default-config
 swift run LiquidBar -- --write-default-config
 ```
 
-The v1 default config enables the icon-first taskbar, Cmd-Tab switcher, system
-indicators, all-display switcher scope, and Liquid Glass styling. Developer
-performance logging is disabled by default.
+The v1 default config enables the icon-first taskbar, right-pinned system
+indicators, Cmd-Tab switcher, all-display switcher scope, and Liquid Glass
+styling. Developer performance logging is disabled by default.
 
 Set `LIQUIDBAR_CONFIG_DIR` during development or tests to isolate config and
 state files:
@@ -204,16 +205,15 @@ https://github.com/gradigit/LiquidBar/releases
 
 Do not install release assets from similarly named repositories or package
 mirrors unless they are explicitly linked from this repository. Official
-artifacts should be signed, notarized, and traceable to the documented release
-process.
+artifacts should be traceable to the documented release process. Prefer signed
+and notarized assets when available; unsigned/ad-hoc assets must be labeled.
 
 ## Status
 
-LiquidBar is being prepared for v1. The source tree is usable, tested, and
-release-oriented, but public binary distribution is not complete until a
-Developer ID signed and notarized artifact has been produced and attached to an
-official GitHub release. Sidebar mode and provider plugins remain experimental
-and are not part of the primary v1 showcase until their UX is release-grade.
+LiquidBar v1 is the first public release line. The initial binary may be
+ad-hoc signed and labeled as unsigned while Developer ID notarization remains
+pending. Sidebar mode and provider plugins remain experimental and are not part
+of the primary v1 showcase until their UX is release-grade.
 
 ## License
 
