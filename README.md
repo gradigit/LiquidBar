@@ -52,10 +52,8 @@ into one generic tile size.
 
 ### Sidebar Mode
 
-![LiquidBar sidebar mode](Assets/Screenshots/sidebar-modes.png)
-
-The experimental sidebar keeps the taskbar on the left or right edge, with
-compact and expanded presentations for different workflows.
+The experimental sidebar can place LiquidBar on the left or right edge, with
+compact and expanded presentations for vertical workflows.
 
 ### System Indicators
 
