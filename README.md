@@ -6,7 +6,7 @@
 
 LiquidBar gives Mac power users the window control they keep missing: a real
 taskbar, large window thumbnails, Windows-style switching, system indicators,
-sidebar layouts, and deep configuration without replacing the desktop shell.
+and deep configuration without replacing the desktop shell.
 
 ## Open By Design
 
@@ -39,21 +39,16 @@ aspect-aware cards for wide, square, and portrait windows.
 ![LiquidBar taskbar modes](Assets/Brand/liquidbar-taskbar-showcase-zoom.png)
 
 LiquidBar supports labeled windows, icon-only mode, app grouping, pinned apps,
-custom items, launcher/search entries, sidebar layouts, and per-display panels.
-The v1 default is an icon-first 32 px bottom bar with Liquid Glass styling.
+custom items, launcher/search entries, and per-display panels. The v1 default
+is an icon-first 32 px bottom bar with Liquid Glass styling.
 
 ### Hover To Pick The Exact Window
 
-![LiquidBar taskbar thumbnail preview](Assets/Screenshots/taskbar-thumbnail-preview.png)
+![LiquidBar taskbar thumbnail preview](Assets/Screenshots/taskbar-thumbnail-preview.gif)
 
 Grouped apps expose thumbnail previews so you can pick the exact window before
 switching. Portrait and wide windows keep their shape instead of being forced
 into one generic tile size.
-
-### Sidebar Mode
-
-The experimental sidebar can place LiquidBar on the left or right edge, with
-compact and expanded presentations for vertical workflows.
 
 ### System Indicators
 
@@ -90,8 +85,6 @@ multi-monitor behavior, previews, permissions, diagnostics, and plugins.
   per-display window behavior.
 - **Custom items:** pinned apps, files, folders, URLs, spacers, launcher items,
   and user-defined tab groups.
-- **Sidebar mode:** experimental vertical workflow for users who prefer a side
-  taskbar.
 - **Plugin groundwork:** experimental provider/plugin runtime for future
   extensibility, including media-control style tiles.
 
@@ -194,6 +187,16 @@ state files:
 LIQUIDBAR_CONFIG_DIR="$(mktemp -d)" swift run LiquidBar
 ```
 
+Regenerate the public README media from real fixture windows:
+
+```sh
+LIQUIDBAR_README_STOP_EXISTING=1 ./scripts/capture_readme_assets.sh
+```
+
+The capture script uses a temporary config, blacklists non-fixture apps for the
+session, writes raw frames under `build/artifacts/readme-capture`, and updates
+only the tracked README assets after successful capture.
+
 ## Documentation
 
 - `CONTRIBUTING.md`: contribution workflow
@@ -224,7 +227,8 @@ process.
 LiquidBar is being prepared for v1. The source tree is usable, tested, and
 release-oriented, but public binary distribution is not complete until a
 Developer ID signed and notarized artifact has been produced and attached to an
-official GitHub release.
+official GitHub release. Sidebar mode and provider plugins remain experimental
+and are not part of the primary v1 showcase until their UX is release-grade.
 
 ## License
 

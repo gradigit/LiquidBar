@@ -4275,8 +4275,18 @@ final class EventLoop {
             MainActor.assumeIsolated {
                 guard let self else { return }
                 for panel in self.panelManager.allPanels {
+                    let displayId = panel.displayId
                     panel.barView.setTestHoverIndex(idx)
-                    self.panelManager.resumeDisplayLink(for: panel.displayId)
+                    self.renderer.setHoveredItemIndex(idx, for: displayId)
+                    if let idx,
+                       idx >= 0,
+                       idx < panel.barView.visualItemRects.count {
+                        _ = self.renderer.setHoverRect(panel.barView.visualItemRects[idx], for: displayId)
+                    } else {
+                        _ = self.renderer.setHoverRect(nil, for: displayId)
+                    }
+                    self.handlePreviewHover(displayId: displayId, hoverIndex: idx, panel: panel)
+                    self.panelManager.resumeDisplayLink(for: displayId)
                 }
             }
         })
