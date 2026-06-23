@@ -1,27 +1,119 @@
 # LiquidBar
 
-![LiquidBar glass bar](Assets/Brand/liquidbar-github-hero-transparent.png)
+![LiquidBar wordmark](Assets/Brand/liquidbar-brand-bar-transparent.png)
 
-![LiquidBar taskbar modes](Assets/Brand/liquidbar-taskbar-showcase.png)
+LiquidBar is an open-source macOS taskbar and window switcher built for people
+who want Windows-style window control, Mac-native polish, and permission
+transparency in one tool.
+
+It adds a Liquid Glass-style taskbar, a Cmd-Tab window switcher with large
+thumbnails, system indicators, multi-monitor handling, and deeply configurable
+window behavior without replacing the desktop shell.
+
+## Why This Exists
+
+Many macOS taskbar utilities are closed source while asking for Accessibility,
+Screen Recording, or Input Monitoring permissions. LiquidBar takes the opposite
+approach: the code is inspectable, the release path is documented, and the
+permission-sensitive pieces are isolated enough to review, build, and disable.
+
+LiquidBar is for users who want:
+
+- a real taskbar on macOS, including hidden and minimized windows
+- a Windows Alt-Tab style switcher with macOS Cmd-Tab muscle memory
+- large window thumbnails and click-to-select switching
+- a bar that visually belongs on modern macOS instead of fighting it
+- configuration that can be edited, tested, and extended
+- an open foundation for future plugins such as media controls
+
+## Screenshots
+
+### Taskbar Modes
+
+![LiquidBar taskbar modes](Assets/Brand/liquidbar-taskbar-showcase-zoom.png)
+
+LiquidBar supports labeled windows, icon-only mode, app grouping, pinned apps,
+custom items, launcher/search entries, sidebar layouts, and per-display panels.
+The v1 default is an icon-first 32 px bottom bar with Liquid Glass styling.
+
+### System Indicators
 
 ![LiquidBar system indicators](Assets/Brand/liquidbar-system-indicators-showcase.png)
 
-LiquidBar is a native macOS window bar for people who want a more deliberate
-window switcher and taskbar-style workflow without replacing the desktop shell.
-It is built with Swift, AppKit panels, retained Core Animation layers, and
-system accessibility APIs.
+CPU, GPU, memory, and thermal indicators can live inside the bar with compact,
+dense, graph, underline, or minimal presentations. Indicators are configurable
+by metric, color, placement, display scope, refresh interval, and visual style.
 
-The app is source-first right now. Build and run it locally from this repository
-while release packaging, signing, and notarization are still being finalized.
+## Features
+
+- **Native taskbar:** bottom, top, left, and right AppKit panels with retained
+  Core Animation rendering rather than a permanent full-surface render loop.
+- **Window control:** focus, hide, minimize, close, cycle, group, and show
+  hidden/minimized windows from the bar.
+- **Keyboard switcher:** Cmd-Tab by default, Cmd-Shift-Tab for reverse
+  traversal, click-to-select thumbnails, all-display scope, and MRU-style
+  back-and-forth switching.
+- **Large thumbnails:** static ScreenCaptureKit thumbnails optimized for quick
+  switcher open time without continuous background capture.
+- **Liquid Glass appearance:** native vibrancy/material backdrops, glass tile
+  treatments, hover states, and focus indicators tuned for modern macOS.
+- **System indicators:** CPU, GPU, RAM, and optional temperature readouts with
+  multiple compact presentation modes.
+- **Multi-monitor support:** choose all displays, main display only, or
+  per-display window behavior.
+- **Custom items:** pinned apps, files, folders, URLs, spacers, launcher items,
+  and user-defined tab groups.
+- **Sidebar mode:** experimental vertical workflow for users who prefer a side
+  taskbar.
+- **Plugin groundwork:** experimental provider/plugin runtime for future
+  extensibility, including media-control style tiles.
+
+## Default Hotkeys And Controls
+
+| Action | Default |
+| --- | --- |
+| Open switcher / next window | `Cmd-Tab` |
+| Previous window in switcher | `Cmd-Shift-Tab` |
+| Select hovered/clicked switcher item | Mouse click |
+| Cycle windows from taskbar | Scroll wheel over the bar |
+| Open preferences | Menu bar icon or taskbar context menu |
+
+The switcher hotkey is configurable. If you do not want LiquidBar to intercept
+Cmd-Tab, change `switcher_hotkey` or disable `switcher_enabled` in config.
+
+## Permissions And Trust
+
+LiquidBar can run with different feature sets, but the full taskbar/switcher
+experience uses macOS privacy permissions:
+
+- **Accessibility** is used for window actions such as focus, hide, minimize,
+  close, and optional window resizing around the bar.
+- **Screen Recording** is used to capture window thumbnails for previews and
+  the switcher. LiquidBar uses static thumbnails, not a constant recording loop.
+- **Input Monitoring** is used only when a global shortcut needs to intercept
+  keystrokes before macOS handles them, especially Cmd-Tab.
+- **Automation** may appear for optional provider/media-control actions that
+  control another app.
+
+Other system-facing features are narrower: update checks read GitHub release
+metadata from the canonical `gradigit/LiquidBar` repository, Launch at Login
+uses a user-visible LaunchAgent, and Dock auto-hide changes the standard macOS
+Dock preference only when that setting is enabled.
+
+These permissions are powerful. The advantage here is that LiquidBar is open
+source: you can inspect the code, build the app yourself, verify the release
+artifact, and turn off features you do not use. That is a materially better
+trust model than a closed-source taskbar requesting the same system access.
 
 ## Requirements
 
 - macOS 26 or newer
-- Swift 6.2 or newer
-- Accessibility permission for window management features
-- Screen Recording permission for window previews
+- Swift 6.2 or newer for source builds
+- Xcode command line tools
 
-## Quick Start
+## Build And Run
+
+Run from source:
 
 ```sh
 swift build
@@ -29,10 +121,34 @@ swift test -c debug
 swift run LiquidBar
 ```
 
-Configuration is stored in `~/Library/Application Support/LiquidBar/config.json`.
-Set `LIQUIDBAR_CONFIG_DIR` during development or tests to isolate config and state files.
+Build the real release-mode app bundle locally:
 
-Useful config helpers:
+```sh
+./scripts/build_release_app.sh
+open build/release/LiquidBar.app
+```
+
+The release builder ad-hoc signs by default for local inspection. Official
+binary releases must be Developer ID signed and notarized; see
+`docs/RELEASE.md`.
+
+The developer test bundle still exists for local TCC reset/regrant workflows,
+but it is not a release artifact:
+
+```sh
+./scripts/build_test_app.sh
+open -a "$HOME/Applications/LiquidBar Test.app"
+```
+
+## Configuration
+
+Configuration is stored in:
+
+```text
+~/Library/Application Support/LiquidBar/config.json
+```
+
+Useful config commands:
 
 ```sh
 swift run LiquidBar -- --print-config-path
@@ -40,61 +156,48 @@ swift run LiquidBar -- --print-default-config
 swift run LiquidBar -- --write-default-config
 ```
 
-## Test App Bundle
+The v1 default config enables the icon-first taskbar, Cmd-Tab switcher, system
+indicators, all-display switcher scope, and Liquid Glass styling. Developer
+performance logging is disabled by default.
 
-Use the local test app bundle when you need a stable app identity for macOS
-privacy permissions:
+Set `LIQUIDBAR_CONFIG_DIR` during development or tests to isolate config and
+state files:
 
 ```sh
-./scripts/build_test_app.sh
-open -a "$HOME/Applications/LiquidBar Test.app"
+LIQUIDBAR_CONFIG_DIR="$(mktemp -d)" swift run LiquidBar
 ```
-
-## Current Capabilities
-
-- Per-display native panels for top, bottom, left, and right bar layouts.
-- Window inventory, app grouping, pinned apps, custom links, folders, spacers,
-  launcher items, and user-defined tab groups.
-- Hidden and minimized window handling with separate visibility and collapse
-  modes.
-- Optional window adjustment through Accessibility so windows do not overlap the
-  bar.
-- Static window previews through ScreenCaptureKit.
-- Optional keyboard switcher support through global hotkeys, including the
-  special Cmd-Tab event-tap path when configured.
-- Retained AppKit/Core Animation rendering designed to avoid a permanent
-  full-surface render loop.
-- Experimental plugin/provider tiles loaded from the user config directory.
-- GitHub update checks restricted to the canonical `gradigit/LiquidBar` release
-  namespace.
-
-## Source Map
-
-- `Sources/LiquidBar/App`: application lifecycle and command-line entry points
-- `Sources/LiquidBar/Config`: user configuration, custom items, tab groups, and persisted state
-- `Sources/LiquidBar/EventLoop`: event coordination and UI update flow
-- `Sources/LiquidBar/Renderer`: retained native layout and layer rendering
-- `Sources/LiquidBar/Services`: accessibility, hotkeys, icons, plugins, thumbnails, and system helpers
-- `Sources/LiquidBar/UI`: panels, native views, previews, and switcher UI
-- `Sources/LiquidBar/Window`: window inventory, state, and ordering
 
 ## Documentation
 
 - `CONTRIBUTING.md`: contribution workflow
-- `SECURITY.md`: security reporting, permission boundaries, and release trust model
+- `SECURITY.md`: security reporting, permissions, and release trust model
 - `docs/START_HERE.md`: fresh-session onboarding packet
 - `docs/ARCHITECTURE.md`: source map and runtime flow
 - `docs/DEVELOPMENT.md`: local setup and common development commands
 - `docs/TESTING.md`: SwiftPM, UI, visual regression, and release-oriented test flows
 - `docs/PERFORMANCE.md`: local performance capture and A/B comparison workflow
+- `docs/RELEASE.md`: release packaging, signing, notarization, and notes
 - `docs/MAINTAINER_NOTES.md`: repository hygiene and documentation policy
 
 ## Release Trust
 
-Official update metadata must come from
-`https://github.com/gradigit/LiquidBar/releases`. Do not install release assets
-from similarly named repositories or package mirrors unless they are explicitly
-linked from this repository.
+Official update metadata and binary releases must come from:
+
+```text
+https://github.com/gradigit/LiquidBar/releases
+```
+
+Do not install release assets from similarly named repositories or package
+mirrors unless they are explicitly linked from this repository. Official
+artifacts should be signed, notarized, and traceable to the documented release
+process.
+
+## Status
+
+LiquidBar is being prepared for v1. The source tree is usable, tested, and
+release-oriented, but public binary distribution is not complete until a
+Developer ID signed and notarized artifact has been produced and attached to an
+official GitHub release.
 
 ## License
 

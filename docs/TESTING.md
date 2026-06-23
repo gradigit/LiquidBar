@@ -40,7 +40,20 @@ build/artifacts/
 build/DerivedData/
 ```
 
-## Stable Test App Bundle
+## App Bundles
+
+Build the release-mode app bundle for release-candidate checks:
+
+```sh
+./scripts/build_release_app.sh
+open build/release/LiquidBar.app
+```
+
+The script ad-hoc signs by default. Set `LIQUIDBAR_CODESIGN_IDENTITY` for a
+stable local or Developer ID identity.
+
+Build the developer test bundle when you need a separate stable identity for
+TCC permission reset/regrant loops:
 
 macOS privacy settings work best with a stable app bundle:
 
@@ -49,8 +62,7 @@ macOS privacy settings work best with a stable app bundle:
 open -a "$HOME/Applications/LiquidBar Test.app"
 ```
 
-Set `LIQUIDBAR_CODESIGN_IDENTITY` if you want to force a specific signing
-identity. If unset, the script uses the first available Apple Development
+If unset, `scripts/build_test_app.sh` uses the first available Apple Development
 identity and falls back to ad-hoc signing.
 
 ## Visual Regression
@@ -105,6 +117,7 @@ Run SwiftPM tests, UI tests, result classification, and log collection:
 ```
 
 Use this before release-oriented changes or broad UI/windowing refactors.
+For packaging and notarization checks, use `docs/RELEASE.md`.
 
 ## Performance Capture
 

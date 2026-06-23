@@ -34,6 +34,13 @@ Run the app directly:
 swift run LiquidBar
 ```
 
+Build a local release-mode app bundle:
+
+```sh
+./scripts/build_release_app.sh
+open build/release/LiquidBar.app
+```
+
 Inspect or initialize config:
 
 ```sh
@@ -42,7 +49,8 @@ swift run LiquidBar -- --print-default-config
 swift run LiquidBar -- --write-default-config
 ```
 
-Build a stable app bundle for local permission testing:
+Build the stable developer test bundle when you need to reset or preserve macOS
+privacy permissions independently from the release identity:
 
 ```sh
 ./scripts/build_test_app.sh
@@ -77,8 +85,9 @@ Some features require macOS privacy permissions when running the app bundle:
 - Input Monitoring for Cmd-Tab style event-tap shortcuts.
 - Automation prompts when running UI tests through Xcode.
 
-Use the stable test app bundle from `scripts/build_test_app.sh` so macOS privacy
-settings attach to a stable app identity.
+Use `scripts/build_release_app.sh` for release-candidate checks. Use the stable
+test app bundle from `scripts/build_test_app.sh` only when you need a separate
+developer identity for repeated privacy-permission testing.
 
 ## Local Config Isolation
 
@@ -113,8 +122,8 @@ escape hatch before launching the app:
 
 ```sh
 launchctl setenv LIQUIDBAR_DEV_DIAGNOSTICS 1
-./scripts/build_test_app.sh
-open "$HOME/Applications/LiquidBar Test.app"
+./scripts/build_release_app.sh
+open build/release/LiquidBar.app
 ```
 
 Manual unified-log checks need `--info` to include the aggregate diagnostics:
@@ -145,4 +154,5 @@ When behavior changes, update the most specific public doc in the same change:
 - Build and local setup: `docs/DEVELOPMENT.md`.
 - Test commands and artifact handling: `docs/TESTING.md`.
 - Performance capture or thresholds: `docs/PERFORMANCE.md`.
+- Release packaging, signing, and notarization: `docs/RELEASE.md`.
 - Permission, plugin, update, or release trust boundaries: `SECURITY.md`.

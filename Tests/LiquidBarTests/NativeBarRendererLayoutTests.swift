@@ -48,7 +48,7 @@ struct NativeBarRendererLayoutTests {
             .window(id: WindowId(2), bundleId: "com.app.long", title: "A Very Long Window Title Here", appName: "Long", isHidden: false, isMinimized: false, screenId: 1),
         ]
 
-        let config = Config(itemSizing: .auto)
+        let config = Config(iconSize: 20, iconsOnly: false, itemSizing: .auto)
         let rects = renderer.computeItemRects(
             items: items,
             config: config,
@@ -171,7 +171,7 @@ struct NativeBarRendererLayoutTests {
             .window(id: WindowId(3), bundleId: "com.app.three", title: "Three window title long enough", appName: "App Three", isHidden: false, isMinimized: false, screenId: 1),
         ]
 
-        var config = Config(itemSizing: .auto)
+        var config = Config(iconSize: 20, iconsOnly: false, itemSizing: .auto)
         config.tabbedTaskbarEnabled = true
 
         let iconCache = IconCache()
@@ -204,7 +204,7 @@ struct NativeBarRendererLayoutTests {
             .window(id: WindowId(2), bundleId: "com.app.two", title: "Two window title long enough", appName: "App Two", isHidden: false, isMinimized: false, screenId: 1),
         ]
 
-        var config = Config(itemSizing: .auto)
+        var config = Config(iconSize: 20, iconsOnly: false, itemSizing: .auto)
         config.tabbedTaskbarEnabled = true
 
         let iconCache = IconCache()

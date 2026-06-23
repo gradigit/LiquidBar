@@ -25,8 +25,9 @@ Read this before changing code.
 5. `docs/DEVELOPMENT.md`
 6. `docs/TESTING.md`
 7. `docs/PERFORMANCE.md` for performance-sensitive work
-8. `docs/MAINTAINER_NOTES.md`
-9. The source files directly related to the requested change
+8. `docs/RELEASE.md` for release or packaging work
+9. `docs/MAINTAINER_NOTES.md`
+10. The source files directly related to the requested change
 
 Do not start implementation until you understand the requested scope, current
 git status, and relevant tests.
@@ -47,6 +48,7 @@ First read:
 - docs/DEVELOPMENT.md
 - docs/TESTING.md
 - docs/PERFORMANCE.md if performance-sensitive work is in scope
+- docs/RELEASE.md if release or packaging work is in scope
 - docs/MAINTAINER_NOTES.md
 
 Treat older local LiquidBar folders as private archives. Do not read, copy, or
@@ -130,6 +132,7 @@ For performance-sensitive work, use the baseline/candidate workflow in
 - Development workflow changes: `docs/DEVELOPMENT.md`
 - Test/runbook changes: `docs/TESTING.md`
 - Performance benchmark workflow changes: `docs/PERFORMANCE.md`
+- Release packaging, signing, and notarization changes: `docs/RELEASE.md`
 - Permission or release trust changes: `SECURITY.md`
 - Maintainer policy or migration rules: `docs/MAINTAINER_NOTES.md`
 - Public research notes: `docs/research/`

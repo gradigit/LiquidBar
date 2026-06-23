@@ -362,7 +362,7 @@ struct Config: Codable, Sendable, Equatable {
     /// Explicitly disabled plugin IDs (even if present on disk).
     var disabledPluginIds: [String]
     var switcherEnabled: Bool
-    /// Serialized shortcut (example: "option+tab").
+    /// Serialized shortcut (example: "command+tab").
     var switcherHotkey: String
     var switcherLayoutStyle: SwitcherLayoutStyle
     var switcherWindowScope: SwitcherWindowScope
@@ -372,11 +372,11 @@ struct Config: Codable, Sendable, Equatable {
 
     init(
         taskbarHeight: Int = 32,
-        iconSize: Int = 20,
+        iconSize: Int = 32,
         fontSize: Int = 11,
         maxItemWidth: Int = 150,
         maxTitleWidth: Int = 120,
-        iconsOnly: Bool = false,
+        iconsOnly: Bool = true,
         taskbarPosition: Position = .bottom,
         theme: Theme = .system,
         itemSizing: ItemSizing = .uniform,
@@ -392,12 +392,12 @@ struct Config: Codable, Sendable, Equatable {
         animationProfile: AnimationProfile = .balancedSpring,
         showHiddenApps: Bool = true,
         showMinimizedWindows: Bool = true,
-        adjustWindowsForTaskbar: Bool = true,
+        adjustWindowsForTaskbar: Bool = false,
         multiMonitorMode: MultiMonitorMode = .allDisplays,
         windowDisplayMode: WindowDisplayMode = .perDisplay,
         blacklistedApps: [String] = [],
         pinnedApps: [String] = [],
-        pinnedAppsScope: PinnedAppsScope = .perSpace,
+        pinnedAppsScope: PinnedAppsScope = .global,
         customItems: [CustomItem] = [],
         systemIndicatorsEnabled: Bool = true,
         systemIndicatorRefreshIntervalMs: Int = 1000,
@@ -452,8 +452,8 @@ struct Config: Codable, Sendable, Equatable {
         tabGroupCollapseOnOutsideClick: Bool = true,
         pluginsEnabled: Bool = false,
         disabledPluginIds: [String] = [],
-        switcherEnabled: Bool = false,
-        switcherHotkey: String = "option+tab",
+        switcherEnabled: Bool = true,
+        switcherHotkey: String = "command+tab",
         switcherLayoutStyle: SwitcherLayoutStyle = .heroCarousel,
         switcherWindowScope: SwitcherWindowScope = .allDisplays,
         providerRuntimeEnabled: Bool = true,
@@ -743,7 +743,7 @@ struct Config: Codable, Sendable, Equatable {
         providerCircuitBreakerThreshold = providerCircuitBreakerThreshold.clamped(to: 1...20)
         switcherHotkey = switcherHotkey.trimmingCharacters(in: .whitespacesAndNewlines)
         if switcherHotkey.isEmpty {
-            switcherHotkey = "option+tab"
+            switcherHotkey = "command+tab"
         }
 
         // Compact-dot badge style was removed from the UI; normalize legacy configs.

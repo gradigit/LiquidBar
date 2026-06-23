@@ -35,16 +35,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         Log.app.info("Config loaded: height=\(config.taskbarHeight), position=\(config.taskbarPosition.rawValue)")
 
         // 2. Native retained renderer
-        renderer = NativeBarRenderer()
+        let renderer = NativeBarRenderer()
+        self.renderer = renderer
 
         // 3. Panel manager + panels
         let panelManager = PanelManager()
-        panelManager.createPanels(config: config, renderer: renderer!)
+        panelManager.createPanels(config: config, renderer: renderer)
 
         // 4. Event loop
         let loop = EventLoop(
             config: config,
-            renderer: renderer!,
+            renderer: renderer,
             panelManager: panelManager
         )
         loop.onOpenPreferences = { [weak self] in

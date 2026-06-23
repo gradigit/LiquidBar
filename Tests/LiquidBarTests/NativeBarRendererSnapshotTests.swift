@@ -49,7 +49,7 @@ struct NativeBarRendererSnapshotTests {
         let items: [TaskbarItem] = [
             .customText(id: "cpu", text: "CPU 42%", screenId: 1),
         ]
-        renderer.updateItems(items, config: Config(itemSizing: .auto), iconCache: IconCache(), displayId: 1)
+        renderer.updateItems(items, config: Config(iconSize: 20, iconsOnly: false, itemSizing: .auto), iconCache: IconCache(), displayId: 1)
 
         let snapshot = try #require(renderer.snapshot(displayId: 1))
         let item = try #require(snapshot.items.first)
@@ -1030,7 +1030,7 @@ struct NativeBarRendererSnapshotTests {
 
         renderer.updateItems([
             .window(id: WindowId(1), bundleId: "com.test.one", title: "One", appName: "One", isHidden: false, isMinimized: false, screenId: 1),
-        ], config: Config(), iconCache: IconCache(), displayId: 1)
+        ], config: Config(iconSize: 20, iconsOnly: false), iconCache: IconCache(), displayId: 1)
         if let snapshot = renderer.snapshot(displayId: 1) {
             view.applySnapshot(snapshot, fontSize: 13, barHeight: 32)
         }
@@ -1039,7 +1039,7 @@ struct NativeBarRendererSnapshotTests {
 
         renderer.updateItems([
             .window(id: WindowId(2), bundleId: "com.test.two", title: "Two", appName: "Two", isHidden: false, isMinimized: false, screenId: 1),
-        ], config: Config(), iconCache: IconCache(), displayId: 1)
+        ], config: Config(iconSize: 20, iconsOnly: false), iconCache: IconCache(), displayId: 1)
         if let snapshot = renderer.snapshot(displayId: 1) {
             view.applySnapshot(snapshot, fontSize: 13, barHeight: 32)
         }
@@ -1058,7 +1058,7 @@ struct NativeBarRendererSnapshotTests {
         renderer.updateItems([
             .launcher(screenId: 1),
             .customText(id: "label", text: "Sharp Text", screenId: 1),
-        ], config: Config(), iconCache: IconCache(), displayId: 1)
+        ], config: Config(iconSize: 20, iconsOnly: false), iconCache: IconCache(), displayId: 1)
 
         if let snapshot = renderer.snapshot(displayId: 1) {
             view.applySnapshot(snapshot, fontSize: 13, barHeight: 32)
