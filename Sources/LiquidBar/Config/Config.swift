@@ -580,7 +580,7 @@ struct Config: Codable, Sendable, Equatable {
         windowDisplayMode = try c.decode(WindowDisplayMode.self, forKey: .windowDisplayMode)
         blacklistedApps = try c.decode([String].self, forKey: .blacklistedApps)
         pinnedApps = try c.decode([String].self, forKey: .pinnedApps)
-        pinnedAppsScope = try c.decodeIfPresent(PinnedAppsScope.self, forKey: .pinnedAppsScope) ?? .perSpace
+        pinnedAppsScope = try c.decodeIfPresent(PinnedAppsScope.self, forKey: .pinnedAppsScope) ?? .global
         customItems = try c.decodeIfPresent([CustomItem].self, forKey: .customItems) ?? []
         systemIndicatorsEnabled = try c.decodeIfPresent(Bool.self, forKey: .systemIndicatorsEnabled) ?? true
         systemIndicatorRefreshIntervalMs = try c.decodeIfPresent(Int.self, forKey: .systemIndicatorRefreshIntervalMs) ?? 1000

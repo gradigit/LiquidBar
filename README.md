@@ -24,11 +24,9 @@ LiquidBar is for users who want:
 - configuration that can be edited, tested, and extended
 - an open foundation for future plugins such as media controls
 
-## See It In Action
+## Highlights
 
 ### Cmd-Tab, But For Windows
-
-![LiquidBar Cmd-Tab switcher animation](Assets/Screenshots/cmd-tab-switcher.gif)
 
 LiquidBar turns Cmd-Tab into a real window switcher: large thumbnails, MRU
 back-and-forth behavior, Cmd-Shift-Tab reverse traversal, click-to-select, and
@@ -43,8 +41,6 @@ custom items, launcher/search entries, and per-display panels. The v1 default
 is an icon-first 32 px bottom bar with Liquid Glass styling.
 
 ### Hover To Pick The Exact Window
-
-![LiquidBar taskbar thumbnail preview](Assets/Screenshots/taskbar-thumbnail-preview.gif)
 
 Grouped apps expose thumbnail previews so you can pick the exact window before
 switching. Portrait and wide windows keep their shape instead of being forced
@@ -85,6 +81,9 @@ multi-monitor behavior, previews, permissions, diagnostics, and plugins.
   per-display window behavior.
 - **Custom items:** pinned apps, files, folders, URLs, spacers, launcher items,
   and user-defined tab groups.
+- **Stable pinned apps:** global pinned apps are the v1 default. Per-Space
+  pinned apps remain experimental because macOS does not expose a public,
+  fully reliable Spaces API for this use case.
 - **Plugin groundwork:** experimental provider/plugin runtime for future
   extensibility, including media-control style tiles.
 
@@ -186,16 +185,6 @@ state files:
 ```sh
 LIQUIDBAR_CONFIG_DIR="$(mktemp -d)" swift run LiquidBar
 ```
-
-Regenerate the public README media from real fixture windows:
-
-```sh
-LIQUIDBAR_README_STOP_EXISTING=1 ./scripts/capture_readme_assets.sh
-```
-
-The capture script uses a temporary config, blacklists non-fixture apps for the
-session, writes raw frames under `build/artifacts/readme-capture`, and updates
-only the tracked README assets after successful capture.
 
 ## Documentation
 

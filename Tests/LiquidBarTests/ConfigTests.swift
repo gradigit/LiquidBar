@@ -229,7 +229,7 @@ struct ConfigTests {
         let config = try decoder.decode(Config.self, from: json.data(using: .utf8)!)
         #expect(config.hoverIntensity == .subtle)
         #expect(config.visualDepth == .balanced)
-        #expect(config.pinnedAppsScope == .perSpace)
+        #expect(config.pinnedAppsScope == .global)
         #expect(config.customItems.isEmpty)
         #expect(config.systemIndicatorsEnabled == true)
         #expect(config.systemIndicatorRefreshIntervalMs == 1000)

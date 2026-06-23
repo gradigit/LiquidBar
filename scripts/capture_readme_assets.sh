@@ -5,6 +5,8 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 RUN_ID="${LIQUIDBAR_README_RUN_ID:-readme-$(date +%Y%m%d-%H%M%S)}"
 ARTIFACT_DIR="${LIQUIDBAR_README_ARTIFACT_DIR:-${ROOT_DIR}/build/artifacts/readme-capture/${RUN_ID}}"
 FRAMES_DIR="${ARTIFACT_DIR}/frames"
+GIFS_DIR="${ARTIFACT_DIR}/review-gifs"
+STILLS_DIR="${ARTIFACT_DIR}/review-stills"
 CONFIG_DIR="${ARTIFACT_DIR}/config"
 ASSETS_DIR="${ROOT_DIR}/Assets/Screenshots"
 DERIVED="${ROOT_DIR}/build/DerivedData"
@@ -18,6 +20,9 @@ GIF_WIDTH="${LIQUIDBAR_README_GIF_WIDTH:-1488}"
 PNG_WIDTH="${LIQUIDBAR_README_PNG_WIDTH:-1488}"
 PREVIEW_CROP_HEIGHT="${LIQUIDBAR_README_PREVIEW_CROP_HEIGHT:-430}"
 CAPTURE_DISPLAY="${LIQUIDBAR_README_CAPTURE_DISPLAY:-1}"
+CAPTURE_GIFS="${LIQUIDBAR_README_CAPTURE_GIFS:-0}"
+UPDATE_TRACKED_ASSETS="${LIQUIDBAR_README_UPDATE_TRACKED_ASSETS:-0}"
+SWITCHER_CAPTURE_MARGIN="${LIQUIDBAR_README_SWITCHER_CAPTURE_MARGIN:-80}"
 MAGICK="${LIQUIDBAR_MAGICK:-$(command -v magick || true)}"
 
 if [[ -z "$MAGICK" ]]; then
@@ -25,7 +30,7 @@ if [[ -z "$MAGICK" ]]; then
   exit 2
 fi
 
-mkdir -p "$FRAMES_DIR" "$CONFIG_DIR" "$ASSETS_DIR"
+mkdir -p "$FRAMES_DIR" "$GIFS_DIR" "$STILLS_DIR" "$CONFIG_DIR" "$ASSETS_DIR"
 
 "${ROOT_DIR}/scripts/generate_xcodeproj.sh"
 
@@ -148,10 +153,20 @@ case "bounds":
     guard !rect.isNull, !rect.isEmpty else {
         fail("no LiquidBar capture bounds found for mode \(mode)", code: 1)
     }
-    rect = rect.insetBy(dx: -margin, dy: -margin)
     let display = visibleDisplayUnion()
     if !display.isNull, !display.isEmpty {
-        rect = rect.intersection(display)
+        let rawRect = rect
+        let rawClipped = rawRect.intersection(display)
+        let rawClippedByDisplay = abs(rawClipped.minX - rawRect.minX) > 0.5
+            || abs(rawClipped.minY - rawRect.minY) > 0.5
+            || abs(rawClipped.width - rawRect.width) > 0.5
+            || abs(rawClipped.height - rawRect.height) > 0.5
+        if rawClippedByDisplay && mode == "switcher" {
+            fail("switcher bounds are clipped by display bounds: requested=\(rawRect) clipped=\(rawClipped)", code: 1)
+        }
+        rect = rect.insetBy(dx: -margin, dy: -margin).intersection(display)
+    } else {
+        rect = rect.insetBy(dx: -margin, dy: -margin)
     }
     print("\(Int(floor(rect.origin.x))),\(Int(floor(rect.origin.y))),\(Int(ceil(rect.width))),\(Int(ceil(rect.height)))")
 
@@ -170,6 +185,7 @@ capture_region() {
   local margin="${3:-24}"
   local geometry
   geometry="$(swift "$CONTROL_SWIFT" bounds "$APP_PID" "$mode" "$margin")"
+  echo "${mode},${output},${geometry}" >> "${ARTIFACT_DIR}/capture-geometries.csv"
   /usr/sbin/screencapture -x -R"$geometry" "$output"
 }
 
@@ -272,7 +288,7 @@ encode_switcher_gif() {
     -delay 34 "${FRAMES_DIR}/switcher-04.png" \
     -layers Optimize \
     -resize "${GIF_WIDTH}x>" \
-    "${ASSETS_DIR}/cmd-tab-switcher.gif"
+    "${GIFS_DIR}/cmd-tab-switcher.gif"
 }
 
 encode_preview_gif() {
@@ -281,7 +297,46 @@ encode_preview_gif() {
     -delay 95 "${FRAMES_DIR}/taskbar-thumbnail-preview-after.png" \
     -layers Optimize \
     -resize "${PNG_WIDTH}x>" \
-    "${ASSETS_DIR}/taskbar-thumbnail-preview.gif"
+    "${GIFS_DIR}/taskbar-thumbnail-preview.gif"
+}
+
+image_size() {
+  "$MAGICK" identify -format "%w,%h" "$1"
+}
+
+require_same_size() {
+  local label="$1"
+  shift
+  local first="$1"
+  local expected
+  expected="$(image_size "$first")"
+  local image
+  for image in "$@"; do
+    local actual
+    actual="$(image_size "$image")"
+    if [[ "$actual" != "$expected" ]]; then
+      echo "error: ${label} frame size mismatch: expected ${expected}, got ${actual} for ${image}" >&2
+      return 1
+    fi
+  done
+}
+
+write_contact_sheet() {
+  "$MAGICK" \
+    "${FRAMES_DIR}/switcher-01.png" \
+    "${FRAMES_DIR}/switcher-02.png" \
+    "${FRAMES_DIR}/switcher-03.png" \
+    "${FRAMES_DIR}/switcher-04.png" \
+    -resize 420x \
+    +append \
+    "${ARTIFACT_DIR}/switcher-contact.png"
+
+  "$MAGICK" \
+    "${FRAMES_DIR}/taskbar-thumbnail-preview-before.png" \
+    "${FRAMES_DIR}/taskbar-thumbnail-preview-after.png" \
+    -resize 520x \
+    +append \
+    "${ARTIFACT_DIR}/preview-contact.png"
 }
 
 write_capture_config() {
@@ -359,12 +414,14 @@ private final class BackdropView: NSView {
             path.stroke()
         }
 
-        let title = "LiquidBar demo workspace"
-        let attrs: [NSAttributedString.Key: Any] = [
-            .font: NSFont.systemFont(ofSize: 34, weight: .semibold),
-            .foregroundColor: NSColor.white.withAlphaComponent(0.68),
-        ]
-        title.draw(in: NSRect(x: 72, y: 76, width: bounds.width - 144, height: 48), withAttributes: attrs)
+        let glow = NSRect(
+            x: bounds.midX - bounds.width * 0.24,
+            y: bounds.midY - bounds.height * 0.34,
+            width: bounds.width * 0.48,
+            height: bounds.height * 0.42
+        )
+        NSColor(calibratedRed: 0.35, green: 0.58, blue: 0.72, alpha: 0.08).setFill()
+        NSBezierPath(ovalIn: glow).fill()
     }
 }
 
@@ -507,36 +564,65 @@ post_control "com.liquidbar.testcontrol.setHoverIndex" "$HOVER_INDEX"
 wait_for_group_preview "$HOVER_INDEX"
 sleep 0.35
 capture_preview_band "${FRAMES_DIR}/taskbar-thumbnail-preview-after.png"
-"$MAGICK" "${FRAMES_DIR}/taskbar-thumbnail-preview-after.png" -resize "${PNG_WIDTH}x>" "${ASSETS_DIR}/taskbar-thumbnail-preview.png"
-encode_preview_gif
+"$MAGICK" "${FRAMES_DIR}/taskbar-thumbnail-preview-after.png" -resize "${PNG_WIDTH}x>" "${STILLS_DIR}/taskbar-thumbnail-preview.png"
+if [[ "$UPDATE_TRACKED_ASSETS" == "1" ]]; then
+  cp "${STILLS_DIR}/taskbar-thumbnail-preview.png" "${ASSETS_DIR}/taskbar-thumbnail-preview.png"
+fi
+if [[ "$CAPTURE_GIFS" == "1" ]]; then
+  encode_preview_gif
+fi
 
 post_control "com.liquidbar.testcontrol.setHoverIndex" ""
 sleep 0.25
 
 post_control "com.liquidbar.testcontrol.switcher" "open"
 sleep 0.8
-capture_region "switcher" "${FRAMES_DIR}/switcher-01.png" 30
+capture_region "switcher" "${FRAMES_DIR}/switcher-01.png" "$SWITCHER_CAPTURE_MARGIN"
 
 post_control "com.liquidbar.testcontrol.switcher" "cycle,1,forward"
 sleep 0.35
-capture_region "switcher" "${FRAMES_DIR}/switcher-02.png" 30
+capture_region "switcher" "${FRAMES_DIR}/switcher-02.png" "$SWITCHER_CAPTURE_MARGIN"
 
 post_control "com.liquidbar.testcontrol.switcher" "cycle,1,forward"
 sleep 0.35
-capture_region "switcher" "${FRAMES_DIR}/switcher-03.png" 30
+capture_region "switcher" "${FRAMES_DIR}/switcher-03.png" "$SWITCHER_CAPTURE_MARGIN"
 
 post_control "com.liquidbar.testcontrol.switcher" "cycle,1,backward"
 sleep 0.35
-capture_region "switcher" "${FRAMES_DIR}/switcher-04.png" 30
+capture_region "switcher" "${FRAMES_DIR}/switcher-04.png" "$SWITCHER_CAPTURE_MARGIN"
 
 post_control "com.liquidbar.testcontrol.switcher" "close"
-encode_switcher_gif
+require_same_size "switcher" \
+  "${FRAMES_DIR}/switcher-01.png" \
+  "${FRAMES_DIR}/switcher-02.png" \
+  "${FRAMES_DIR}/switcher-03.png" \
+  "${FRAMES_DIR}/switcher-04.png"
+require_same_size "preview" \
+  "${FRAMES_DIR}/taskbar-thumbnail-preview-before.png" \
+  "${FRAMES_DIR}/taskbar-thumbnail-preview-after.png"
+"$MAGICK" "${FRAMES_DIR}/switcher-02.png" -resize "${PNG_WIDTH}x>" "${STILLS_DIR}/cmd-tab-switcher.png"
+if [[ "$UPDATE_TRACKED_ASSETS" == "1" ]]; then
+  cp "${STILLS_DIR}/cmd-tab-switcher.png" "${ASSETS_DIR}/cmd-tab-switcher.png"
+fi
+if [[ "$CAPTURE_GIFS" == "1" ]]; then
+  encode_switcher_gif
+fi
+write_contact_sheet
 
-cp "${FRAMES_DIR}/switcher-02.png" "${ASSETS_DIR}/cmd-tab-switcher.png"
-
-echo "Captured README assets:"
-echo "  ${ASSETS_DIR}/cmd-tab-switcher.gif"
-echo "  ${ASSETS_DIR}/cmd-tab-switcher.png"
-echo "  ${ASSETS_DIR}/taskbar-thumbnail-preview.gif"
-echo "  ${ASSETS_DIR}/taskbar-thumbnail-preview.png"
+echo "Captured candidate stills:"
+echo "  ${STILLS_DIR}/cmd-tab-switcher.png"
+echo "  ${STILLS_DIR}/taskbar-thumbnail-preview.png"
+if [[ "$UPDATE_TRACKED_ASSETS" == "1" ]]; then
+  echo "Updated tracked README assets:"
+  echo "  ${ASSETS_DIR}/cmd-tab-switcher.png"
+  echo "  ${ASSETS_DIR}/taskbar-thumbnail-preview.png"
+fi
+echo "Review contact sheets:"
+echo "  ${ARTIFACT_DIR}/switcher-contact.png"
+echo "  ${ARTIFACT_DIR}/preview-contact.png"
+if [[ "$CAPTURE_GIFS" == "1" ]]; then
+  echo "Review GIFs:"
+  echo "  ${GIFS_DIR}/cmd-tab-switcher.gif"
+  echo "  ${GIFS_DIR}/taskbar-thumbnail-preview.gif"
+fi
 echo "Raw frames: ${FRAMES_DIR}"

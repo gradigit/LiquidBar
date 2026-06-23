@@ -1109,7 +1109,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTe
 
         addLabel("Pinned Apps:", at: NSPoint(x: 15, y: y + 2), width: labelW, to: view)
         pinnedAppsScopePopup = NSPopUpButton(frame: NSRect(x: controlX, y: y - 2, width: 220, height: 26), pullsDown: false)
-        pinnedAppsScopePopup.addItems(withTitles: ["Per Space", "Global"])
+        pinnedAppsScopePopup.addItems(withTitles: ["Global", "Per Space (Experimental)"])
         pinnedAppsScopePopup.target = self
         pinnedAppsScopePopup.action = #selector(controlChanged(_:))
         view.addSubview(pinnedAppsScopePopup)
@@ -1611,8 +1611,8 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTe
         pendingPinnedApps = nil
         pinnedAppsLabel.stringValue = config.pinnedApps.isEmpty ? "(none)" : config.pinnedApps.joined(separator: ", ")
         switch config.pinnedAppsScope {
-        case .perSpace: pinnedAppsScopePopup.selectItem(at: 0)
-        case .global: pinnedAppsScopePopup.selectItem(at: 1)
+        case .global: pinnedAppsScopePopup.selectItem(at: 0)
+        case .perSpace: pinnedAppsScopePopup.selectItem(at: 1)
         }
 
         previewsEnabledCheckbox.state = config.previewsEnabled ? .on : .off
@@ -2265,8 +2265,8 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTe
             config.pinnedApps = pendingPinnedApps
         }
         switch pinnedAppsScopePopup.indexOfSelectedItem {
-        case 0: config.pinnedAppsScope = .perSpace
-        case 1: config.pinnedAppsScope = .global
+        case 0: config.pinnedAppsScope = .global
+        case 1: config.pinnedAppsScope = .perSpace
         default: break
         }
         config.previewsEnabled = previewsEnabledCheckbox.state == .on
