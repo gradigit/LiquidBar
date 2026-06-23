@@ -1130,7 +1130,7 @@ final class WindowSwitcherPanel: NSPanel {
         let initialTranslation = targetOrigin.x - currentOrigin.x + presentationTranslation
         let distance = abs(targetOrigin.x - currentOrigin.x)
 
-        finishScrollAnimation(success: false)
+        finishScrollAnimationForExpectedCancellation()
 
         CATransaction.begin()
         CATransaction.setDisableActions(true)
@@ -1384,7 +1384,7 @@ final class WindowSwitcherPanel: NSPanel {
         let mode = env["LIQUIDBAR_SWITCHER_SCROLL_ANIMATION"]?
             .trimmingCharacters(in: .whitespacesAndNewlines)
             .lowercased()
-        guard let mode, !mode.isEmpty else { return true }
+        guard let mode, !mode.isEmpty else { return false }
         return mode == "legacy" || mode == "native" || mode == "native_scroll"
     }
 
@@ -1392,6 +1392,7 @@ final class WindowSwitcherPanel: NSPanel {
         let mode = ProcessInfo.processInfo.environment["LIQUIDBAR_SWITCHER_SCROLL_ANIMATION"]?
             .trimmingCharacters(in: .whitespacesAndNewlines)
             .lowercased()
+        guard let mode, !mode.isEmpty else { return true }
         return mode == "displaylink_spring" || mode == "spring_displaylink" || mode == "manual_spring"
     }
 

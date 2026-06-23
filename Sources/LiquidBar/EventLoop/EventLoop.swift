@@ -157,9 +157,11 @@ final class EventLoop {
     private var switcherSelectionVisualUpdateScheduled = false
     private var pendingSwitcherSelectionVisualUpdate: (index: Int, token: UInt64)?
     private var switcherSession = SwitcherHotkeySession()
+    private var lastSwitcherEndedAt: CFAbsoluteTime = 0
     // Keep ScreenCaptureKit refreshes out of quick Cmd-Tab traversal; cached/prewarmed
     // thumbnails are used immediately, and held sessions refresh after the overlay settles.
     private let switcherThumbnailStableDelay: TimeInterval = 0.45
+    private let switcherPrewarmAfterCloseDelay: TimeInterval = 1.25
 
     #if DEBUG
     private var testControlObservers: [NSObjectProtocol] = []
@@ -2414,6 +2416,12 @@ final class EventLoop {
               !isSwitcherThumbnailPrewarmDisabledByEnv,
               switcherPanel?.isVisible != true else { return }
         switcherPrewarmWorkItem?.cancel()
+        let now = CFAbsoluteTimeGetCurrent()
+        let delay = Self.switcherPrewarmDelay(
+            now: now,
+            lastSwitcherEndedAt: lastSwitcherEndedAt,
+            afterCloseDelay: switcherPrewarmAfterCloseDelay
+        )
         var work: DispatchWorkItem?
         work = DispatchWorkItem { [weak self] in
             guard let self, let work else { return }
@@ -2421,13 +2429,17 @@ final class EventLoop {
             self.prewarmSwitcherPanelIfNeeded()
         }
         switcherPrewarmWorkItem = work
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.05, execute: work!)
+        DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: work!)
     }
 
     private func prewarmSwitcherPanelIfNeeded() {
         guard config.switcherEnabled,
               !isSwitcherThumbnailPrewarmDisabledByEnv,
               switcherPanel?.isVisible != true else { return }
+        guard CFAbsoluteTimeGetCurrent() - lastSwitcherEndedAt >= switcherPrewarmAfterCloseDelay else {
+            scheduleSwitcherPrewarm()
+            return
+        }
         let windows = Self.orderedSwitcherWindows(
             windows: currentSwitcherCandidateWindows(),
             mruWindowIds: switcherMRUWindowIds
@@ -2453,6 +2465,14 @@ final class EventLoop {
         )
         prefetchSwitcherThumbnails(windows: windows, selectedIndex: selected, targetScreen: targetScreen)
         switcherPrewarmSignature = signature
+    }
+
+    nonisolated static func switcherPrewarmDelay(
+        now: CFAbsoluteTime,
+        lastSwitcherEndedAt: CFAbsoluteTime,
+        afterCloseDelay: TimeInterval
+    ) -> TimeInterval {
+        max(0.05, afterCloseDelay - (now - lastSwitcherEndedAt))
     }
 
     private func beginSwitcherSession(initialDirection: Int = 1, scheduleCommit: Bool = true) -> Bool {
@@ -2651,9 +2671,11 @@ final class EventLoop {
         work = DispatchWorkItem { [weak self] in
             guard let self, let work else { return }
             guard !work.isCancelled, self.switcherThumbnailWorkItem === work else { return }
-            guard self.switcherSession.isCurrentToken(sessionToken),
-                  self.switcherPanel?.isVisible == true,
-                  !self.switcherSession.canCommitOnRelease() else {
+            guard Self.shouldRunSwitcherThumbnailCapture(
+                sessionIsCurrent: self.switcherSession.isCurrentToken(sessionToken),
+                panelVisible: self.switcherPanel?.isVisible == true,
+                releaseCommitActive: self.switcherSession.canCommitOnRelease()
+            ) else {
                 return
             }
             self.captureSwitcherThumbnails(
@@ -2663,6 +2685,14 @@ final class EventLoop {
         }
         switcherThumbnailWorkItem = work
         DispatchQueue.main.asyncAfter(deadline: .now() + switcherThumbnailStableDelay, execute: work!)
+    }
+
+    nonisolated static func shouldRunSwitcherThumbnailCapture(
+        sessionIsCurrent: Bool,
+        panelVisible: Bool,
+        releaseCommitActive: Bool
+    ) -> Bool {
+        sessionIsCurrent && panelVisible && !releaseCommitActive
     }
 
     nonisolated static func switcherThumbnailIndices(
@@ -2732,6 +2762,7 @@ final class EventLoop {
         pendingSwitcherSelectionVisualUpdate = nil
         switcherSelectionVisualUpdateScheduled = false
         invalidateThumbnailRequests(for: ThumbnailCaptureContext.switcher.producer)
+        lastSwitcherEndedAt = CFAbsoluteTimeGetCurrent()
 
         if commitSelection,
            switcherSelectedIndex >= 0,

@@ -207,9 +207,10 @@ thumbnails can contain private user content; keep this cache memory-only.
 ### Switcher Scroll Animation A/B
 
 The switcher scroll animation can be compared in the same built app by toggling
-the animation mode at launch. The default product path is the native/legacy
-`NSAnimationContext` scroll path because it has been the most stable in live
-switcher runs. Use it as the baseline before testing experimental candidates:
+the animation mode at launch. The default product path is `displaylink_spring`,
+because live hotkey A/B showed the most stable frame cadence once thumbnail
+capture was kept out of the held Cmd-Tab path. Use the native path as the
+baseline when testing changes:
 
 ```sh
 LIQUIDBAR_SWITCHER_APP_SETTLE_SECONDS=8 \
@@ -218,7 +219,7 @@ LIQUIDBAR_SWITCHER_RUN_ID=<baseline-run-id> \
 ./scripts/benchmark_switcher.sh
 
 LIQUIDBAR_SWITCHER_APP_SETTLE_SECONDS=8 \
-LIQUIDBAR_SWITCHER_SCROLL_ANIMATION=spring \
+LIQUIDBAR_SWITCHER_SCROLL_ANIMATION=displaylink_spring \
 LIQUIDBAR_SWITCHER_RUN_ID=<candidate-run-id> \
 ./scripts/benchmark_switcher.sh
 
@@ -230,13 +231,17 @@ LIQUIDBAR_SWITCHER_RUN_ID=<candidate-run-id> \
   --markdown-out build/artifacts/perf/<candidate-run-id>/ab-comparison.md
 ```
 
-`legacy`, `native`, and `native_scroll` use the production AppKit clip-view
-animation path. `spring` coalesces rapid selected-window changes onto the next
-main-actor turn, snaps the scroll position to the selected item, then animates
-the document layer back into place with a compositor transform. Keep it
-experimental until it beats the native path on both synthetic and live hotkey
-A/B runs. `displaylink_spring` is available as an explicit experimental mode
-for manual display-link spring tuning.
+`displaylink_spring` coalesces rapid selected-window changes onto the next
+main-actor turn and drives the scroll position with a high-damping display-link
+spring. `legacy`, `native`, and `native_scroll` use the AppKit clip-view
+animation path for baseline comparisons. `spring` uses the compositor transform
+path and remains an explicit experimental mode until it is stable across
+repeated live runs.
+
+Live Cmd-Tab sessions intentionally do not start active `switcher` thumbnail
+captures while the modifier is held. They use memory-only cached/prewarmed
+thumbnails during traversal and defer prewarm work after close, so
+ScreenCaptureKit does not compete with the animation.
 
 The 8-second settle window gives switcher thumbnail prewarm time to populate
 memory caches before the timed interaction begins; keep it for scroll-only A/B

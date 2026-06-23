@@ -47,6 +47,45 @@ struct EventLoopThumbnailIntegrationTests {
         #expect(Set(indices).count == indices.count)
     }
 
+    @Test func switcherThumbnailCaptureSkipsActiveReleaseCommitSession() {
+        #expect(EventLoop.shouldRunSwitcherThumbnailCapture(
+            sessionIsCurrent: true,
+            panelVisible: true,
+            releaseCommitActive: false
+        ))
+        #expect(!EventLoop.shouldRunSwitcherThumbnailCapture(
+            sessionIsCurrent: true,
+            panelVisible: true,
+            releaseCommitActive: true
+        ))
+        #expect(!EventLoop.shouldRunSwitcherThumbnailCapture(
+            sessionIsCurrent: false,
+            panelVisible: true,
+            releaseCommitActive: false
+        ))
+        #expect(!EventLoop.shouldRunSwitcherThumbnailCapture(
+            sessionIsCurrent: true,
+            panelVisible: false,
+            releaseCommitActive: false
+        ))
+    }
+
+    @Test func switcherPrewarmDelayKeepsCaptureAwayFromRecentClose() {
+        let recentDelay = EventLoop.switcherPrewarmDelay(
+            now: 10.10,
+            lastSwitcherEndedAt: 10.00,
+            afterCloseDelay: 1.25
+        )
+        let settledDelay = EventLoop.switcherPrewarmDelay(
+            now: 12.00,
+            lastSwitcherEndedAt: 10.00,
+            afterCloseDelay: 1.25
+        )
+
+        #expect(abs(recentDelay - 1.15) < 0.0001)
+        #expect(abs(settledDelay - 0.05) < 0.0001)
+    }
+
     @Test func hideSwitcherInvalidatesQueuedSwitcherRequests() throws {
         let (loop, renderer) = try makeLoop()
         defer { renderer.shutdown() }
