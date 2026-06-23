@@ -138,6 +138,18 @@ trust model than a closed-source taskbar requesting the same system access.
 - Swift 6.2 or newer for source builds
 - Xcode command line tools
 
+## Install
+
+Download the latest DMG from
+[GitHub Releases](https://github.com/gradigit/LiquidBar/releases/latest), open
+it, drag `LiquidBar.app` to Applications, then launch LiquidBar from
+Applications.
+
+On first launch, grant only the permissions for the features you use:
+Accessibility for window control, Screen Recording for thumbnails, and Input
+Monitoring for the Cmd-Tab switcher. See [Permissions And Trust](#permissions-and-trust)
+and [Release Trust](#release-trust) before installing unsigned/ad-hoc builds.
+
 ## Build And Run
 
 Run from source:
