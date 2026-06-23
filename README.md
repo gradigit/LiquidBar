@@ -2,15 +2,13 @@
 
 ![LiquidBar wordmark](Assets/Brand/liquidbar-brand-bar-transparent.png)
 
-LiquidBar is an open-source macOS taskbar and window switcher built for people
-who want Windows-style window control, Mac-native polish, and permission
-transparency in one tool.
+**An open-source Liquid Glass taskbar and Cmd-Tab window switcher for macOS.**
 
-It adds a Liquid Glass-style taskbar, a Cmd-Tab window switcher with large
-thumbnails, system indicators, multi-monitor handling, and deeply configurable
-window behavior without replacing the desktop shell.
+LiquidBar gives Mac power users the window control they keep missing: a real
+taskbar, large window thumbnails, Windows-style switching, system indicators,
+sidebar layouts, and deep configuration without replacing the desktop shell.
 
-## Why This Exists
+## Open By Design
 
 Many macOS taskbar utilities are closed source while asking for Accessibility,
 Screen Recording, or Input Monitoring permissions. LiquidBar takes the opposite
@@ -26,15 +24,38 @@ LiquidBar is for users who want:
 - configuration that can be edited, tested, and extended
 - an open foundation for future plugins such as media controls
 
-## Screenshots
+## See It In Action
 
-### Taskbar Modes
+### Cmd-Tab, But For Windows
+
+![LiquidBar Cmd-Tab switcher animation](Assets/Screenshots/cmd-tab-switcher.gif)
+
+LiquidBar turns Cmd-Tab into a real window switcher: large thumbnails, MRU
+back-and-forth behavior, Cmd-Shift-Tab reverse traversal, click-to-select, and
+aspect-aware cards for wide, square, and portrait windows.
+
+### A Taskbar That Belongs On macOS
 
 ![LiquidBar taskbar modes](Assets/Brand/liquidbar-taskbar-showcase-zoom.png)
 
 LiquidBar supports labeled windows, icon-only mode, app grouping, pinned apps,
 custom items, launcher/search entries, sidebar layouts, and per-display panels.
 The v1 default is an icon-first 32 px bottom bar with Liquid Glass styling.
+
+### Hover To Pick The Exact Window
+
+![LiquidBar taskbar thumbnail preview](Assets/Screenshots/taskbar-thumbnail-preview.png)
+
+Grouped apps expose thumbnail previews so you can pick the exact window before
+switching. Portrait and wide windows keep their shape instead of being forced
+into one generic tile size.
+
+### Sidebar Mode
+
+![LiquidBar sidebar mode](Assets/Screenshots/sidebar-modes.png)
+
+The experimental sidebar keeps the taskbar on the left or right edge, with
+compact and expanded presentations for different workflows.
 
 ### System Indicators
 
@@ -43,6 +64,14 @@ The v1 default is an icon-first 32 px bottom bar with Liquid Glass styling.
 CPU, GPU, memory, and thermal indicators can live inside the bar with compact,
 dense, graph, underline, or minimal presentations. Indicators are configurable
 by metric, color, placement, display scope, refresh interval, and visual style.
+
+### Preferences
+
+<img src="Assets/Screenshots/preferences-appearance.png" alt="LiquidBar appearance preferences" width="560">
+
+Most v1 behavior can be tuned without editing JSON by hand: bar size, icon
+size, glass style, hover intensity, visual depth, animations, indicators,
+multi-monitor behavior, previews, permissions, diagnostics, and plugins.
 
 ## Features
 

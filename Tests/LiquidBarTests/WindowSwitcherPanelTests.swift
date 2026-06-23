@@ -236,7 +236,22 @@ struct WindowSwitcherPanelTests {
 
     @Test func switcherPanelSnapshotCanBeExportedForVisualQA() throws {
         guard let outputPath = ProcessInfo.processInfo.environment["LIQUIDBAR_SWITCHER_VISUAL_QA_PATH"],
-              !outputPath.isEmpty else { return }
+              !outputPath.isEmpty else {
+            if let readmePath = ProcessInfo.processInfo.environment["LIQUIDBAR_SWITCHER_README_PATH"],
+               !readmePath.isEmpty {
+                try writeSwitcherReadmeShowcase(
+                    entries: Self.visualEntries(),
+                    selectedIndex: 1,
+                    hoverWindowId: 4,
+                    to: URL(fileURLWithPath: readmePath)
+                )
+            }
+            if let framesDir = ProcessInfo.processInfo.environment["LIQUIDBAR_SWITCHER_README_GIF_FRAMES_DIR"],
+               !framesDir.isEmpty {
+                try writeSwitcherReadmeGifFrames(to: URL(fileURLWithPath: framesDir))
+            }
+            return
+        }
 
         let panel = WindowSwitcherPanel(theme: .dark, glassStyle: .publicRegular)
         defer { panel.close() }
@@ -250,6 +265,20 @@ struct WindowSwitcherPanelTests {
         view.layoutSubtreeIfNeeded()
         view.displayIfNeeded()
         try writeViewSnapshot(view, to: URL(fileURLWithPath: outputPath))
+
+        if let readmePath = ProcessInfo.processInfo.environment["LIQUIDBAR_SWITCHER_README_PATH"],
+           !readmePath.isEmpty {
+            try writeSwitcherReadmeShowcase(
+                entries: Self.visualEntries(),
+                selectedIndex: 1,
+                hoverWindowId: 4,
+                to: URL(fileURLWithPath: readmePath)
+            )
+        }
+        if let framesDir = ProcessInfo.processInfo.environment["LIQUIDBAR_SWITCHER_README_GIF_FRAMES_DIR"],
+           !framesDir.isEmpty {
+            try writeSwitcherReadmeGifFrames(to: URL(fileURLWithPath: framesDir))
+        }
     }
 
     private static func entries(count: Int) -> [WindowSwitcherPanel.Entry] {
@@ -277,7 +306,7 @@ struct WindowSwitcherPanelTests {
 
     private static func visualEntries() -> [WindowSwitcherPanel.Entry] {
         let items: [(String, String, NSColor, NSSize)] = [
-            ("Codex", "Chat", NSColor.systemBlue, NSSize(width: 320, height: 184)),
+            ("Editor", "Project", NSColor.systemBlue, NSSize(width: 320, height: 184)),
             ("Terminal", "Build", NSColor.systemGreen, NSSize(width: 360, height: 210)),
             ("Browser", "Docs", NSColor.systemOrange, NSSize(width: 360, height: 150)),
             ("Messages", "Thread", NSColor.systemPurple, NSSize(width: 176, height: 260)),
@@ -290,6 +319,7 @@ struct WindowSwitcherPanelTests {
                 appName: item.0,
                 icon: nil,
                 thumbnail: thumbnail(color: item.2, label: item.1, size: item.3),
+                aspectRatio: item.3.width / item.3.height,
                 isDimmed: false
             )
         }
@@ -311,6 +341,126 @@ struct WindowSwitcherPanelTests {
         NSString(string: label).draw(at: NSPoint(x: 22, y: max(22, size.height - 52)), withAttributes: attrs)
         image.unlockFocus()
         return image
+    }
+
+    private func writeSwitcherReadmeShowcase(
+        entries: [WindowSwitcherPanel.Entry],
+        selectedIndex: Int,
+        hoverWindowId: UInt32,
+        to url: URL
+    ) throws {
+        let container = NSView(frame: NSRect(x: 0, y: 0, width: 1860, height: 500))
+        container.wantsLayer = true
+        container.layer?.backgroundColor = NSColor(srgbRed: 0.045, green: 0.050, blue: 0.064, alpha: 1).cgColor
+
+        let title = NSTextField(labelWithString: "Cmd-Tab, But For Windows")
+        title.frame = NSRect(x: 44, y: 418, width: 560, height: 34)
+        title.font = NSFont.systemFont(ofSize: 26, weight: .bold)
+        title.textColor = .white
+        container.addSubview(title)
+
+        let subtitle = NSTextField(labelWithString: "Large thumbnails, MRU traversal, click-to-select, and aspect-aware cards.")
+        subtitle.frame = NSRect(x: 44, y: 390, width: 720, height: 22)
+        subtitle.font = NSFont.systemFont(ofSize: 14, weight: .medium)
+        subtitle.textColor = NSColor.white.withAlphaComponent(0.62)
+        container.addSubview(subtitle)
+
+        var x: CGFloat = 44
+        for (index, entry) in entries.enumerated() {
+            let selected = index == selectedIndex
+            let hovered = entry.windowId == hoverWindowId
+            let aspect = max(0.30, min(2.40, entry.aspectRatio))
+            let imageHeight: CGFloat = selected ? 196 : 178
+            let imageWidth = (imageHeight * aspect).clamped(to: selected ? 132...358 : 118...318)
+            let tileWidth = imageWidth + 28
+            let tileHeight: CGFloat = selected ? 306 : 284
+            let tileY: CGFloat = selected ? 52 : 64
+
+            addSwitcherTile(
+                entry: entry,
+                selected: selected,
+                hovered: hovered,
+                frame: NSRect(x: x, y: tileY, width: tileWidth, height: tileHeight),
+                imageWidth: imageWidth,
+                imageHeight: imageHeight,
+                to: container
+            )
+            x += tileWidth + 22
+        }
+
+        container.displayIfNeeded()
+        try writeViewSnapshot(container, to: url)
+    }
+
+    private func writeSwitcherReadmeGifFrames(to directory: URL) throws {
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let entries = Self.visualEntries()
+        let frames: [(selectedIndex: Int, hoverWindowId: UInt32)] = [
+            (1, 4),
+            (2, 4),
+            (3, 4),
+            (4, 4),
+            (3, 3),
+            (2, 3),
+            (1, 4),
+        ]
+        for (index, frame) in frames.enumerated() {
+            try writeSwitcherReadmeShowcase(
+                entries: entries,
+                selectedIndex: frame.selectedIndex,
+                hoverWindowId: frame.hoverWindowId,
+                to: directory.appendingPathComponent(String(format: "frame-%02d.png", index))
+            )
+        }
+    }
+
+    private func addSwitcherTile(
+        entry: WindowSwitcherPanel.Entry,
+        selected: Bool,
+        hovered: Bool,
+        frame: NSRect,
+        imageWidth: CGFloat,
+        imageHeight: CGFloat,
+        to container: NSView
+    ) {
+        let tile = NSView(frame: frame)
+        tile.wantsLayer = true
+        tile.layer?.backgroundColor = NSColor.white.withAlphaComponent(selected ? 0.145 : hovered ? 0.095 : 0.065).cgColor
+        tile.layer?.cornerRadius = selected ? 25 : 22
+        tile.layer?.borderWidth = selected ? 1.4 : 1
+        tile.layer?.borderColor = NSColor.white.withAlphaComponent(selected ? 0.30 : hovered ? 0.20 : 0.12).cgColor
+        container.addSubview(tile)
+
+        let imageView = NSImageView(frame: NSRect(
+            x: 14,
+            y: frame.height - imageHeight - 14,
+            width: imageWidth,
+            height: imageHeight
+        ))
+        imageView.image = entry.thumbnail
+        imageView.imageScaling = .scaleProportionallyUpOrDown
+        imageView.imageAlignment = .alignCenter
+        imageView.wantsLayer = true
+        imageView.layer?.cornerRadius = selected ? 16 : 14
+        imageView.layer?.masksToBounds = true
+        imageView.layer?.backgroundColor = NSColor.black.withAlphaComponent(0.24).cgColor
+        tile.addSubview(imageView)
+
+        let titleLabel = NSTextField(labelWithString: entry.title)
+        titleLabel.frame = NSRect(x: 16, y: 44, width: frame.width - 32, height: 20)
+        titleLabel.font = NSFont.systemFont(ofSize: selected ? 15 : 14, weight: .semibold)
+        titleLabel.textColor = NSColor.white.withAlphaComponent(0.92)
+        titleLabel.lineBreakMode = .byTruncatingTail
+        titleLabel.usesSingleLineMode = true
+        tile.addSubview(titleLabel)
+
+        let appLabel = NSTextField(labelWithString: entry.appName)
+        appLabel.frame = NSRect(x: 16, y: 24, width: frame.width - 32, height: 16)
+        appLabel.font = NSFont.systemFont(ofSize: 11, weight: .medium)
+        appLabel.textColor = NSColor.white.withAlphaComponent(0.52)
+        appLabel.lineBreakMode = .byTruncatingTail
+        appLabel.usesSingleLineMode = true
+        tile.addSubview(appLabel)
     }
 
     private func writeViewSnapshot(_ view: NSView, to url: URL) throws {

@@ -996,6 +996,52 @@ struct NativeBarRendererSnapshotTests {
         renderer.shutdown()
     }
 
+    @Test func sidebarModeReadmeShowcaseCanBeExported() throws {
+        guard let outputPath = ProcessInfo.processInfo.environment["LIQUIDBAR_SIDEBAR_README_PATH"],
+              !outputPath.isEmpty else { return }
+
+        let container = NSView(frame: NSRect(x: 0, y: 0, width: 1120, height: 600))
+        container.wantsLayer = true
+        container.layer?.backgroundColor = NSColor(srgbRed: 0.045, green: 0.050, blue: 0.064, alpha: 1).cgColor
+
+        let title = NSTextField(labelWithString: "Sidebar Mode")
+        title.frame = NSRect(x: 48, y: 528, width: 420, height: 34)
+        title.font = NSFont.systemFont(ofSize: 26, weight: .bold)
+        title.textColor = .white
+        container.addSubview(title)
+
+        let subtitle = NSTextField(labelWithString: "Compact icons or expanded labels, using the same retained native renderer.")
+        subtitle.frame = NSRect(x: 48, y: 500, width: 680, height: 22)
+        subtitle.font = NSFont.systemFont(ofSize: 14, weight: .medium)
+        subtitle.textColor = NSColor.white.withAlphaComponent(0.62)
+        container.addSubview(subtitle)
+
+        var renderers: [NativeBarRenderer] = []
+        defer { renderers.forEach { $0.shutdown() } }
+
+        try addSidebarReadmeCard(
+            title: "Compact",
+            caption: "Pinned to the edge",
+            frame: NSRect(x: 88, y: 54, width: 400, height: 410),
+            barWidth: 64,
+            expanded: false,
+            container: container,
+            renderers: &renderers
+        )
+        try addSidebarReadmeCard(
+            title: "Expanded",
+            caption: "Labels when you want context",
+            frame: NSRect(x: 568, y: 54, width: 460, height: 410),
+            barWidth: 218,
+            expanded: true,
+            container: container,
+            renderers: &renderers
+        )
+
+        container.displayIfNeeded()
+        try writeViewSnapshot(container, to: URL(fileURLWithPath: outputPath))
+    }
+
     private func systemIndicatorFixtureText(
         metric: SystemIndicatorMetric,
         preset: SystemIndicatorChipPreset,
@@ -1009,6 +1055,150 @@ struct NativeBarRendererSnapshotTests {
         case .micro:
             return ""
         }
+    }
+
+    private func addSidebarReadmeCard(
+        title: String,
+        caption: String,
+        frame: NSRect,
+        barWidth: CGFloat,
+        expanded: Bool,
+        container: NSView,
+        renderers: inout [NativeBarRenderer]
+    ) throws {
+        let card = NSView(frame: frame)
+        card.wantsLayer = true
+        card.layer?.backgroundColor = NSColor.white.withAlphaComponent(0.055).cgColor
+        card.layer?.cornerRadius = 24
+        card.layer?.borderWidth = 1
+        card.layer?.borderColor = NSColor.white.withAlphaComponent(0.10).cgColor
+        container.addSubview(card)
+
+        let label = NSTextField(labelWithString: title)
+        label.frame = NSRect(x: 24, y: frame.height - 54, width: frame.width - 48, height: 24)
+        label.font = NSFont.systemFont(ofSize: 18, weight: .bold)
+        label.textColor = .white
+        card.addSubview(label)
+
+        let sublabel = NSTextField(labelWithString: caption)
+        sublabel.frame = NSRect(x: 24, y: frame.height - 78, width: frame.width - 48, height: 18)
+        sublabel.font = NSFont.systemFont(ofSize: 12, weight: .medium)
+        sublabel.textColor = NSColor.white.withAlphaComponent(0.58)
+        card.addSubview(sublabel)
+
+        let barHeight: CGFloat = 292
+        let barX = expanded ? 42 : (frame.width - barWidth) / 2
+        let barFrame = NSRect(x: barX, y: 34, width: barWidth, height: barHeight)
+        let barShell = NSView(frame: barFrame)
+        barShell.wantsLayer = true
+        barShell.layer?.backgroundColor = NSColor.black.withAlphaComponent(0.30).cgColor
+        barShell.layer?.cornerRadius = expanded ? 24 : 22
+        barShell.layer?.borderWidth = 1
+        barShell.layer?.borderColor = NSColor.white.withAlphaComponent(0.13).cgColor
+        card.addSubview(barShell)
+
+        let view = NativeBarView(frame: barShell.bounds)
+        view.configure(scale: 2)
+        view.orientation = .left
+        barShell.addSubview(view)
+
+        let renderer = NativeBarRenderer()
+        renderers.append(renderer)
+        renderer.registerPanel(displayId: expanded ? 242 : 241, barWidth: Float(barWidth), barHeight: Float(barHeight), scale: 2)
+
+        var config = Config(taskbarHeight: 42, iconSize: 28, iconsOnly: !expanded, itemSizing: .auto)
+        config.taskbarPosition = .left
+        config.sidebarModeEnabled = true
+        config.sidebarStateDefault = expanded ? .expanded : .compactIcons
+        config.groupByApp = true
+        config.visualDepth = .rich
+        config.hoverIntensity = .pronounced
+        config.focusIndicatorStyle = .tile
+        config.appGroupStackStyle = .filled
+        config.appGroupStackGeometry = .strong
+        config.appGroupCountBadgeStyle = .pill
+
+        let displayId: CGDirectDisplayID = expanded ? 242 : 241
+        let items: [TaskbarItem] = [
+            .launcher(screenId: displayId),
+            .window(
+                id: WindowId(11),
+                bundleId: "com.apple.finder",
+                title: "Project Files",
+                appName: "Finder",
+                isHidden: false,
+                isMinimized: false,
+                screenId: displayId
+            ),
+            .appGroup(
+                bundleId: "com.example.browser",
+                appName: "Browser",
+                windowCount: 3,
+                windows: [WindowId(21), WindowId(22), WindowId(23)],
+                isHidden: false,
+                isMinimized: false,
+                screenId: displayId
+            ),
+            .pluginTile(
+                id: "tile.now-playing",
+                providerId: nil,
+                title: "Now Playing",
+                icon: "sf:music.note",
+                visualState: .active,
+                screenId: displayId
+            ),
+            .window(
+                id: WindowId(31),
+                bundleId: "com.example.notes",
+                title: "Release Notes",
+                appName: "Notes",
+                isHidden: false,
+                isMinimized: true,
+                screenId: displayId
+            ),
+        ]
+
+        renderer.updateItems(
+            items,
+            config: config,
+            iconCache: IconCache(),
+            displayId: displayId,
+            focus: FocusInfo(windowId: nil, bundleId: "com.example.browser", tabGroupId: nil),
+            sidebarExpanded: expanded
+        )
+        _ = renderer.setHoveredItemIndex(expanded ? 2 : 1, for: displayId)
+        let hoverIndex = expanded ? 2 : 1
+        let snapshotForHover = renderer.snapshot(displayId: displayId)
+        if let rects = snapshotForHover?.visualRects, rects.indices.contains(hoverIndex) {
+            let hoverRect = rects[hoverIndex]
+            _ = renderer.setHoverRect(hoverRect, for: displayId)
+        }
+        if let snapshot = renderer.snapshot(displayId: displayId) {
+            view.applySnapshot(snapshot, fontSize: CGFloat(config.fontSize), barHeight: barHeight)
+            if expanded {
+                for item in snapshot.items {
+                    let text = item.item.displayTitle(iconsOnly: false)
+                    guard !text.isEmpty else { continue }
+                    let lineHeight: CGFloat = 18
+                    let iconMaxX = item.rect.minX + item.iconRect.maxX
+                    let x = min(max(iconMaxX + 10, 72), max(72, barWidth - 112))
+                    let label = NSTextField(labelWithString: item.title)
+                    label.frame = NSRect(
+                        x: x,
+                        y: barHeight - item.rect.midY - lineHeight / 2.0,
+                        width: max(80, barWidth - x - 14),
+                        height: lineHeight
+                    )
+                    label.font = NSFont.systemFont(ofSize: CGFloat(config.fontSize), weight: .medium)
+                    label.textColor = NSColor.white.withAlphaComponent(item.isDimmed ? 0.46 : 0.90)
+                    label.lineBreakMode = .byTruncatingTail
+                    label.usesSingleLineMode = true
+                    barShell.addSubview(label)
+                    label.stringValue = text
+                }
+            }
+        }
+        view.displayIfNeeded()
     }
 
     private func writeViewSnapshot(_ view: NSView, to url: URL) throws {
