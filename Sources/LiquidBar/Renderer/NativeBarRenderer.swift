@@ -1311,7 +1311,7 @@ final class NativeBarRenderer {
         let config = panelConfigs[displayId] ?? Config()
         let systemIndicatorVisuals = systemIndicatorVisualsByDisplay[displayId] ?? [:]
 
-        var x = anim.leftMargin
+        var x = dragSequenceOrigin(participants: participants, sourceIndex: anim.sourceIndex, layouts: layouts, displayId: displayId, fallback: anim.leftMargin)
         var previous: DragLayoutElement?
         for element in sequence {
             if let previous {
@@ -1359,7 +1359,7 @@ final class NativeBarRenderer {
         let config = panelConfigs[displayId] ?? Config()
         let systemIndicatorVisuals = systemIndicatorVisualsByDisplay[displayId] ?? [:]
 
-        var x = anim.leftMargin
+        var x = dragSequenceOrigin(participants: participants, sourceIndex: anim.sourceIndex, layouts: layouts, displayId: displayId, fallback: anim.leftMargin)
         for (offset, itemIdx) in finalOrder.enumerated() {
             if offset > 0 {
                 x += spacingBetweenItems(
@@ -1373,6 +1373,21 @@ final class NativeBarRenderer {
             anim.springs[itemIdx].target = x
             x += layouts[itemIdx].width
         }
+    }
+
+    private func dragSequenceOrigin(
+        participants: [Int],
+        sourceIndex: Int,
+        layouts: [(x: Float, width: Float)],
+        displayId: CGDirectDisplayID,
+        fallback: Float
+    ) -> Float {
+        let indicatorIndices = cornerAffixedSystemIndicatorIndices(displayId: displayId)
+        guard indicatorIndices.contains(sourceIndex),
+              !participants.isEmpty else {
+            return fallback
+        }
+        return participants.compactMap { layouts.indices.contains($0) ? layouts[$0].x : nil }.min() ?? fallback
     }
 
     private func dragParticipantIndices(

@@ -322,6 +322,64 @@ struct DragLifecycleTests {
         renderer.shutdown()
     }
 
+    @Test func rightCornerSystemIndicatorsStayPinnedDuringIndicatorDrag() throws {
+        let renderer = NativeBarRenderer()
+        renderer.registerPanel(displayId: 1, barWidth: 520, barHeight: 32, scale: 2)
+
+        let items: [TaskbarItem] = [
+            .customText(id: "system.cpu", text: "CPU 55%", screenId: nil),
+            .customText(id: "system.ram", text: "RAM 74%", screenId: nil),
+            .customText(id: "system.thermal", text: "35C", screenId: nil),
+        ]
+        var config = Config(iconSize: 20, iconsOnly: false, itemSizing: .auto)
+        config.systemIndicatorPlacement = .rightCorner
+        config.systemIndicatorChipPreset = .dense
+        config.systemIndicatorAppearance = .flat
+
+        renderer.updateItems(
+            items,
+            config: config,
+            iconCache: IconCache(),
+            displayId: 1,
+            systemIndicatorVisuals: [
+                "system.cpu": systemVisual(metric: .cpu, mode: .bar, valueText: "55%", value: 55, history: []),
+                "system.ram": systemVisual(metric: .ram, mode: .bar, valueText: "74%", value: 74, history: []),
+                "system.thermal": systemVisual(metric: .thermal, mode: .percentage, valueText: "35C", value: 35, history: []),
+            ]
+        )
+
+        let rects = renderer.visualItemRects(displayId: 1)
+        #expect(rects.count == 3)
+        #expect(rects[0].minX > 250)
+
+        renderer.startDrag(
+            sourceIndex: 0,
+            cursorX: Float(rects[0].midX),
+            cursorOffsetInItem: Float(rects[0].width / 2),
+            config: config,
+            displayId: 1
+        )
+        renderer.updateDragCursor(
+            cursorX: Float(rects[2].midX),
+            insertionIndex: 3,
+            displayId: 1
+        )
+
+        let activeTargets = renderer.debugDragSpringTargets(displayId: 1)
+        #expect(activeTargets.count == 3)
+        #expect(abs(activeTargets[1] - Float(rects[0].minX)) < 0.5)
+        #expect(abs(activeTargets[2] - Float(rects[1].minX)) < 0.5)
+
+        renderer.endDrag(displayId: 1)
+        let settleTargets = renderer.debugDragSpringTargets(displayId: 1)
+        #expect(settleTargets.count == 3)
+        #expect(abs(settleTargets[0] - Float(rects[2].minX)) < 0.5)
+        #expect(abs(settleTargets[1] - Float(rects[0].minX)) < 0.5)
+        #expect(abs(settleTargets[2] - Float(rects[1].minX)) < 0.5)
+
+        renderer.shutdown()
+    }
+
     @Test func rightCornerSystemIndicatorDecorationsStayPinnedDuringWindowDrag() throws {
         let renderer = NativeBarRenderer()
         renderer.registerPanel(displayId: 1, barWidth: 520, barHeight: 32, scale: 2)
