@@ -116,6 +116,46 @@ struct WindowThumbnailSchedulerTests {
         #expect(scheduler.debugQueuedRequests().map(\.windowId) == [prewarmB.windowId, prewarmC.windowId])
     }
 
+    @Test func queueCapAlsoBoundsSwitcherWork() {
+        var scheduler = WindowThumbnailService.ThumbnailRequestScheduler(
+            maxConcurrentCaptures: 1,
+            maxQueuedRequests: 2
+        )
+
+        let active = makeRequest(windowId: 1, producer: .interactive, generation: scheduler.currentGeneration(for: .interactive))
+        let switcherA = makeRequest(windowId: 2, producer: .switcher, generation: scheduler.currentGeneration(for: .switcher))
+        let switcherB = makeRequest(windowId: 3, producer: .switcher, generation: scheduler.currentGeneration(for: .switcher))
+        let switcherC = makeRequest(windowId: 4, producer: .switcher, generation: scheduler.currentGeneration(for: .switcher))
+
+        _ = scheduler.enqueue(active)
+        #expect(scheduler.enqueue(switcherA).droppedQueued.isEmpty)
+        #expect(scheduler.enqueue(switcherB).droppedQueued.isEmpty)
+        let result = scheduler.enqueue(switcherC)
+
+        #expect(result.droppedQueued == [switcherA])
+        #expect(scheduler.debugQueuedRequests().map(\.windowId) == [switcherB.windowId, switcherC.windowId])
+    }
+
+    @Test func queueCapDropsLowerPriorityWorkBeforeInteractiveWork() {
+        var scheduler = WindowThumbnailService.ThumbnailRequestScheduler(
+            maxConcurrentCaptures: 1,
+            maxQueuedRequests: 2
+        )
+
+        let active = makeRequest(windowId: 1, producer: .groupPreview, generation: scheduler.currentGeneration(for: .groupPreview))
+        let prewarm = makeRequest(windowId: 2, producer: .prewarm, generation: scheduler.currentGeneration(for: .prewarm))
+        let switcher = makeRequest(windowId: 3, producer: .switcher, generation: scheduler.currentGeneration(for: .switcher))
+        let interactive = makeRequest(windowId: 4, producer: .interactive, generation: scheduler.currentGeneration(for: .interactive))
+
+        _ = scheduler.enqueue(active)
+        #expect(scheduler.enqueue(prewarm).droppedQueued.isEmpty)
+        #expect(scheduler.enqueue(switcher).droppedQueued.isEmpty)
+        let result = scheduler.enqueue(interactive)
+
+        #expect(result.droppedQueued == [prewarm])
+        #expect(scheduler.debugQueuedRequests().map(\.windowId) == [interactive.windowId, switcher.windowId])
+    }
+
     @Test func staleInFlightRequestAllowsFreshFollowUpForSameKey() {
         var scheduler = WindowThumbnailService.ThumbnailRequestScheduler(
             maxConcurrentCaptures: 1,

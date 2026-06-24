@@ -33,6 +33,7 @@ targets:
         INFOPLIST_KEY_CFBundleDisplayName: LiquidBar
         INFOPLIST_KEY_CFBundleIconFile: LiquidBar
         INFOPLIST_KEY_NSScreenCaptureUsageDescription: LiquidBar uses Screen Recording permission to capture static window thumbnails for taskbar previews and the window switcher.
+        INFOPLIST_KEY_NSInputMonitoringUsageDescription: LiquidBar uses Input Monitoring only for global keyboard shortcuts such as Cmd-Tab before macOS handles them.
         ENABLE_TESTABILITY: true
 
   LiquidBarFixture:

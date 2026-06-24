@@ -220,6 +220,7 @@ final class TabGroupOverlayPanel: NSPanel {
     }
 
     @objc private func windowClicked(_ sender: NSButton) {
-        onWindowClicked?(UInt32(sender.tag))
+        guard let windowId = WindowNumber.tag(sender.tag) else { return }
+        onWindowClicked?(windowId)
     }
 }

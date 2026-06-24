@@ -280,8 +280,12 @@ final class WindowThumbnailService {
 
         private func worstDroppableQueuedKey() -> ThumbnailRequestKey? {
             queuedByKey.values
-                .filter { $0.request.producer == .prewarm }
                 .sorted { lhs, rhs in
+                    let lhsPriority = priority(for: lhs.request.producer)
+                    let rhsPriority = priority(for: rhs.request.producer)
+                    if lhsPriority != rhsPriority {
+                        return lhsPriority > rhsPriority
+                    }
                     if lhs.order != rhs.order {
                         return lhs.order < rhs.order
                     }

@@ -75,6 +75,8 @@ struct NativeDecoration {
     var alpha: Float
     var visualDepth: VisualDepth = .balanced
     var usesLayeredGlass: Bool = true
+    /// Source item for decorations that should travel with the item during drag.
+    var itemIndex: Int? = nil
 }
 
 struct NativeBarItemPresentation {
@@ -762,22 +764,34 @@ final class NativeBarRenderer {
             dragTextCount[displayId] = 0
             return
         }
+        let position = panelConfigs[displayId]?.taskbarPosition ?? .bottom
         let visualDepth = panelConfigs[displayId]?.visualDepth ?? .balanced
         let participants = Set(dragParticipantIndices(layouts: layouts, sourceIndex: anim.sourceIndex, displayId: displayId))
+        var primaryDeltaByIndex: [Int: CGFloat] = [:]
 
         for index in presentations.indices where index != anim.sourceIndex && participants.contains(index) {
-            let dx = CGFloat(anim.springs[index].current - layouts[index].x)
-            presentations[index].rect.origin.x += dx
-            presentations[index].iconRect.origin.x += dx
-            presentations[index].titleRect.origin.x += dx
+            let delta = CGFloat(anim.springs[index].current - layouts[index].x)
+            primaryDeltaByIndex[index] = delta
+            applyPrimaryDelta(delta, to: &presentations[index].rect, position: position)
+            applyPrimaryDelta(delta, to: &presentations[index].iconRect, position: position)
+            applyPrimaryDelta(delta, to: &presentations[index].titleRect, position: position)
             presentations[index].alpha *= 0.72
         }
 
-        let sourceX = CGFloat(anim.isSettling ? anim.springs[anim.sourceIndex].current : anim.cursorX - anim.cursorOffsetInItem)
-        let sourceDx = sourceX - presentations[anim.sourceIndex].rect.minX
-        presentations[anim.sourceIndex].rect.origin.x += sourceDx
-        presentations[anim.sourceIndex].iconRect.origin.x += sourceDx
-        presentations[anim.sourceIndex].titleRect.origin.x += sourceDx
+        let sourcePrimary = CGFloat(anim.isSettling ? anim.springs[anim.sourceIndex].current : anim.cursorX - anim.cursorOffsetInItem)
+        let sourceDelta = sourcePrimary - primaryOrigin(of: presentations[anim.sourceIndex].rect, position: position)
+        primaryDeltaByIndex[anim.sourceIndex] = sourceDelta
+        applyPrimaryDelta(sourceDelta, to: &presentations[anim.sourceIndex].rect, position: position)
+        applyPrimaryDelta(sourceDelta, to: &presentations[anim.sourceIndex].iconRect, position: position)
+        applyPrimaryDelta(sourceDelta, to: &presentations[anim.sourceIndex].titleRect, position: position)
+
+        for index in decorations.indices {
+            guard let itemIndex = decorations[index].itemIndex,
+                  let delta = primaryDeltaByIndex[itemIndex] else {
+                continue
+            }
+            applyPrimaryDelta(delta, to: &decorations[index].rect, position: position)
+        }
 
         decorations.append(NativeDecoration(
             kind: .hover,
@@ -799,6 +813,18 @@ final class NativeBarRenderer {
         dragTextCount[displayId] = nativeTextOverlayItemsByDisplay[displayId]?.count ?? 0
     }
 
+    private func primaryOrigin(of rect: NSRect, position: Position) -> CGFloat {
+        position.isVertical ? rect.minY : rect.minX
+    }
+
+    private func applyPrimaryDelta(_ delta: CGFloat, to rect: inout NSRect, position: Position) {
+        if position.isVertical {
+            rect.origin.y += delta
+        } else {
+            rect.origin.x += delta
+        }
+    }
+
     private func appendDecorations(
         for item: TaskbarItem,
         index: Int,
@@ -812,6 +838,15 @@ final class NativeBarRenderer {
         into decorations: inout [NativeDecoration],
         textItems: inout [NativeTextOverlayItem]
     ) {
+        let ownedDecorationStart = decorations.count
+        defer {
+            if ownedDecorationStart < decorations.count {
+                for decorationIndex in ownedDecorationStart..<decorations.count {
+                    decorations[decorationIndex].itemIndex = index
+                }
+            }
+        }
+
         if let systemIndicatorVisual {
             appendSystemIndicatorDecorations(
                 metricVisual: systemIndicatorVisual,

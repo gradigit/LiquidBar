@@ -61,6 +61,8 @@ cat > "${APP_PATH}/Contents/Info.plist" <<'PLIST'
   <true/>
   <key>NSScreenCaptureUsageDescription</key>
   <string>LiquidBar uses Screen Recording permission to capture static window thumbnails for taskbar previews and the window switcher.</string>
+  <key>NSInputMonitoringUsageDescription</key>
+  <string>LiquidBar uses Input Monitoring only for global keyboard shortcuts such as Cmd-Tab before macOS handles them.</string>
   <key>NSSupportsAutomaticTermination</key>
   <false/>
   <key>NSSupportsSuddenTermination</key>

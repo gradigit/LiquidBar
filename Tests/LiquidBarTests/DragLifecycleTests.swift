@@ -100,6 +100,23 @@ struct DragLifecycleTests {
         )
     }
 
+    private func systemMetricDecorationRects(_ snapshot: NativeBarSnapshot) -> [NSRect] {
+        snapshot.decorations.compactMap { decoration in
+            switch decoration.kind {
+            case .systemMetricShell, .systemMetricTrack, .systemMetricFill, .systemMetricGraph:
+                return decoration.rect
+            case .hover, .focus, .badge, .pin, .stackPlate, .pluginState, .separator, .dragShadow:
+                return nil
+            }
+        }
+        .sorted {
+            if abs($0.minX - $1.minX) > 0.001 { return $0.minX < $1.minX }
+            if abs($0.minY - $1.minY) > 0.001 { return $0.minY < $1.minY }
+            if abs($0.width - $1.width) > 0.001 { return $0.width < $1.width }
+            return $0.height < $1.height
+        }
+    }
+
     // MARK: - Start Drag
 
     @Test func testStartDragCreatesAnimation() throws {
@@ -301,6 +318,120 @@ struct DragLifecycleTests {
         #expect(abs(during.items[3].rect.minX - ramRect.minX) < 0.001)
         #expect(during.items[2].alpha == 1.0)
         #expect(during.items[3].alpha == 1.0)
+
+        renderer.shutdown()
+    }
+
+    @Test func rightCornerSystemIndicatorDecorationsStayPinnedDuringWindowDrag() throws {
+        let renderer = NativeBarRenderer()
+        renderer.registerPanel(displayId: 1, barWidth: 520, barHeight: 32, scale: 2)
+
+        let items: [TaskbarItem] = [
+            .window(id: WindowId(1), bundleId: "com.app.one", title: "One window", appName: "One", isHidden: false, isMinimized: false, screenId: 1),
+            .window(id: WindowId(2), bundleId: "com.app.two", title: "Two window", appName: "Two", isHidden: false, isMinimized: false, screenId: 1),
+            .customText(id: "system.cpu", text: "CPU 55%", screenId: nil),
+            .customText(id: "system.ram", text: "RAM 74%", screenId: nil),
+        ]
+        var config = Config(iconSize: 20, iconsOnly: false, itemSizing: .auto)
+        config.systemIndicatorPlacement = .rightCorner
+        config.systemIndicatorChipPreset = .dense
+        config.systemIndicatorAppearance = .flat
+
+        renderer.updateItems(
+            items,
+            config: config,
+            iconCache: IconCache(),
+            displayId: 1,
+            systemIndicatorVisuals: [
+                "system.cpu": systemVisual(metric: .cpu, mode: .bar, valueText: "55%", value: 55, history: []),
+                "system.ram": systemVisual(metric: .ram, mode: .bar, valueText: "74%", value: 74, history: []),
+            ]
+        )
+
+        let before = try #require(renderer.snapshot(displayId: 1))
+        let beforeMetricRects = systemMetricDecorationRects(before)
+        #expect(beforeMetricRects.isEmpty == false)
+
+        renderer.startDrag(
+            sourceIndex: 0,
+            cursorX: Float(before.visualRects[0].midX),
+            cursorOffsetInItem: Float(before.visualRects[0].width / 2),
+            config: config,
+            displayId: 1
+        )
+        renderer.updateDragCursor(
+            cursorX: Float(before.visualRects[2].midX),
+            insertionIndex: 3,
+            displayId: 1
+        )
+        _ = renderer.tickAndRebuildDragBuffers(displayId: 1)
+
+        let during = try #require(renderer.snapshot(displayId: 1))
+        let duringMetricRects = systemMetricDecorationRects(during)
+        #expect(duringMetricRects.count == beforeMetricRects.count)
+        for (beforeRect, duringRect) in zip(beforeMetricRects, duringMetricRects) {
+            #expect(abs(beforeRect.minX - duringRect.minX) < 0.5)
+            #expect(abs(beforeRect.minY - duringRect.minY) < 0.5)
+            #expect(abs(beforeRect.width - duringRect.width) < 0.5)
+            #expect(abs(beforeRect.height - duringRect.height) < 0.5)
+        }
+
+        renderer.shutdown()
+    }
+
+    @Test func systemIndicatorDecorationsMoveWithDraggedIndicator() throws {
+        let renderer = NativeBarRenderer()
+        renderer.registerPanel(displayId: 1, barWidth: 520, barHeight: 32, scale: 2)
+
+        let items: [TaskbarItem] = [
+            .customText(id: "system.cpu", text: "CPU 55%", screenId: nil),
+            .customText(id: "system.ram", text: "RAM 74%", screenId: nil),
+            .customText(id: "system.thermal", text: "35C", screenId: nil),
+        ]
+        var config = Config(iconSize: 20, iconsOnly: false, itemSizing: .auto)
+        config.systemIndicatorPlacement = .rightCorner
+        config.systemIndicatorChipPreset = .dense
+        config.systemIndicatorAppearance = .flat
+
+        renderer.updateItems(
+            items,
+            config: config,
+            iconCache: IconCache(),
+            displayId: 1,
+            systemIndicatorVisuals: [
+                "system.cpu": systemVisual(metric: .cpu, mode: .bar, valueText: "55%", value: 55, history: []),
+                "system.ram": systemVisual(metric: .ram, mode: .bar, valueText: "74%", value: 74, history: []),
+                "system.thermal": systemVisual(metric: .thermal, mode: .percentage, valueText: "35C", value: 35, history: []),
+            ]
+        )
+
+        let before = try #require(renderer.snapshot(displayId: 1))
+        let cpuRect = before.visualRects[0]
+        let thermalRect = before.visualRects[2]
+
+        renderer.startDrag(
+            sourceIndex: 0,
+            cursorX: Float(cpuRect.midX),
+            cursorOffsetInItem: Float(cpuRect.width / 2),
+            config: config,
+            displayId: 1
+        )
+        renderer.updateDragCursor(
+            cursorX: Float(thermalRect.midX),
+            insertionIndex: 3,
+            displayId: 1
+        )
+
+        let during = try #require(renderer.snapshot(displayId: 1))
+        let movedCpuRect = during.items[0].rect
+        let cpuShell = try #require(during.decorations.first { $0.kind == .systemMetricShell })
+        let cpuFill = try #require(during.decorations.first { $0.kind == .systemMetricFill })
+
+        #expect(abs(cpuShell.rect.midX - movedCpuRect.midX) < 0.5)
+        #expect(cpuShell.rect.minX >= movedCpuRect.minX - 0.5)
+        #expect(cpuShell.rect.maxX <= movedCpuRect.maxX + 0.5)
+        #expect(cpuFill.rect.minX >= movedCpuRect.minX - 0.5)
+        #expect(cpuFill.rect.maxX <= movedCpuRect.maxX + 0.5)
 
         renderer.shutdown()
     }

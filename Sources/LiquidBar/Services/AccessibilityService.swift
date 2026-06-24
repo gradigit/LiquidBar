@@ -95,6 +95,10 @@ final class AccessibilityService {
     }
 
     static func focusWindow(windowId: UInt32) {
+        if focusOwnAppSwitcherWindow(windowId: windowId) {
+            return
+        }
+
         let hooks = currentFocusWindowRoutingHooks()
         guard let window = hooks.findOnScreenWindow(windowId) ?? hooks.findOffScreenWindow(windowId) else { return }
         let bundleId = hooks.bundleIdForPid(window.pid)
@@ -148,18 +152,77 @@ final class AccessibilityService {
         ) as? [[CFString: Any]] else { return nil }
 
         let ownPid = ProcessInfo.processInfo.processIdentifier
+        let ownSwitcherWindowIds = ownAppSwitcherWindowIds()
         for dict in windowList {
             let layer = parseInt(dict[kCGWindowLayer as CFString]) ?? 0
             guard layer == 0 else { continue }
             guard let ownerPid = parsePid(dict[kCGWindowOwnerPID as CFString]),
-                  ownerPid != ownPid,
                   let windowId = parseWindowNumber(dict[kCGWindowNumber as CFString]) else {
+                continue
+            }
+            if ownerPid == ownPid, !ownSwitcherWindowIds.contains(windowId) {
                 continue
             }
             return (pid: ownerPid, windowId: windowId)
         }
 
         return nil
+    }
+
+    static func isOwnAppSwitcherWindow(_ window: NSWindow) -> Bool {
+        isOwnAppSwitcherWindow(
+            isPanel: window is NSPanel,
+            styleMask: window.styleMask,
+            collectionBehavior: window.collectionBehavior,
+            canBecomeKey: window.canBecomeKey
+        )
+    }
+
+    static func isOwnAppSwitcherWindow(
+        isPanel: Bool,
+        styleMask: NSWindow.StyleMask,
+        collectionBehavior: NSWindow.CollectionBehavior,
+        canBecomeKey: Bool
+    ) -> Bool {
+        if isPanel { return false }
+        if collectionBehavior.contains(.ignoresCycle) { return false }
+        if !styleMask.contains(.titled) { return false }
+        return canBecomeKey
+    }
+
+    static func ownAppWindowId(windowNumber: Int) -> UInt32? {
+        WindowNumber.appKitWindowNumber(windowNumber)
+    }
+
+    private static func ownAppSwitcherWindowIds() -> Set<UInt32> {
+        guard let app = NSApp else { return [] }
+        return Set(app.windows.compactMap { window in
+            guard window.isVisible,
+                  !window.isMiniaturized,
+                  isOwnAppSwitcherWindow(window),
+                  let windowId = ownAppWindowId(windowNumber: window.windowNumber) else {
+                return nil
+            }
+            return windowId
+        })
+    }
+
+    @discardableResult
+    private static func focusOwnAppSwitcherWindow(windowId: UInt32) -> Bool {
+        guard let app = NSApp,
+              let window = app.windows.first(where: {
+            isOwnAppSwitcherWindow($0)
+                && ownAppWindowId(windowNumber: $0.windowNumber) == windowId
+        }) else {
+            return false
+        }
+
+        if window.isMiniaturized {
+            window.deminiaturize(nil)
+        }
+        window.makeKeyAndOrderFront(nil)
+        NSApp.activate(ignoringOtherApps: true)
+        return true
     }
 
     // MARK: - Close Window
@@ -619,7 +682,7 @@ final class AccessibilityService {
         ) as? [[CFString: Any]] else { return nil }
 
         for dict in windowList {
-            guard let wid = dict[kCGWindowNumber] as? Int32, UInt32(wid) == windowId else { continue }
+            guard parseWindowNumber(dict[kCGWindowNumber]) == windowId else { continue }
             guard let pid = dict[kCGWindowOwnerPID] as? pid_t else { continue }
             guard let boundsDict = dict[kCGWindowBounds] as? NSDictionary else { continue }
             var rect = CGRect.zero
@@ -638,7 +701,7 @@ final class AccessibilityService {
         ) as? [[CFString: Any]] else { return nil }
 
         for dict in windowList {
-            guard let wid = dict[kCGWindowNumber] as? Int32, UInt32(wid) == windowId else { continue }
+            guard parseWindowNumber(dict[kCGWindowNumber]) == windowId else { continue }
             guard let pid = dict[kCGWindowOwnerPID] as? pid_t else { continue }
             guard let boundsDict = dict[kCGWindowBounds] as? NSDictionary else { continue }
             var rect = CGRect.zero
@@ -939,12 +1002,8 @@ final class AccessibilityService {
         return false
     }
 
-    private static func parseWindowNumber(_ rawValue: Any?) -> UInt32? {
-        if let n = rawValue as? UInt32 { return n }
-        if let n = rawValue as? Int32 { return UInt32(bitPattern: n) }
-        if let n = rawValue as? Int { return UInt32(clamping: n) }
-        if let n = rawValue as? NSNumber { return n.uint32Value }
-        return nil
+    static func parseWindowNumber(_ rawValue: Any?) -> UInt32? {
+        WindowNumber.parse(rawValue)
     }
 
     private static func parsePid(_ rawValue: Any?) -> pid_t? {

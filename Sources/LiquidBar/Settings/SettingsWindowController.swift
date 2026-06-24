@@ -2528,14 +2528,14 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTe
     private func refreshPermissionStatus() {
         let accessibilityAllowed = AXIsProcessTrusted()
         accessibilityStatusLabel?.stringValue = accessibilityAllowed ? L10n.tr("Allowed") : L10n.tr("Needs Access")
-        if HotkeyMonitor.inputMonitoringAccessGranted() {
-            inputMonitoringStatusLabel?.stringValue = L10n.tr("Allowed")
-        } else if accessibilityAllowed && HotkeyMonitor.listenEventAccessGranted() {
-            inputMonitoringStatusLabel?.stringValue = L10n.tr("Allowed via Accessibility")
-        } else {
-            inputMonitoringStatusLabel?.stringValue = L10n.tr("Needs Access")
-        }
+        inputMonitoringStatusLabel?.stringValue = Self.inputMonitoringPermissionStatus(
+            inputMonitoringAllowed: HotkeyMonitor.inputMonitoringAccessGranted()
+        )
         screenRecordingStatusLabel?.stringValue = CGPreflightScreenCaptureAccess() ? L10n.tr("Allowed") : L10n.tr("Needs Access")
+    }
+
+    static func inputMonitoringPermissionStatus(inputMonitoringAllowed: Bool) -> String {
+        inputMonitoringAllowed ? L10n.tr("Allowed") : L10n.tr("Needs Access")
     }
 
     private func openPrivacyPane(_ anchor: String) {

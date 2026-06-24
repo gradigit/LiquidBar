@@ -207,6 +207,12 @@ struct SettingsWindowControllerTests {
     }
 
     @MainActor
+    @Test func inputMonitoringPermissionStatusUsesInputMonitoringGrantOnly() {
+        #expect(SettingsWindowController.inputMonitoringPermissionStatus(inputMonitoringAllowed: true) == L10n.tr("Allowed"))
+        #expect(SettingsWindowController.inputMonitoringPermissionStatus(inputMonitoringAllowed: false) == L10n.tr("Needs Access"))
+    }
+
+    @MainActor
     @Test func koreanAdvancedTabActionButtonsFitTheirFrames() throws {
         L10n.applyAppLanguage(.korean)
         let controller = SettingsWindowController(

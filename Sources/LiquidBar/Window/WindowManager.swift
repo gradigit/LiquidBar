@@ -240,6 +240,7 @@ final class WindowManager {
         }
 
         parsedWindows = dedupeGhostWindows(parsedWindows)
+        pruneRuntimeCaches(liveEntries: parsedWindows)
 
         let windows = parsedWindows.map(\.info)
         Log.window.debug("Enumerated \(windows.count) windows")
@@ -295,7 +296,7 @@ final class WindowManager {
             guard layer == 0 else { continue }
             guard let pid = dict[kCGWindowOwnerPID] as? Int32,
                   pid != ownPid,
-                  let windowId = dict[kCGWindowNumber] as? UInt32 else {
+                  let windowId = WindowNumber.parse(dict[kCGWindowNumber]) else {
                 continue
             }
             return windowId
@@ -312,7 +313,7 @@ final class WindowManager {
         screens: [(displayId: UInt32, bounds: WindowBounds)],
         appInfoProvider: ((pid_t) -> (bundleId: String, isHidden: Bool))? = nil
     ) -> (info: WindowInfo, pid: pid_t)? {
-        guard let windowNumber = dict[kCGWindowNumber] as? UInt32,
+        guard let windowNumber = WindowNumber.parse(dict[kCGWindowNumber]),
               let pid = dict[kCGWindowOwnerPID] as? Int32 else {
             return nil
         }
@@ -359,6 +360,14 @@ final class WindowManager {
             .sorted { $0.key < $1.key }
             .map { "\($0.key):\($0.value)" }
             .joined(separator: "|")
+    }
+
+    private func pruneRuntimeCaches(liveEntries: [(info: WindowInfo, pid: pid_t)]) {
+        let liveWindowIds = Set(liveEntries.map(\.info.id.raw))
+        let livePids = Set(liveEntries.map(\.pid))
+        axTitleCache = axTitleCache.filter { liveWindowIds.contains($0.key) }
+        axSnapshotCacheByPid = axSnapshotCacheByPid.filter { livePids.contains($0.key) }
+        appInfoCacheByPid = appInfoCacheByPid.filter { livePids.contains($0.key) }
     }
 
     private func populateMissingTitlesFromAX(
