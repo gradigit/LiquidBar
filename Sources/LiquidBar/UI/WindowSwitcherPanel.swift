@@ -314,6 +314,11 @@ final class WindowSwitcherPanel: NSPanel {
             thumbnailView.image = image
         }
 
+        func clearRetainedImages() {
+            thumbnailView.image = nil
+            iconView.image = nil
+        }
+
         func setSelected(_ selected: Bool, metrics: EntryMetrics, animated: Bool) {
             self.selected = selected
             apply(metrics: metrics, animateScale: animated)
@@ -732,12 +737,16 @@ final class WindowSwitcherPanel: NSPanel {
         visibilityToken &+= 1
         let token = visibilityToken
 
-        guard isVisible else { return }
+        guard isVisible else {
+            releaseRetainedImages()
+            return
+        }
         pendingSpringScrollTarget = nil
         springScrollDispatchScheduled = false
         finishScrollAnimationForExpectedCancellation()
         if SystemAccessibilityPreferences.reduceMotion {
             orderOut(nil)
+            releaseRetainedImages()
             return
         }
 
@@ -766,7 +775,14 @@ final class WindowSwitcherPanel: NSPanel {
                 self.orderOut(nil)
                 self.alphaValue = 0
                 self.effectContainer.layer?.transform = CATransform3DIdentity
+                self.releaseRetainedImages()
             }
+        }
+    }
+
+    func releaseRetainedImages() {
+        for view in entryViews.values {
+            view.clearRetainedImages()
         }
     }
 

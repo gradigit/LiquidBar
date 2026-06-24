@@ -64,6 +64,11 @@ struct SettingsWindowControllerTests {
         let chipPresetPopup = try findPopup(withItems: localized(["Compact", "Dense", "Micro"]), in: contentView)
         #expect(chipPresetPopup.indexOfSelectedItem == 0)
 
+        let appearanceDocumentView = try documentView(forTabAt: 1, in: tabController)
+        let appearanceContentFrame = try #require(visibleContentFrame(in: appearanceDocumentView))
+        #expect(abs(appearanceContentFrame.midX - appearanceDocumentView.bounds.midX) <= 18)
+        #expect(appearanceContentFrame.minX >= 70)
+
         if let outputPath = ProcessInfo.processInfo.environment["LIQUIDBAR_SETTINGS_VISUAL_QA_PATH"],
            !outputPath.isEmpty {
             try writeWindowContentSnapshot(contentView, to: URL(fileURLWithPath: outputPath))
@@ -187,6 +192,7 @@ struct SettingsWindowControllerTests {
         #expect(labels.contains(L10n.tr("Diagnostics")))
         #expect(labels.contains(L10n.tr("Experimental")))
         #expect(labels.contains(L10n.tr("Log Interval:")))
+        #expect(labels.contains(L10n.tr("Preview Memory:")))
 
         let displayConfigPath = Config.configPath.path.replacingOccurrences(
             of: FileManager.default.homeDirectoryForCurrentUser.path,
@@ -204,6 +210,37 @@ struct SettingsWindowControllerTests {
         _ = try findButton(title: L10n.tr("Hang diagnostics"), in: contentView)
         _ = try findButton(title: L10n.tr("Enable plugins"), in: contentView)
         _ = try findButton(title: L10n.tr("Enable window tab groups"), in: contentView)
+    }
+
+    @MainActor
+    @Test func advancedTabControlsAlignToSharedFormColumn() throws {
+        let controller = SettingsWindowController()
+        defer { controller.close() }
+
+        let window = try #require(controller.window)
+        let tabController = try #require(window.contentViewController as? NSTabViewController)
+        tabController.selectedTabViewItemIndex = 3
+        RunLoop.main.run(until: Date(timeIntervalSinceNow: 0.1))
+
+        let documentView = try documentView(forTabAt: 3, in: tabController)
+        let previewMemoryPopup = try findPopup(withItems: localized(["Low", "Balanced", "High Quality"]), in: documentView)
+        let controlColumnX = previewMemoryPopup.frame.minX
+        let buttonsToCheck = [
+            L10n.tr("Show window previews"),
+            L10n.tr("Enable provider runtime"),
+            L10n.tr("Performance logging"),
+            L10n.tr("Hang diagnostics"),
+            L10n.tr("Enable plugins"),
+            L10n.tr("Enable window tab groups"),
+            L10n.tr("Collapse group on outside click")
+        ]
+
+        for title in buttonsToCheck {
+            let button = try findButton(title: title, in: documentView)
+            #expect(abs(button.frame.minX - controlColumnX) <= 0.5, "\(title) is not aligned to the Advanced tab form column")
+        }
+
+        #expect(previewMemoryPopup.frame.width >= 220)
     }
 
     @MainActor
@@ -278,8 +315,22 @@ struct SettingsWindowControllerTests {
         }
         #expect(brandImageView != nil)
 
-        _ = try findButton(title: L10n.tr("Check for Updates"), in: contentView)
-        _ = try findButton(title: L10n.tr("GitHub"), in: contentView)
+        let aboutDocumentView = try documentView(forTabAt: 4, in: tabController)
+        let documentBrandImageView = try #require(recursiveSubviews(of: aboutDocumentView).compactMap { $0 as? NSImageView }.first {
+            $0.frame.width > $0.frame.height * 3.0
+                && $0.image?.accessibilityDescription == "LiquidBar"
+        })
+        #expect(abs(documentBrandImageView.frame.midX - aboutDocumentView.bounds.midX) <= 1)
+
+        let updateButton = try findButton(title: L10n.tr("Check for Updates"), in: aboutDocumentView)
+        let githubButton = try findButton(title: L10n.tr("GitHub"), in: aboutDocumentView)
+        let actionFrame = updateButton.frame.union(githubButton.frame)
+        #expect(abs(actionFrame.midX - aboutDocumentView.bounds.midX) <= 1)
+
+        if let outputPath = ProcessInfo.processInfo.environment["LIQUIDBAR_SETTINGS_ABOUT_VISUAL_QA_PATH"],
+           !outputPath.isEmpty {
+            try writeWindowContentSnapshot(contentView, to: URL(fileURLWithPath: outputPath))
+        }
     }
 
     @MainActor
@@ -399,6 +450,16 @@ struct SettingsWindowControllerTests {
             .filter { !$0.isHidden && !$0.frame.isEmpty }
             .map(\.frame.minY)
             .min()
+    }
+
+    @MainActor
+    private func visibleContentFrame(in view: NSView) -> NSRect? {
+        let frames = view.subviews
+            .filter { !$0.isHidden && !$0.frame.isEmpty }
+            .map(\.frame)
+        return frames.reduce(nil) { partial, frame in
+            partial?.union(frame) ?? frame
+        }
     }
 
     @MainActor

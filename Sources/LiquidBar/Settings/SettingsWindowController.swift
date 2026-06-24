@@ -208,6 +208,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTe
     private var screenRecordingStatusLabel: NSTextField!
     private var previewsEnabledCheckbox: NSButton!
     private var previewHoverDelayField: NSTextField!
+    private var previewMemoryPresetPopup: NSPopUpButton!
     private var providerRuntimeCheckbox: NSButton!
     private var providerTimeoutField: NSTextField!
     private var providerCircuitBreakerField: NSTextField!
@@ -354,6 +355,13 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTe
         scrollView.borderType = .noBorder
         scrollView.drawsBackground = false
         scrollView.contentInsets = NSEdgeInsets(top: 0, left: 0, bottom: 0, right: 0)
+
+        let horizontalShift = max(0, (containerW - contentView.frame.width) / 2)
+        if horizontalShift > 0 {
+            for subview in contentView.subviews {
+                subview.frame.origin.x += horizontalShift
+            }
+        }
 
         let topPadding: CGFloat = 10
         let bottomPadding: CGFloat = 24
@@ -1188,9 +1196,9 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTe
         var y: CGFloat = view.bounds.height - 30
         let labelW: CGFloat = 176
         let controlX: CGFloat = 206
-        let permissionStatusW: CGFloat = 166
-        let permissionButtonW: CGFloat = 150
-        let permissionRefreshW: CGFloat = 118
+        let permissionStatusW: CGFloat = 134
+        let permissionButtonW: CGFloat = 168
+        let permissionRefreshW: CGFloat = 128
         let permissionButtonX = controlX + permissionStatusW + 10
         let contentWidth: CGFloat = SettingsWindowLayout.contentWidth - 30
 
@@ -1250,7 +1258,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTe
         addSectionHeader(L10n.tr("Previews"), at: NSPoint(x: 15, y: y), width: contentWidth, to: view)
         y -= 34
 
-        previewsEnabledCheckbox = makeCheckbox(L10n.tr("Show window previews"), at: NSPoint(x: 15, y: y))
+        previewsEnabledCheckbox = makeCheckbox(L10n.tr("Show window previews"), at: NSPoint(x: controlX, y: y))
         previewsEnabledCheckbox.target = self
         previewsEnabledCheckbox.action = #selector(controlChanged(_:))
         view.addSubview(previewsEnabledCheckbox)
@@ -1266,6 +1274,15 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTe
         let previewDelaySuffix = makeLabel("ms", at: NSPoint(x: controlX + 86, y: y + 2), width: 30)
         previewDelaySuffix.textColor = .secondaryLabelColor
         view.addSubview(previewDelaySuffix)
+
+        y -= 32
+
+        addLabel(L10n.tr("Preview Memory:"), at: NSPoint(x: 15, y: y + 2), width: labelW, to: view)
+        previewMemoryPresetPopup = NSPopUpButton(frame: NSRect(x: controlX, y: y - 2, width: 220, height: 26), pullsDown: false)
+        previewMemoryPresetPopup.addItems(withTitles: localizedItems(["Low", "Balanced", "High Quality"]))
+        previewMemoryPresetPopup.target = self
+        previewMemoryPresetPopup.action = #selector(controlChanged(_:))
+        view.addSubview(previewMemoryPresetPopup)
 
         y -= 46
 
@@ -1346,14 +1363,14 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTe
         addSectionHeader(L10n.tr("Diagnostics"), at: NSPoint(x: 15, y: y), width: contentWidth, to: view)
         y -= 34
 
-        perfLoggingCheckbox = makeCheckbox(L10n.tr("Performance logging"), at: NSPoint(x: 15, y: y))
+        perfLoggingCheckbox = makeCheckbox(L10n.tr("Performance logging"), at: NSPoint(x: controlX, y: y))
         perfLoggingCheckbox.target = self
         perfLoggingCheckbox.action = #selector(controlChanged(_:))
         view.addSubview(perfLoggingCheckbox)
 
         y -= 34
 
-        perfHangDiagnosticsCheckbox = makeCheckbox(L10n.tr("Hang diagnostics"), at: NSPoint(x: 15, y: y))
+        perfHangDiagnosticsCheckbox = makeCheckbox(L10n.tr("Hang diagnostics"), at: NSPoint(x: controlX, y: y))
         perfHangDiagnosticsCheckbox.target = self
         perfHangDiagnosticsCheckbox.action = #selector(controlChanged(_:))
         view.addSubview(perfHangDiagnosticsCheckbox)
@@ -1375,14 +1392,14 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTe
         addSectionHeader(L10n.tr("Experimental"), at: NSPoint(x: 15, y: y), width: contentWidth, to: view)
         y -= 34
 
-        pluginsEnabledCheckbox = makeCheckbox(L10n.tr("Enable plugins"), at: NSPoint(x: 15, y: y))
+        pluginsEnabledCheckbox = makeCheckbox(L10n.tr("Enable plugins"), at: NSPoint(x: controlX, y: y))
         pluginsEnabledCheckbox.target = self
         pluginsEnabledCheckbox.action = #selector(controlChanged(_:))
         view.addSubview(pluginsEnabledCheckbox)
 
         y -= 30
 
-        windowTabGroupsCheckbox = makeCheckbox(L10n.tr("Enable window tab groups"), at: NSPoint(x: 15, y: y))
+        windowTabGroupsCheckbox = makeCheckbox(L10n.tr("Enable window tab groups"), at: NSPoint(x: controlX, y: y))
         windowTabGroupsCheckbox.target = self
         windowTabGroupsCheckbox.action = #selector(controlChanged(_:))
         view.addSubview(windowTabGroupsCheckbox)
@@ -1401,7 +1418,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTe
 
         y -= 30
 
-        tabGroupCollapseCheckbox = makeCheckbox(L10n.tr("Collapse group on outside click"), at: NSPoint(x: 15, y: y))
+        tabGroupCollapseCheckbox = makeCheckbox(L10n.tr("Collapse group on outside click"), at: NSPoint(x: controlX, y: y))
         tabGroupCollapseCheckbox.target = self
         tabGroupCollapseCheckbox.action = #selector(controlChanged(_:))
         view.addSubview(tabGroupCollapseCheckbox)
@@ -1693,6 +1710,11 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTe
 
         previewsEnabledCheckbox.state = config.previewsEnabled ? .on : .off
         previewHoverDelayField.stringValue = "\(config.previewHoverDelayMs)"
+        switch config.previewMemoryPreset {
+        case .low: previewMemoryPresetPopup.selectItem(at: 0)
+        case .balanced: previewMemoryPresetPopup.selectItem(at: 1)
+        case .highQuality: previewMemoryPresetPopup.selectItem(at: 2)
+        }
         providerRuntimeCheckbox.state = config.providerRuntimeEnabled ? .on : .off
         providerTimeoutField.stringValue = "\(config.providerTimeoutMs)"
         providerCircuitBreakerField.stringValue = "\(config.providerCircuitBreakerThreshold)"
@@ -1875,6 +1897,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTe
             config.previewsEnabled = defaults.previewsEnabled
             config.previewMode = defaults.previewMode
             config.previewHoverDelayMs = defaults.previewHoverDelayMs
+            config.previewMemoryPreset = defaults.previewMemoryPreset
             config.providerRuntimeEnabled = defaults.providerRuntimeEnabled
             config.providerTimeoutMs = defaults.providerTimeoutMs
             config.providerCircuitBreakerThreshold = defaults.providerCircuitBreakerThreshold
@@ -1958,6 +1981,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTe
     private func updatePreviewControlsEnabledState() {
         let enabled = previewsEnabledCheckbox.state == .on
         previewHoverDelayField?.isEnabled = enabled
+        previewMemoryPresetPopup?.isEnabled = enabled || switcherEnabledCheckbox.state == .on
     }
 
     private func updateSystemIndicatorControlsEnabledState() {
@@ -2357,6 +2381,12 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTe
         config.previewMode = .staticImage
         if let delay = Int(previewHoverDelayField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)) {
             config.previewHoverDelayMs = delay
+        }
+        switch previewMemoryPresetPopup.indexOfSelectedItem {
+        case 0: config.previewMemoryPreset = .low
+        case 1: config.previewMemoryPreset = .balanced
+        case 2: config.previewMemoryPreset = .highQuality
+        default: break
         }
         config.providerRuntimeEnabled = providerRuntimeCheckbox.state == .on
         if let timeout = Int(providerTimeoutField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)) {

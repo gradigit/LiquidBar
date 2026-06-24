@@ -31,6 +31,7 @@ struct ConfigTests {
         #expect(config.adjustWindowsForTaskbar == false)
         #expect(config.previewsEnabled == true)
         #expect(config.previewHoverDelayMs == 0)
+        #expect(config.previewMemoryPreset == .balanced)
         #expect(config.performanceLoggingEnabled == false)
         #expect(config.performanceHangDiagnosticsEnabled == false)
         #expect(config.performanceGpuTimingEnabled == false)
@@ -123,7 +124,8 @@ struct ConfigTests {
             systemIndicatorRamColorHex: "#34C759",
             systemIndicatorThermalColorHex: "#FFD166",
             hoverIntensity: .medium,
-            visualDepth: .rich
+            visualDepth: .rich,
+            previewMemoryPreset: .highQuality
         )
 
         let encoder = JSONEncoder()
@@ -201,6 +203,7 @@ struct ConfigTests {
         #expect(json.contains("second_click_action"))
         #expect(json.contains("scroll_wheel_mode"))
         #expect(json.contains("performance_logging_enabled"))
+        #expect(json.contains("preview_memory_preset"))
         #expect(json.contains("performance_hang_diagnostics_enabled"))
         #expect(json.contains("performance_gpu_timing_enabled"))
         #expect(json.contains("performance_log_interval_ms"))
@@ -260,6 +263,7 @@ struct ConfigTests {
         #expect(config.performanceHangDiagnosticsEnabled == false)
         #expect(config.performanceGpuTimingEnabled == false)
         #expect(config.performanceLogIntervalMs == 1000)
+        #expect(config.previewMemoryPreset == .balanced)
         #expect(config.pluginsEnabled == false)
         #expect(config.disabledPluginIds.isEmpty)
         #expect(config.sidebarModeEnabled == false)

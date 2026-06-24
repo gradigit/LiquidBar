@@ -1,7 +1,7 @@
 import Darwin
 
 enum MemoryMonitor {
-    static let maxRSSBytes = 100 * 1024 * 1024  // 100 MB
+    static let maxRSSBytes = 180 * 1024 * 1024  // 180 MB
 
     static func getRSSBytes() -> Int {
         var info = mach_task_basic_info()

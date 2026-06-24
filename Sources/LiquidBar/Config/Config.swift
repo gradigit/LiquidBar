@@ -158,6 +158,12 @@ enum PreviewMode: String, Codable, Sendable, CaseIterable {
     case liveLowFps = "live_low_fps"
 }
 
+enum PreviewMemoryPreset: String, Codable, Sendable, CaseIterable {
+    case low
+    case balanced
+    case highQuality = "high_quality"
+}
+
 enum SystemIndicatorVisualMode: String, Codable, Sendable, CaseIterable {
     /// Numeric label such as "CPU 42%".
     case percentage
@@ -360,6 +366,7 @@ struct Config: Codable, Sendable, Equatable {
     var previewsEnabled: Bool
     var previewMode: PreviewMode
     var previewHoverDelayMs: Int
+    var previewMemoryPreset: PreviewMemoryPreset
     /// Enable interval-based FPS/frame/poll performance logs (`Log.perf`).
     var performanceLoggingEnabled: Bool
     /// Enable extra local diagnostics for investigating hangs and lag.
@@ -462,6 +469,7 @@ struct Config: Codable, Sendable, Equatable {
         previewsEnabled: Bool = true,
         previewMode: PreviewMode = .staticImage,
         previewHoverDelayMs: Int = 0,
+        previewMemoryPreset: PreviewMemoryPreset = .balanced,
         performanceLoggingEnabled: Bool = false,
         performanceHangDiagnosticsEnabled: Bool = false,
         performanceGpuTimingEnabled: Bool = false,
@@ -552,6 +560,7 @@ struct Config: Codable, Sendable, Equatable {
         self.previewsEnabled = previewsEnabled
         self.previewMode = previewMode
         self.previewHoverDelayMs = previewHoverDelayMs
+        self.previewMemoryPreset = previewMemoryPreset
         self.performanceLoggingEnabled = performanceLoggingEnabled
         self.performanceHangDiagnosticsEnabled = performanceHangDiagnosticsEnabled
         self.performanceGpuTimingEnabled = performanceGpuTimingEnabled
@@ -647,6 +656,7 @@ struct Config: Codable, Sendable, Equatable {
         previewsEnabled = try c.decodeIfPresent(Bool.self, forKey: .previewsEnabled) ?? true
         previewMode = try c.decodeIfPresent(PreviewMode.self, forKey: .previewMode) ?? .staticImage
         previewHoverDelayMs = try c.decodeIfPresent(Int.self, forKey: .previewHoverDelayMs) ?? 0
+        previewMemoryPreset = try c.decodeIfPresent(PreviewMemoryPreset.self, forKey: .previewMemoryPreset) ?? .balanced
         performanceLoggingEnabled = try c.decodeIfPresent(Bool.self, forKey: .performanceLoggingEnabled) ?? false
         performanceHangDiagnosticsEnabled = try c.decodeIfPresent(Bool.self, forKey: .performanceHangDiagnosticsEnabled) ?? false
         performanceGpuTimingEnabled = try c.decodeIfPresent(Bool.self, forKey: .performanceGpuTimingEnabled) ?? false

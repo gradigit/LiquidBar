@@ -123,6 +123,7 @@ final class EventLoop {
     // Memory monitoring
     private var memoryBaseline: Int = 0
     private var lastMemoryCheck: CFAbsoluteTime = 0
+    private var memoryPressureSource: DispatchSourceMemoryPressure?
 
     // Adaptive polling
     private var currentPollInterval: TimeInterval = 0.2
@@ -390,9 +391,11 @@ final class EventLoop {
 
     func start() {
         PerformanceMonitor.shared.apply(config: config)
+        thumbnailService.applyMemoryPreset(config.previewMemoryPreset)
         if ProcessInfo.processInfo.environment["LIQUIDBAR_DISABLE_MOUSE_TRACKER"] != "1" {
             mouseTracker.start()
         }
+        installMemoryPressureMonitor()
         startPollTimer(interval: idlePollInterval)
         lastAXObserverStateCheck = CFAbsoluteTimeGetCurrent()
         scheduleAXObserverRefresh(delay: 1.50)
@@ -468,6 +471,8 @@ final class EventLoop {
         }
         hotkeyMonitor?.unregister()
         hotkeyMonitor = nil
+        memoryPressureSource?.cancel()
+        memoryPressureSource = nil
         switcherPrewarmWorkItem?.cancel()
         switcherPrewarmWorkItem = nil
         hideSwitcher(commitSelection: false)
@@ -479,6 +484,31 @@ final class EventLoop {
         panelManager.destroyAllPanels()
         renderer.shutdown()
         Log.event.info("EventLoop stopped")
+    }
+
+    private func installMemoryPressureMonitor() {
+        guard memoryPressureSource == nil else { return }
+        let source = DispatchSource.makeMemoryPressureSource(eventMask: [.warning, .critical], queue: .main)
+        source.setEventHandler { [weak self] in
+            MainActor.assumeIsolated {
+                self?.handleMemoryPressure()
+            }
+        }
+        source.resume()
+        memoryPressureSource = source
+    }
+
+    private func handleMemoryPressure() {
+        let summary = thumbnailService.trimForMemoryPressure()
+        iconCache.clearCache()
+        releaseHiddenOverlayImages()
+
+        PerformanceMonitor.shared.recordDiagnosticSnapshot(
+            "memory_pressure",
+            minIntervalSeconds: 0
+        ) {
+            "cache_entries=\(summary.cacheEntries) cache_bytes=\(summary.cacheBytes) last_good_entries=\(summary.lastGoodEntries) last_good_bytes=\(summary.lastGoodBytes) queued_thumbnails=\(summary.queuedRequests) inflight_thumbnails=\(summary.inFlightRequests) rss=\(MemoryMonitor.getRSSBytes())"
+        }
     }
 
     private func installLocalEventMonitor() {
@@ -771,8 +801,9 @@ final class EventLoop {
             "poll_state"
         ) {
             let rss = MemoryMonitor.getRSSBytes()
+            let thumbnails = thumbnailService.memorySummary()
             let axTrusted = AXIsProcessTrusted()
-            return "reason=\(reason) duration_ms=\(Self.fmt2(durationMs)) enumerated=\(enumerated ? 1 : 0) force=\(forceRender ? 1 : 0) dragging=\(isDragging ? 1 : 0) windows=\(max(0, windowCount)) items=\(currentItems.count) displays=\(panelManager.allPanels.count) poll_interval_ms=\(Self.fmt2(currentPollInterval * 1000.0)) space_age_ms=\(Self.fmt2(spaceAgeMs)) ax_active=\(isAXObserverActive ? 1 : 0) ax_trusted=\(axTrusted ? 1 : 0) metrics=\(config.systemIndicatorsEnabled ? 1 : 0) adjust=\(config.adjustWindowsForTaskbar ? 1 : 0) rss=\(rss)"
+            return "reason=\(reason) duration_ms=\(Self.fmt2(durationMs)) enumerated=\(enumerated ? 1 : 0) force=\(forceRender ? 1 : 0) dragging=\(isDragging ? 1 : 0) windows=\(max(0, windowCount)) items=\(currentItems.count) displays=\(panelManager.allPanels.count) poll_interval_ms=\(Self.fmt2(currentPollInterval * 1000.0)) space_age_ms=\(Self.fmt2(spaceAgeMs)) ax_active=\(isAXObserverActive ? 1 : 0) ax_trusted=\(axTrusted ? 1 : 0) metrics=\(config.systemIndicatorsEnabled ? 1 : 0) adjust=\(config.adjustWindowsForTaskbar ? 1 : 0) rss=\(rss) thumbnail_cache_entries=\(thumbnails.cacheEntries) thumbnail_cache_bytes=\(thumbnails.cacheBytes) thumbnail_last_good_entries=\(thumbnails.lastGoodEntries) thumbnail_last_good_bytes=\(thumbnails.lastGoodBytes) thumbnail_queued=\(thumbnails.queuedRequests) thumbnail_inflight=\(thumbnails.inFlightRequests)"
         }
     }
 
@@ -2652,7 +2683,7 @@ final class EventLoop {
             let info = windows[index]
             let targetSize = WindowSwitcherPanel.thumbnailTargetSize(
                 layoutStyle: config.switcherLayoutStyle,
-                selected: index == selectedIndex,
+                selected: false,
                 aspectRatio: WindowSwitcherPanel.aspectRatio(for: info.bounds)
             )
             thumbnailService.prefetchWindowThumbnail(
@@ -3604,6 +3635,18 @@ final class EventLoop {
         groupPreviewPanelByDisplay.removeAll()
     }
 
+    private func releaseHiddenOverlayImages() {
+        if switcherPanel?.isVisible != true {
+            switcherPanel?.releaseRetainedImages()
+        }
+        for panel in previewPanelByDisplay.values where !panel.isVisible {
+            panel.releaseRetainedImage()
+        }
+        for panel in groupPreviewPanelByDisplay.values where !panel.isVisible {
+            panel.releaseRetainedImages()
+        }
+    }
+
     private func syncThumbnailLifecycleToLiveWindowIds(_ liveWindowIds: Set<UInt32>) {
         thumbnailService.pruneToLiveWindowIds(Set(liveWindowIds.map { CGWindowID($0) }))
     }
@@ -3882,6 +3925,7 @@ final class EventLoop {
         config = Config.load(fallback: previousConfig)
         let requiresPanelRebuild = config.requiresPanelRebuild(comparedTo: previousConfig)
         PerformanceMonitor.shared.apply(config: config)
+        thumbnailService.applyMemoryPreset(config.previewMemoryPreset)
         sidebarRevealUntilByDisplay.removeAll()
         sidebarPresentationByDisplay.removeAll()
         configureSwitcherHotkey()

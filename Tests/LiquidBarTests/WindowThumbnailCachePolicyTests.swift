@@ -169,6 +169,101 @@ struct WindowThumbnailCachePolicyTests {
     }
 
     @MainActor
+    @Test func memoryPresetPoliciesScaleRetentionBudgets() {
+        let low = WindowThumbnailService.RetentionPolicy.forMemoryPreset(.low)
+        let balanced = WindowThumbnailService.RetentionPolicy.forMemoryPreset(.balanced)
+        let high = WindowThumbnailService.RetentionPolicy.forMemoryPreset(.highQuality)
+
+        #expect(low.maxLastGoodEntries < balanced.maxLastGoodEntries)
+        #expect(low.maxBytesPerTier[.large]! < balanced.maxBytesPerTier[.large]!)
+        #expect(high.maxLastGoodEntries > balanced.maxLastGoodEntries)
+        #expect(high.maxBytesPerTier[.large]! > balanced.maxBytesPerTier[.large]!)
+    }
+
+    @MainActor
+    @Test func applyingLowMemoryPresetTrimsExistingRetainedThumbnails() {
+        let service = WindowThumbnailService(
+            retentionPolicy: WindowThumbnailService.RetentionPolicy.forMemoryPreset(.highQuality)
+        )
+
+        for id in 1...16 {
+            let size = CGSize(width: 320, height: 180)
+            service.debugStoreCachedThumbnail(
+                windowId: CGWindowID(id),
+                targetSizePoints: size,
+                image: NSImage(size: size),
+                capturedAt: CFAbsoluteTime(id)
+            )
+            service.debugStoreLastGoodThumbnail(
+                windowId: CGWindowID(id),
+                image: NSImage(size: size),
+                sizePoints: size,
+                capturedAt: CFAbsoluteTime(id)
+            )
+        }
+
+        service.applyMemoryPreset(.low)
+
+        let low = WindowThumbnailService.RetentionPolicy.forMemoryPreset(.low)
+        let summary = service.memorySummary()
+        #expect(service.debugCachedWindowIds(for: .large).count <= low.maxEntriesPerTier[.large]!)
+        #expect(summary.lastGoodEntries <= low.maxLastGoodEntries)
+        #expect(summary.lastGoodBytes <= low.maxLastGoodBytes)
+    }
+
+    @MainActor
+    @Test func memoryPressureDropsLargeThumbnailsLastGoodAndQueuedPrewarm() {
+        let service = WindowThumbnailService(
+            retentionPolicy: makePolicy(),
+            scheduler: .init(maxConcurrentCaptures: 1, maxQueuedRequests: 8)
+        )
+        let large = CGSize(width: 320, height: 180)
+        let standard = CGSize(width: 160, height: 92)
+
+        service.debugStoreCachedThumbnail(
+            windowId: 10,
+            targetSizePoints: large,
+            image: NSImage(size: large)
+        )
+        service.debugStoreCachedThumbnail(
+            windowId: 11,
+            targetSizePoints: standard,
+            image: NSImage(size: standard)
+        )
+        service.debugStoreLastGoodThumbnail(
+            windowId: 12,
+            image: NSImage(size: large),
+            sizePoints: large
+        )
+        _ = service.debugEnqueueRequest(
+            windowId: 20,
+            targetSizePoints: standard,
+            producer: .interactive
+        )
+        _ = service.debugEnqueueRequest(
+            windowId: 21,
+            targetSizePoints: standard,
+            producer: .prewarm
+        )
+
+        let summary = service.trimForMemoryPressure()
+
+        #expect(service.debugCachedWindowIds(for: .large).isEmpty)
+        #expect(service.debugCachedWindowIds(for: .standard) == [11])
+        #expect(service.debugLastGoodWindowIds().isEmpty)
+        #expect(service.debugQueuedRequests().isEmpty)
+        #expect(summary.lastGoodEntries == 0)
+        #expect(summary.queuedRequests == 0)
+    }
+
+    @Test func prewarmCapturesDoNotPopulateLastGoodFallbackCache() {
+        #expect(WindowThumbnailService.shouldStoreLastGood(for: .interactive))
+        #expect(WindowThumbnailService.shouldStoreLastGood(for: .switcher))
+        #expect(WindowThumbnailService.shouldStoreLastGood(for: .groupPreview))
+        #expect(!WindowThumbnailService.shouldStoreLastGood(for: .prewarm))
+    }
+
+    @MainActor
     @Test func hoverTargetChangeInvalidatesOldQueuedWorkBeforeDispatch() {
         let service = WindowThumbnailService(
             retentionPolicy: makePolicy(),

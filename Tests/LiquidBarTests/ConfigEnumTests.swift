@@ -331,6 +331,24 @@ struct ConfigEnumTests {
         }
     }
 
+    // MARK: - PreviewMemoryPreset
+
+    @Test func testPreviewMemoryPresetRawValues() {
+        #expect(PreviewMemoryPreset.low.rawValue == "low")
+        #expect(PreviewMemoryPreset.balanced.rawValue == "balanced")
+        #expect(PreviewMemoryPreset.highQuality.rawValue == "high_quality")
+    }
+
+    @Test func testPreviewMemoryPresetCodable() throws {
+        let encoder = JSONEncoder()
+        let decoder = JSONDecoder()
+        for preset in PreviewMemoryPreset.allCases {
+            let data = try encoder.encode(preset)
+            let decoded = try decoder.decode(PreviewMemoryPreset.self, from: data)
+            #expect(decoded == preset)
+        }
+    }
+
     // MARK: - System Indicators
 
     @Test func testSystemIndicatorVisualModeRawValues() {

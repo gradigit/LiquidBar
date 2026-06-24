@@ -51,7 +51,7 @@ final class WindowThumbnailService {
         let byteCost: Int
     }
 
-    struct RetentionPolicy: Sendable {
+    struct RetentionPolicy: Equatable, Sendable {
         let maxEntriesPerTier: [ThumbnailTier: Int]
         let maxBytesPerTier: [ThumbnailTier: Int]
         let maxLastGoodEntries: Int
@@ -59,7 +59,7 @@ final class WindowThumbnailService {
         let staleCacheAge: CFAbsoluteTime
         let staleLastGoodAge: CFAbsoluteTime
 
-        static let `default` = RetentionPolicy(
+        static let balanced = RetentionPolicy(
             maxEntriesPerTier: [
                 .tiny: 48,
                 .standard: 40,
@@ -75,6 +75,58 @@ final class WindowThumbnailService {
             staleCacheAge: 20.0,
             staleLastGoodAge: 90.0
         )
+
+        static let `default` = balanced
+
+        static func forMemoryPreset(_ preset: PreviewMemoryPreset) -> RetentionPolicy {
+            switch preset {
+            case .low:
+                return RetentionPolicy(
+                    maxEntriesPerTier: [
+                        .tiny: 24,
+                        .standard: 16,
+                        .large: 8,
+                    ],
+                    maxBytesPerTier: [
+                        .tiny: 8 * 1_024 * 1_024,
+                        .standard: 12 * 1_024 * 1_024,
+                        .large: 18 * 1_024 * 1_024,
+                    ],
+                    maxLastGoodEntries: 12,
+                    maxLastGoodBytes: 18 * 1_024 * 1_024,
+                    staleCacheAge: 12.0,
+                    staleLastGoodAge: 30.0
+                )
+            case .balanced:
+                return .balanced
+            case .highQuality:
+                return RetentionPolicy(
+                    maxEntriesPerTier: [
+                        .tiny: 64,
+                        .standard: 56,
+                        .large: 36,
+                    ],
+                    maxBytesPerTier: [
+                        .tiny: 24 * 1_024 * 1_024,
+                        .standard: 40 * 1_024 * 1_024,
+                        .large: 72 * 1_024 * 1_024,
+                    ],
+                    maxLastGoodEntries: 48,
+                    maxLastGoodBytes: 96 * 1_024 * 1_024,
+                    staleCacheAge: 30.0,
+                    staleLastGoodAge: 120.0
+                )
+            }
+        }
+    }
+
+    struct MemorySummary: Equatable, Sendable {
+        let cacheEntries: Int
+        let cacheBytes: Int
+        let lastGoodEntries: Int
+        let lastGoodBytes: Int
+        let queuedRequests: Int
+        let inFlightRequests: Int
     }
 
     struct CaptureRequestIdentity: Hashable, Sendable {
@@ -133,6 +185,14 @@ final class WindowThumbnailService {
 
         func isCurrent(_ request: CaptureRequest) -> Bool {
             request.generation == currentGeneration(for: request.producer)
+        }
+
+        var queuedRequestCount: Int {
+            queuedByKey.count
+        }
+
+        var inFlightRequestCount: Int {
+            inFlightByKey.count
         }
 
         mutating func invalidate(producer: ThumbnailProducer) -> InvalidationResult {
@@ -530,6 +590,33 @@ final class WindowThumbnailService {
         enforceRetentionBudgets()
     }
 
+    func applyMemoryPreset(_ preset: PreviewMemoryPreset) {
+        let next = RetentionPolicy.forMemoryPreset(preset)
+        guard retentionPolicy != next else { return }
+        retentionPolicy = next
+        sweepRetainedThumbnails()
+    }
+
+    func trimForMemoryPressure() -> MemorySummary {
+        let result = scheduler.invalidate(producer: .prewarm)
+        dropCallbacks(for: result.droppedQueued)
+        imageCacheByKey = imageCacheByKey.filter { $0.key.tier != .large }
+        lastGoodImageByKey.removeAll(keepingCapacity: false)
+        enforceRetentionBudgets()
+        return memorySummary()
+    }
+
+    func memorySummary() -> MemorySummary {
+        MemorySummary(
+            cacheEntries: imageCacheByKey.count,
+            cacheBytes: imageCacheByKey.values.reduce(0) { $0 + $1.byteCost },
+            lastGoodEntries: lastGoodImageByKey.count,
+            lastGoodBytes: lastGoodImageByKey.values.reduce(0) { $0 + $1.byteCost },
+            queuedRequests: scheduler.queuedRequestCount,
+            inFlightRequests: scheduler.inFlightRequestCount
+        )
+    }
+
     private func scheduleCapture(
         _ request: CaptureRequest,
         completion: ((NSImage?) -> Void)? = nil
@@ -666,12 +753,14 @@ final class WindowThumbnailService {
                         sizePoints: sizePoints,
                         byteCost: Self.approximateByteCost(sizePoints: sizePoints, screenScale: request.screenScale)
                     )
-                    self.lastGoodImageByKey[request.key] = LastGoodEntry(
-                        image: nsImage,
-                        capturedAt: capturedAt,
-                        sizePoints: sizePoints,
-                        byteCost: Self.approximateByteCost(sizePoints: sizePoints, screenScale: request.screenScale)
-                    )
+                    if Self.shouldStoreLastGood(for: request.producer) {
+                        self.lastGoodImageByKey[request.key] = LastGoodEntry(
+                            image: nsImage,
+                            capturedAt: capturedAt,
+                            sizePoints: sizePoints,
+                            byteCost: Self.approximateByteCost(sizePoints: sizePoints, screenScale: request.screenScale)
+                        )
+                    }
                     self.enforceRetentionBudgets()
                     self.recordThumbnailCaptureEvent(
                         request: request,
@@ -780,6 +869,10 @@ final class WindowThumbnailService {
         case .interactive, .groupPreview:
             return 0.75
         }
+    }
+
+    nonisolated static func shouldStoreLastGood(for producer: ThumbnailProducer) -> Bool {
+        producer != .prewarm
     }
 
     nonisolated static func approximateByteCost(sizePoints: CGSize, screenScale: CGFloat) -> Int {

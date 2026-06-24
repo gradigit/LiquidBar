@@ -119,6 +119,7 @@
 "Hang diagnostics" = "멈춤 진단";
 "Hidden Mode:" = "숨김 모드:";
 "Hidden Peek" = "숨김 미리 보기";
+"High Quality" = "고화질";
 "Hide / Show Bar" = "막대 숨기기/보이기";
 "Hide app (Cmd+H)" = "앱 숨기기(Cmd+H)";
 "Hide from Taskbar" = "작업 표시줄에서 숨기기";
@@ -146,6 +147,7 @@
 "Local provider" = "로컬 제공자";
 "Korean" = "한국어";
 "Log Interval:" = "로그 간격:";
+"Low" = "낮음";
 "Main Display Only" = "주 디스플레이만";
 "Main Display" = "주 디스플레이";
 "Max Item Width:" = "최대 항목 너비:";
@@ -188,6 +190,7 @@
 "Position:" = "위치:";
 "Position" = "위치";
 "Preview Delay:" = "미리 보기 지연:";
+"Preview Memory:" = "미리 보기 메모리:";
 "Preview" = "미리 보기";
 "Previews" = "미리 보기";
 "Prev" = "이전";

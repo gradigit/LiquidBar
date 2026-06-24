@@ -196,6 +196,11 @@ final class WindowPreviewPanel: NSPanel {
         applyPreferredSize(aspectRatio: inferredAspect)
     }
 
+    func releaseRetainedImage() {
+        imageView.image = nil
+        currentAspectRatio = nil
+    }
+
     func setAnimationProfile(_ profile: AnimationProfile) {
         animationProfile = profile
     }
@@ -289,9 +294,13 @@ final class WindowPreviewPanel: NSPanel {
         let token = visibilityToken
         let tuning = animationProfile.overlayTuning
 
-        guard isVisible else { return }
+        guard isVisible else {
+            releaseRetainedImage()
+            return
+        }
         if SystemAccessibilityPreferences.reduceMotion {
             orderOut(nil)
+            releaseRetainedImage()
             return
         }
 
@@ -320,6 +329,7 @@ final class WindowPreviewPanel: NSPanel {
                 self.orderOut(nil)
                 self.alphaValue = 0
                 self.effectContainer.layer?.transform = CATransform3DIdentity
+                self.releaseRetainedImage()
             }
         }
     }

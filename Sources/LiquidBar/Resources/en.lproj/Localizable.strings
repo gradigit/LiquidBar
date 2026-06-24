@@ -119,6 +119,7 @@
 "Hang diagnostics" = "Hang diagnostics";
 "Hidden Mode:" = "Hidden Mode:";
 "Hidden Peek" = "Hidden Peek";
+"High Quality" = "High Quality";
 "Hide / Show Bar" = "Hide / Show Bar";
 "Hide app (Cmd+H)" = "Hide app (Cmd+H)";
 "Hide from Taskbar" = "Hide from Taskbar";
@@ -146,6 +147,7 @@
 "Local provider" = "Local provider";
 "Korean" = "Korean";
 "Log Interval:" = "Log Interval:";
+"Low" = "Low";
 "Main Display Only" = "Main Display Only";
 "Main Display" = "Main Display";
 "Max Item Width:" = "Max Item Width:";
@@ -188,6 +190,7 @@
 "Position:" = "Position:";
 "Position" = "Position";
 "Preview Delay:" = "Preview Delay:";
+"Preview Memory:" = "Preview Memory:";
 "Preview" = "Preview";
 "Previews" = "Previews";
 "Prev" = "Prev";

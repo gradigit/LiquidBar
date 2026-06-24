@@ -144,6 +144,10 @@ final class WindowGroupPreviewPanel: NSPanel {
             alphaValue = isDimmed ? 0.60 : 1.0
         }
 
+        func clearRetainedImage() {
+            imageView.image = nil
+        }
+
         private func updateHoverAppearance() {
             guard let layer else { return }
             if isHovering {
@@ -505,13 +509,17 @@ final class WindowGroupPreviewPanel: NSPanel {
         let token = visibilityToken
         let tuning = animationProfile.overlayTuning
 
-        guard isVisible else { return }
+        guard isVisible else {
+            releaseRetainedImages()
+            return
+        }
         if immediate || SystemAccessibilityPreferences.reduceMotion {
             effectContainer.layer?.removeAnimation(forKey: "liquidbar.group_preview.springIn")
             effectContainer.layer?.removeAnimation(forKey: "liquidbar.group_preview.scaleOut")
             orderOut(nil)
             alphaValue = 0
             effectContainer.layer?.transform = CATransform3DIdentity
+            releaseRetainedImages()
             return
         }
 
@@ -539,7 +547,14 @@ final class WindowGroupPreviewPanel: NSPanel {
                 self.orderOut(nil)
                 self.alphaValue = 0
                 self.effectContainer.layer?.transform = CATransform3DIdentity
+                self.releaseRetainedImages()
             }
+        }
+    }
+
+    func releaseRetainedImages() {
+        for tile in tilesByWindowId.values {
+            tile.clearRetainedImage()
         }
     }
 
