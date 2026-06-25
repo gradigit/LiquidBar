@@ -1427,7 +1427,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTe
     }
 
     private func buildAboutTab() -> NSView {
-        let view = NSView(frame: NSRect(x: 0, y: 0, width: 540, height: 500))
+        let view = NSView(frame: NSRect(x: 0, y: 0, width: SettingsWindowLayout.contentWidth, height: 500))
         var y: CGFloat = 408
         let centerX = view.frame.width / 2
 
@@ -1440,6 +1440,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTe
         ))
         brandView.image = LiquidBarLogo.makeBrandBarImage(displaySize: brandSize)
         brandView.imageScaling = .scaleProportionallyUpOrDown
+        brandView.autoresizingMask = [.minXMargin, .maxXMargin]
         view.addSubview(brandView)
 
         y -= 42
@@ -1451,6 +1452,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTe
         titleLabel.backgroundColor = .clear
         titleLabel.font = NSFont.systemFont(ofSize: 24, weight: .semibold)
         titleLabel.alignment = .center
+        titleLabel.autoresizingMask = [.width]
         view.addSubview(titleLabel)
 
         let version = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? Updater.currentVersion
@@ -1469,6 +1471,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTe
         versionLabel.font = NSFont.systemFont(ofSize: 13)
         versionLabel.textColor = .secondaryLabelColor
         versionLabel.alignment = .center
+        versionLabel.autoresizingMask = [.width]
         view.addSubview(versionLabel)
 
         y -= 22
@@ -1481,6 +1484,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTe
         updateStatusLabel.font = NSFont.systemFont(ofSize: 11)
         updateStatusLabel.textColor = .secondaryLabelColor
         updateStatusLabel.alignment = .center
+        updateStatusLabel.autoresizingMask = [.width]
         view.addSubview(updateStatusLabel)
 
         y -= 42
@@ -1494,6 +1498,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTe
             frame: NSRect(x: actionStartX, y: y, width: actionButtonWidth, height: 30),
             action: #selector(checkForUpdatesClicked(_:))
         )
+        updateBtn.autoresizingMask = [.minXMargin, .maxXMargin]
         view.addSubview(updateBtn)
 
         let githubBtn = makeActionButton(
@@ -1502,6 +1507,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTe
             frame: NSRect(x: actionStartX + actionButtonWidth + actionGap, y: y, width: actionButtonWidth, height: 30),
             action: #selector(openGitHub(_:))
         )
+        githubBtn.autoresizingMask = [.minXMargin, .maxXMargin]
         view.addSubview(githubBtn)
 
         return view

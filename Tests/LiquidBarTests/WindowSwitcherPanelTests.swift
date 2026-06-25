@@ -110,6 +110,20 @@ struct WindowSwitcherPanelTests {
         #expect(retainedThumbnail === thumbnail)
     }
 
+    @Test func nilThumbnailUpdateDoesNotClearRetainedThumbnail() throws {
+        let panel = WindowSwitcherPanel(theme: .dark, glassStyle: .publicRegular, layoutStyle: .heroCarousel)
+        defer { panel.close() }
+
+        let thumbnail = Self.thumbnail(color: .systemOrange, label: "Retained")
+        panel.update(entries: [Self.entry(windowId: 1)], selectedIndex: 0)
+        panel.updateThumbnail(windowId: 1, image: thumbnail)
+
+        panel.updateThumbnail(windowId: 1, image: nil)
+
+        let retainedThumbnail = try #require(panel.debugThumbnailImage(windowId: 1))
+        #expect(retainedThumbnail === thumbnail)
+    }
+
     @Test func heroCarouselCentersSelectedEntryDuringKeyboardTraversal() throws {
         let panel = WindowSwitcherPanel(theme: .dark, glassStyle: .publicRegular, layoutStyle: .heroCarousel)
         defer { panel.close() }

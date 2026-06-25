@@ -140,7 +140,9 @@ final class WindowGroupPreviewPanel: NSPanel {
             currentTitle = trimmed
             currentIsDimmed = isDimmed
             titleLabel.stringValue = trimmed
-            imageView.image = image
+            if let image {
+                imageView.image = image
+            }
             alphaValue = isDimmed ? 0.60 : 1.0
         }
 

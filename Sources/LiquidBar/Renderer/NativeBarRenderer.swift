@@ -207,6 +207,7 @@ final class NativeBarRenderer {
     private var partitionIndex: [CGDirectDisplayID: Int] = [:]
     private var hoverRects: [CGDirectDisplayID: NSRect] = [:]
     private var focusRects: [CGDirectDisplayID: NSRect] = [:]
+    private var focusItemIndices: [CGDirectDisplayID: Int] = [:]
     private var cursorPositions: [CGDirectDisplayID: SIMD2<Float>] = [:]
     private var hoveredItemIndexByDisplay: [CGDirectDisplayID: Int] = [:]
     private var dragAnimations: [CGDirectDisplayID: DragAnimation] = [:]
@@ -237,6 +238,7 @@ final class NativeBarRenderer {
         partitionIndex.removeValue(forKey: displayId)
         hoverRects.removeValue(forKey: displayId)
         focusRects.removeValue(forKey: displayId)
+        focusItemIndices.removeValue(forKey: displayId)
         cursorPositions.removeValue(forKey: displayId)
         hoveredItemIndexByDisplay.removeValue(forKey: displayId)
         dragAnimations.removeValue(forKey: displayId)
@@ -319,9 +321,13 @@ final class NativeBarRenderer {
         if let focusIndex = focusedItemIndexForHighlight(items: items, focus: focus, config: config),
            focusIndex >= 0,
            focusIndex < rects.count {
-            setFocusRect(focusIndicatorRect(base: rects[focusIndex], config: config, position: position), for: displayId)
+            setFocusRect(
+                focusIndicatorRect(base: rects[focusIndex], config: config, position: position),
+                itemIndex: focusIndex,
+                for: displayId
+            )
         } else {
-            setFocusRect(nil, for: displayId)
+            setFocusRect(nil, itemIndex: nil, for: displayId)
         }
 
         if dragAnimations[displayId] != nil && layouts.count != dragAnimations[displayId]?.springs.count {
@@ -596,6 +602,7 @@ final class NativeBarRenderer {
         partitionIndex.removeAll()
         hoverRects.removeAll()
         focusRects.removeAll()
+        focusItemIndices.removeAll()
         cursorPositions.removeAll()
         hoveredItemIndexByDisplay.removeAll()
         dragAnimations.removeAll()
@@ -630,7 +637,15 @@ final class NativeBarRenderer {
             decorations.append(NativeDecoration(kind: .hover, rect: hover, cornerRadius: CGFloat(LayoutConstants.hoverCornerRadius), color: .white, alpha: hoverAlpha, visualDepth: visualDepth))
         }
         if let focus = focusRects[displayId] {
-            decorations.append(NativeDecoration(kind: .focus, rect: focus, cornerRadius: CGFloat(LayoutConstants.focusCornerRadius), color: NSColor(calibratedRed: 0.45, green: 0.68, blue: 1.0, alpha: 1), alpha: 0.30, visualDepth: visualDepth))
+            decorations.append(NativeDecoration(
+                kind: .focus,
+                rect: focus,
+                cornerRadius: CGFloat(LayoutConstants.focusCornerRadius),
+                color: NSColor(calibratedRed: 0.45, green: 0.68, blue: 1.0, alpha: 1),
+                alpha: 0.30,
+                visualDepth: visualDepth,
+                itemIndex: focusItemIndices[displayId]
+            ))
         }
 
         for (index, item) in items.enumerated() {
@@ -2223,11 +2238,17 @@ final class NativeBarRenderer {
         }
     }
 
-    private func setFocusRect(_ rect: NSRect?, for displayId: CGDirectDisplayID) {
+    private func setFocusRect(_ rect: NSRect?, itemIndex: Int?, for displayId: CGDirectDisplayID) {
         if let rect {
             focusRects[displayId] = snapRectToBackingPixels(rect, displayId: displayId)
+            if let itemIndex {
+                focusItemIndices[displayId] = itemIndex
+            } else {
+                focusItemIndices.removeValue(forKey: displayId)
+            }
         } else {
             focusRects.removeValue(forKey: displayId)
+            focusItemIndices.removeValue(forKey: displayId)
         }
     }
 

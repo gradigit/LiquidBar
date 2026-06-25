@@ -311,6 +311,7 @@ final class WindowSwitcherPanel: NSPanel {
         }
 
         func updateThumbnail(_ image: NSImage?) {
+            guard let image else { return }
             thumbnailView.image = image
         }
 

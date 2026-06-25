@@ -415,6 +415,7 @@ final class WindowThumbnailService {
     private var lastMaintenanceAt: CFAbsoluteTime = 0
 
     private let staleServeTTL: CFAbsoluteTime = 8.0
+    private let contentCacheTTL: CFAbsoluteTime = 12.0
 
     init(
         retentionPolicy: RetentionPolicy = .default,
@@ -476,12 +477,18 @@ final class WindowThumbnailService {
                 completion(entry.image)
                 return
             }
-            if age < staleServeTTL {
-                recordThumbnailCacheEvent(request: request, outcome: "cache_stale_served", entry: entry)
-                completion(entry.image)
-                scheduleCapture(request, completion: completion)
-                return
-            }
+            let outcome = age < staleServeTTL ? "cache_stale_served" : "cache_retained_fallback"
+            recordThumbnailCacheEvent(request: request, outcome: outcome, entry: entry)
+            completion(entry.image)
+            scheduleCapture(request, completion: completion)
+            return
+        }
+
+        if let entry = bestLastGoodEntry(windowId: windowId, targetSizePoints: targetSizePoints) {
+            recordThumbnailLastGoodEvent(request: request, outcome: "last_good_stale_served", entry: entry)
+            completion(entry.image)
+            scheduleCapture(request, completion: completion)
+            return
         }
 
         scheduleCapture(request, completion: completion)
@@ -579,6 +586,7 @@ final class WindowThumbnailService {
     func pruneToLiveWindowIds(_ liveWindowIds: Set<CGWindowID>) {
         imageCacheByKey = imageCacheByKey.filter { liveWindowIds.contains($0.key.windowId) }
         lastGoodImageByKey = lastGoodImageByKey.filter { liveWindowIds.contains($0.key.windowId) }
+        cachedWindowsById = cachedWindowsById.filter { liveWindowIds.contains($0.key) }
         let result = scheduler.pruneToLiveWindowIds(liveWindowIds)
         dropCallbacks(for: result.droppedQueued)
         callbacksByIdentity = callbacksByIdentity.filter { liveWindowIds.contains($0.key.key.windowId) }
@@ -871,8 +879,8 @@ final class WindowThumbnailService {
         }
     }
 
-    nonisolated static func shouldStoreLastGood(for producer: ThumbnailProducer) -> Bool {
-        producer != .prewarm
+    nonisolated static func shouldStoreLastGood(for _: ThumbnailProducer) -> Bool {
+        true
     }
 
     nonisolated static func approximateByteCost(sizePoints: CGSize, screenScale: CGFloat) -> Int {
@@ -1144,7 +1152,7 @@ final class WindowThumbnailService {
 
     private func resolveSCWindow(windowId: CGWindowID, completion: @escaping (SCWindow?) -> Void) {
         let now = CFAbsoluteTimeGetCurrent()
-        if let w = cachedWindowsById[windowId], (now - cachedContentAt) < 2.0 {
+        if let w = cachedWindowsById[windowId], (now - cachedContentAt) < contentCacheTTL {
             completion(w)
             return
         }

@@ -256,11 +256,11 @@ struct WindowThumbnailCachePolicyTests {
         #expect(summary.queuedRequests == 0)
     }
 
-    @Test func prewarmCapturesDoNotPopulateLastGoodFallbackCache() {
+    @Test func prewarmCapturesPopulateLastGoodFallbackCache() {
         #expect(WindowThumbnailService.shouldStoreLastGood(for: .interactive))
         #expect(WindowThumbnailService.shouldStoreLastGood(for: .switcher))
         #expect(WindowThumbnailService.shouldStoreLastGood(for: .groupPreview))
-        #expect(!WindowThumbnailService.shouldStoreLastGood(for: .prewarm))
+        #expect(WindowThumbnailService.shouldStoreLastGood(for: .prewarm))
     }
 
     @MainActor

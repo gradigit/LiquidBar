@@ -494,6 +494,55 @@ struct DragLifecycleTests {
         renderer.shutdown()
     }
 
+    @Test func focusedWindowHighlightMovesWithDraggedWindow() throws {
+        let renderer = NativeBarRenderer()
+        renderer.registerPanel(displayId: 1, barWidth: 520, barHeight: 32, scale: 2)
+
+        let items: [TaskbarItem] = [
+            .window(id: WindowId(1), bundleId: "com.app.one", title: "One window", appName: "One", isHidden: false, isMinimized: false, screenId: 1),
+            .window(id: WindowId(2), bundleId: "com.app.two", title: "Two window", appName: "Two", isHidden: false, isMinimized: false, screenId: 1),
+            .window(id: WindowId(3), bundleId: "com.app.three", title: "Three window", appName: "Three", isHidden: false, isMinimized: false, screenId: 1),
+        ]
+        var config = Config(iconSize: 20, iconsOnly: false, itemSizing: .auto)
+        config.focusIndicatorStyle = .tile
+
+        renderer.updateItems(
+            items,
+            config: config,
+            iconCache: IconCache(),
+            displayId: 1,
+            focus: FocusInfo(windowId: 1, bundleId: "com.app.one", tabGroupId: nil)
+        )
+
+        let before = try #require(renderer.snapshot(displayId: 1))
+        let selectedRect = before.visualRects[0]
+        let targetRect = before.visualRects[2]
+        let beforeFocus = try #require(before.decorations.first { $0.kind == .focus })
+
+        renderer.startDrag(
+            sourceIndex: 0,
+            cursorX: Float(selectedRect.midX),
+            cursorOffsetInItem: Float(selectedRect.width / 2),
+            config: config,
+            displayId: 1
+        )
+        renderer.updateDragCursor(
+            cursorX: Float(targetRect.midX),
+            insertionIndex: 3,
+            displayId: 1
+        )
+
+        let during = try #require(renderer.snapshot(displayId: 1))
+        let movedSelectedRect = during.items[0].rect
+        let duringFocus = try #require(during.decorations.first { $0.kind == .focus })
+
+        #expect(abs(duringFocus.rect.minX - beforeFocus.rect.minX) > 4)
+        #expect(abs(duringFocus.rect.midX - movedSelectedRect.midX) < 0.5)
+        #expect(abs(duringFocus.rect.width - movedSelectedRect.width) < 0.5)
+
+        renderer.shutdown()
+    }
+
     // MARK: - Tick and Rebuild
 
     @Test func testTickWithNoDragReturnsFalse() throws {

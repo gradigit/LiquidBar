@@ -2424,7 +2424,6 @@ final class EventLoop {
                 thumbnail: thumbnailService.cachedThumbnail(
                     windowId: CGWindowID(info.id.raw),
                     targetSizePoints: targetSize,
-                    maxAge: 8.0,
                     includeLastGood: true
                 ),
                 aspectRatio: aspectRatio,
@@ -2683,7 +2682,7 @@ final class EventLoop {
             let info = windows[index]
             let targetSize = WindowSwitcherPanel.thumbnailTargetSize(
                 layoutStyle: config.switcherLayoutStyle,
-                selected: false,
+                selected: index == selectedIndex,
                 aspectRatio: WindowSwitcherPanel.aspectRatio(for: info.bounds)
             )
             thumbnailService.prefetchWindowThumbnail(
@@ -3274,9 +3273,6 @@ final class EventLoop {
                 return CGFloat(a)
             }()
 
-            // Show immediately (glass + title) then async-fill the image.
-            self.showPreview(displayId: displayId, theme: theme, anchorRect: anchorRect, screen: screen, position: panelPosition, image: nil, title: title, aspectRatio: aspectFromBounds)
-
             // Capture at an aspect ratio matching the window, otherwise SCK letterboxes
             // portrait windows into a wide thumbnail (which looks like "empty" preview).
             let targetSizePoints: CGSize = {
@@ -3288,6 +3284,25 @@ final class EventLoop {
                 return CGSize(width: w, height: imageH)
             }()
             let scale = screen.backingScaleFactor
+            let cachedImage = self.thumbnailService.cachedThumbnail(
+                windowId: CGWindowID(windowId),
+                targetSizePoints: targetSizePoints,
+                includeLastGood: true
+            )
+
+            // First paint should use the best retained image we have; SCK refreshes can
+            // still replace it asynchronously below.
+            self.showPreview(
+                displayId: displayId,
+                theme: theme,
+                anchorRect: anchorRect,
+                screen: screen,
+                position: panelPosition,
+                image: cachedImage,
+                title: title,
+                aspectRatio: cachedImage == nil ? aspectFromBounds : nil
+            )
+
             self.thumbnailService.captureWindowThumbnail(
                 windowId: CGWindowID(windowId),
                 targetSizePoints: targetSizePoints,
@@ -3301,7 +3316,16 @@ final class EventLoop {
                 // avoid slight mismatch/letterboxing for windows whose bounds are
                 // reported inaccurately. If capture failed, keep the bounds aspect.
                 let aspect: CGFloat? = (image == nil) ? aspectFromBounds : nil
-                self.showPreview(displayId: displayId, theme: theme, anchorRect: anchorRect, screen: screen, position: panelPosition, image: image, title: title, aspectRatio: aspect)
+                self.showPreview(
+                    displayId: displayId,
+                    theme: theme,
+                    anchorRect: anchorRect,
+                    screen: screen,
+                    position: panelPosition,
+                    image: image ?? cachedImage,
+                    title: title,
+                    aspectRatio: aspect
+                )
             }
         }
 
@@ -3496,6 +3520,14 @@ final class EventLoop {
                 let w = max(minW, min(maxW, h * aspect))
                 return CGSize(width: w, height: h)
             }()
+            let cachedImage = thumbnailService.cachedThumbnail(
+                windowId: CGWindowID(windowId),
+                targetSizePoints: targetSizePoints,
+                includeLastGood: true
+            )
+            if let cachedImage {
+                panel.updateThumbnail(windowId: windowId, image: cachedImage, title: title, isDimmed: isDimmed)
+            }
             thumbnailService.captureWindowThumbnail(
                 windowId: CGWindowID(windowId),
                 targetSizePoints: targetSizePoints,
@@ -3507,7 +3539,7 @@ final class EventLoop {
                 guard self.groupPreviewActiveKeyByDisplay[displayId] == key else { return }
                 self.groupPreviewPanelByDisplay[displayId]?.updateThumbnail(
                     windowId: windowId,
-                    image: image,
+                    image: image ?? cachedImage,
                     title: title,
                     isDimmed: isDimmed
                 )
