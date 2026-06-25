@@ -78,6 +78,45 @@ struct WindowStateStoreTests {
         #expect(store.windowOrder.map(\.raw) == [3, 1, 2, 4])
     }
 
+    @Test @MainActor func hiddenAppWindowsAreRetainedWhenMissingFromPoll() {
+        let store = WindowStateStore()
+        var config = Config()
+        config.showHiddenApps = true
+
+        let visibleWindow = makeTestWindow(id: 1, bundle: "com.test.hidden", title: "Hidden soon")
+        #expect(store.update(windows: [visibleWindow], config: config) == true)
+
+        let changed = store.update(
+            windows: [],
+            config: config,
+            hiddenBundleIds: ["com.test.hidden"]
+        )
+
+        let windows = store.getWindows()
+        #expect(changed == true)
+        #expect(windows.count == 1)
+        #expect(windows[0].id.raw == 1)
+        #expect(windows[0].isHidden == true)
+    }
+
+    @Test @MainActor func missingHiddenAppWindowsAreDroppedWhenHiddenAppsDisabled() {
+        let store = WindowStateStore()
+        var config = Config()
+        config.showHiddenApps = false
+
+        let visibleWindow = makeTestWindow(id: 1, bundle: "com.test.hidden", title: "Hidden soon")
+        #expect(store.update(windows: [visibleWindow], config: config) == true)
+
+        let changed = store.update(
+            windows: [],
+            config: config,
+            hiddenBundleIds: ["com.test.hidden"]
+        )
+
+        #expect(changed == true)
+        #expect(store.getWindows().isEmpty)
+    }
+
     @Test @MainActor func testReorderSubset() {
         let store = WindowStateStore()
         let config = Config()

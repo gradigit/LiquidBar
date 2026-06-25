@@ -221,6 +221,30 @@ struct TaskbarItemTests {
         }
     }
 
+    @Test @MainActor func hiddenRetainedWindowRendersDimmedInPlace() {
+        let store = WindowStateStore()
+        var config = Config(groupByApp: false)
+        config.showHiddenApps = true
+        config.hiddenWindowMode = .inPlace
+
+        let first = makeTestWindow(id: 1, bundle: "com.app.Hidden", title: "Hidden Window")
+        let second = makeTestWindow(id: 2, bundle: "com.app.Visible", title: "Visible Window")
+        _ = store.update(windows: [first, second], config: config)
+
+        _ = store.update(
+            windows: [second],
+            config: config,
+            hiddenBundleIds: ["com.app.Hidden"]
+        )
+
+        let items = UIRenderer.render(from: store, config: config)
+        #expect(items.count == 2)
+        #expect(items[0].bundleId == "com.app.Hidden")
+        #expect(items[0].isHidden)
+        #expect(items[0].isDimmed)
+        #expect(items[1].bundleId == "com.app.Visible")
+    }
+
     @Test @MainActor func testPinned() {
         let store = WindowStateStore()
         let config = Config()

@@ -602,6 +602,24 @@ final class EventLoop {
         }
     }
 
+    private func hiddenRunningBundleIdsForMissingWindows(observedWindowIds: Set<UInt32>) -> Set<String> {
+        guard config.showHiddenApps else { return [] }
+
+        let missingBundles = Set(windowStateStore.getWindows().compactMap { window -> String? in
+            observedWindowIds.contains(window.id.raw) ? nil : window.bundleId.raw
+        })
+        guard !missingBundles.isEmpty else { return [] }
+
+        return Set(NSWorkspace.shared.runningApplications.compactMap { app in
+            guard app.isHidden,
+                  let bundleId = app.bundleIdentifier,
+                  missingBundles.contains(bundleId) else {
+                return nil
+            }
+            return bundleId
+        })
+    }
+
     // MARK: - Polling Timer
 
     private func startPollTimer(interval: TimeInterval) {
@@ -692,22 +710,28 @@ final class EventLoop {
             }
 
             // Detect new and moved windows
-            let newWindowIds = Set(windows.map { $0.id.raw })
-            let hasNewWindows = !newWindowIds.subtracting(knownWindowIds).isEmpty
+            let observedWindowIds = Set(windows.map { $0.id.raw })
+            let hasNewWindows = !observedWindowIds.subtracting(knownWindowIds).isEmpty
             let hasMovedWindows = checkForMovedWindows(windows)
-            syncThumbnailLifecycleToLiveWindowIds(newWindowIds)
+            let hiddenBundleIds = hiddenRunningBundleIdsForMissingWindows(observedWindowIds: observedWindowIds)
 
             // Update state
             let (changed, restoredOrderChanged) = PerformanceMonitor.shared.measureSegment(
                 "window_state_update"
             ) {
-                let changed = windowStateStore.update(windows: windows, config: config)
+                let changed = windowStateStore.update(
+                    windows: windows,
+                    config: config,
+                    hiddenBundleIds: hiddenBundleIds
+                )
                 // Restore persisted item/window ordering across app restarts.
                 let restoredOrderChanged = windowStateStore.applyPreferredWindowOrder(preferredWindowOrderForCurrentWindows())
                 // Keep persisted order pruned/aligned with the current live set.
                 userState.updateWindowOrder(windowStateStore.getWindows().map(\.id.raw))
                 return (changed, restoredOrderChanged)
             }
+            let liveWindowIds = Set(windowStateStore.getWindows().map { $0.id.raw })
+            syncThumbnailLifecycleToLiveWindowIds(liveWindowIds)
 
             let focusChanged = updateCachedFocusIfNeeded(frontmostWindowId: windowManager.lastFrontmostWindowId)
             let metricsRefreshed = refreshSystemMetricsIfNeeded(now: now)
@@ -719,7 +743,7 @@ final class EventLoop {
             scheduleSwitcherPrewarm()
 
             // Update known state
-            knownWindowIds = newWindowIds
+            knownWindowIds = liveWindowIds
             updateWindowPositions(windows)
 
             // Window adjustment

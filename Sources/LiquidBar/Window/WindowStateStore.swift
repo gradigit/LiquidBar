@@ -6,11 +6,16 @@ final class WindowStateStore {
     private var newApps: [String] = []
 
     /// Update state with new window list. Returns true if anything changed.
-    func update(windows newWindows: [WindowInfo], config: Config) -> Bool {
+    func update(windows newWindows: [WindowInfo], config: Config, hiddenBundleIds: Set<String> = []) -> Bool {
+        let nextWindows = windowsRetainingHiddenApps(
+            observed: newWindows,
+            config: config,
+            hiddenBundleIds: hiddenBundleIds
+        )
         let oldIds = Set(windows.keys)
-        let newIds = Set(newWindows.map(\.id))
+        let newIds = Set(nextWindows.map(\.id))
 
-        let changed = oldIds != newIds || newWindows.contains { w in
+        let changed = oldIds != newIds || nextWindows.contains { w in
             windows[w.id].map { old in
                 old.title != w.title
                     || old.isHidden != w.isHidden
@@ -22,7 +27,7 @@ final class WindowStateStore {
         guard changed else { return false }
 
         // Track new apps
-        for window in newWindows {
+        for window in nextWindows {
             let bundleId = window.bundleId.raw
             if !seenApps.contains(bundleId) {
                 seenApps.insert(bundleId)
@@ -34,7 +39,7 @@ final class WindowStateStore {
 
         // Update windows map, filtering blacklisted
         windows.removeAll()
-        for window in newWindows {
+        for window in nextWindows {
             if !config.isBlacklisted(window.bundleId.raw) {
                 windows[window.id] = window
             }
@@ -44,13 +49,45 @@ final class WindowStateStore {
         let currentIds = Set(windows.keys)
         windowOrder.removeAll { !currentIds.contains($0) }
 
-        for window in newWindows where currentIds.contains(window.id) {
+        for window in nextWindows where currentIds.contains(window.id) {
             if !windowOrder.contains(window.id) {
                 windowOrder.append(window.id)
             }
         }
 
         return true
+    }
+
+    private func windowsRetainingHiddenApps(
+        observed: [WindowInfo],
+        config: Config,
+        hiddenBundleIds: Set<String>
+    ) -> [WindowInfo] {
+        guard config.showHiddenApps, !hiddenBundleIds.isEmpty else {
+            return observed
+        }
+
+        let observedIds = Set(observed.map(\.id))
+        var merged = observed
+        merged.reserveCapacity(observed.count + hiddenBundleIds.count)
+
+        for id in windowOrder where !observedIds.contains(id) {
+            guard let previous = windows[id],
+                  hiddenBundleIds.contains(previous.bundleId.raw),
+                  !config.isBlacklisted(previous.bundleId.raw) else { continue }
+            merged.append(WindowInfo(
+                id: previous.id,
+                bundleId: previous.bundleId,
+                appName: previous.appName,
+                title: previous.title,
+                isHidden: true,
+                isMinimized: previous.isMinimized,
+                monitorId: previous.monitorId,
+                bounds: previous.bounds
+            ))
+        }
+
+        return merged
     }
 
     /// Get all windows ordered by windowOrder.
