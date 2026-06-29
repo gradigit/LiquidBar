@@ -13,6 +13,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var configWatcher: ConfigFileWatcher?
     private var liveApplyObserver: NSObjectProtocol?
     private var panelBootstrapRetryWorkItem: DispatchWorkItem?
+    private var didRequestAccessibilityAccess = false
     private var didRequestScreenCaptureAccess = false
     private var didRequestListenEventAccess = false
 
@@ -74,10 +75,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
         // 6. Accessibility permission
         // Don't auto-prompt on cold start — request only when a feature that needs AX is enabled.
-        if config.adjustWindowsForTaskbar,
-           ProcessInfo.processInfo.environment["LIQUIDBAR_DISABLE_AX_PROMPT"] != "1" {
-            AccessibilityService.requestPermission()
-        }
+        requestAccessibilityAccessIfNeeded(config: config)
         requestScreenCaptureAccessIfNeeded(config: config)
         requestListenEventAccessIfNeeded(config: config)
 
@@ -100,6 +98,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             L10n.applyAppLanguage(config.appLanguage)
             self.applyDockVisibility(config: config)
             self.updateStatusItemVisibility(config: config)
+            self.requestAccessibilityAccessIfNeeded(config: config)
             self.requestScreenCaptureAccessIfNeeded(config: config)
             self.requestListenEventAccessIfNeeded(config: config)
         }
@@ -183,6 +182,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             L10n.applyAppLanguage(config.appLanguage)
             self.applyDockVisibility(config: config)
             self.updateStatusItemVisibility(config: config)
+            self.requestAccessibilityAccessIfNeeded(config: config)
             self.requestScreenCaptureAccessIfNeeded(config: config)
             self.requestListenEventAccessIfNeeded(config: config)
         }
@@ -193,6 +193,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             L10n.applyAppLanguage(config.appLanguage)
             self.applyDockVisibility(config: config)
             self.updateStatusItemVisibility(config: config)
+            self.requestAccessibilityAccessIfNeeded(config: config)
             self.requestScreenCaptureAccessIfNeeded(config: config)
             self.requestListenEventAccessIfNeeded(config: config)
         }
@@ -212,6 +213,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         } else {
             configWatcher?.stop()
         }
+    }
+
+    static func shouldRequestAccessibilityAccess(
+        config: Config,
+        environment: [String: String] = ProcessInfo.processInfo.environment,
+        preflightGranted: Bool = AXIsProcessTrusted()
+    ) -> Bool {
+        (config.adjustWindowsForTaskbar || config.experimentalWindowLayoutMemoryEnabled) &&
+            environment["LIQUIDBAR_DISABLE_AX_PROMPT"] != "1" &&
+            !preflightGranted
+    }
+
+    private func requestAccessibilityAccessIfNeeded(config: Config) {
+        guard !didRequestAccessibilityAccess,
+              Self.shouldRequestAccessibilityAccess(config: config) else { return }
+        didRequestAccessibilityAccess = true
+        AccessibilityService.requestPermission()
     }
 
     static func shouldRequestScreenCaptureAccess(

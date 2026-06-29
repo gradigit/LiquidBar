@@ -382,6 +382,9 @@ struct Config: Codable, Sendable, Equatable {
     var tabGroupHoverExpandDelayMs: Int
     /// When a tab group is expanded, clicking a window item outside the group collapses it.
     var tabGroupCollapseOnOutsideClick: Bool
+    /// Experimental: remember visible window frames before display reconfiguration and
+    /// restore them after the same display topology returns.
+    var experimentalWindowLayoutMemoryEnabled: Bool
     /// Enable the plugin system (plugins are discovered from `configDirectory/Plugins`).
     var pluginsEnabled: Bool
     /// Explicitly disabled plugin IDs (even if present on disk).
@@ -477,6 +480,7 @@ struct Config: Codable, Sendable, Equatable {
         windowTabGroupsEnabled: Bool = false,
         tabGroupHoverExpandDelayMs: Int = 1000,
         tabGroupCollapseOnOutsideClick: Bool = true,
+        experimentalWindowLayoutMemoryEnabled: Bool = false,
         pluginsEnabled: Bool = false,
         disabledPluginIds: [String] = [],
         switcherEnabled: Bool = true,
@@ -568,6 +572,7 @@ struct Config: Codable, Sendable, Equatable {
         self.windowTabGroupsEnabled = windowTabGroupsEnabled
         self.tabGroupHoverExpandDelayMs = tabGroupHoverExpandDelayMs
         self.tabGroupCollapseOnOutsideClick = tabGroupCollapseOnOutsideClick
+        self.experimentalWindowLayoutMemoryEnabled = experimentalWindowLayoutMemoryEnabled
         self.pluginsEnabled = pluginsEnabled
         self.disabledPluginIds = disabledPluginIds
         self.switcherEnabled = switcherEnabled
@@ -664,6 +669,7 @@ struct Config: Codable, Sendable, Equatable {
         windowTabGroupsEnabled = try c.decodeIfPresent(Bool.self, forKey: .windowTabGroupsEnabled) ?? false
         tabGroupHoverExpandDelayMs = try c.decodeIfPresent(Int.self, forKey: .tabGroupHoverExpandDelayMs) ?? 1000
         tabGroupCollapseOnOutsideClick = try c.decodeIfPresent(Bool.self, forKey: .tabGroupCollapseOnOutsideClick) ?? true
+        experimentalWindowLayoutMemoryEnabled = try c.decodeIfPresent(Bool.self, forKey: .experimentalWindowLayoutMemoryEnabled) ?? false
         pluginsEnabled = try c.decodeIfPresent(Bool.self, forKey: .pluginsEnabled) ?? false
         disabledPluginIds = try c.decodeIfPresent([String].self, forKey: .disabledPluginIds) ?? []
         switcherEnabled = try c.decodeIfPresent(Bool.self, forKey: .switcherEnabled) ?? false

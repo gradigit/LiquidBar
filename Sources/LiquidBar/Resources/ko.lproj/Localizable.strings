@@ -215,6 +215,7 @@
 "Reload config.json" = "config.json 다시 불러오기";
 "Reload" = "다시 불러오기";
 "Remove from Tab Group" = "탭 그룹에서 제거";
+"Remember window layouts after display changes" = "디스플레이 변경 후 윈도우 배치 기억";
 "Rename Tab Group…" = "탭 그룹 이름 변경…";
 "Rename Window…" = "윈도우 이름 변경…";
 "Reset All" = "모두 초기화";

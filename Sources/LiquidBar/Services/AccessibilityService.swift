@@ -300,6 +300,31 @@ final class AccessibilityService {
         let needsResize: Bool
     }
 
+    struct RestorableWindowSnapshot: Equatable, Sendable {
+        let pid: pid_t
+        let bundleId: String
+        let windowId: UInt32
+        let title: String
+        let frame: CGRect
+        let displayUUID: String
+    }
+
+    struct RestorableLiveWindow: Equatable, Sendable {
+        let pid: pid_t
+        let windowId: UInt32
+        let frame: CGRect
+        let title: String
+    }
+
+    struct RestorableWindowRestoreBatchResult: Equatable, Sendable {
+        let completedSnapshots: [RestorableWindowSnapshot]
+        let restoredWindowCount: Int
+
+        var completedWindowCount: Int {
+            completedSnapshots.count
+        }
+    }
+
     struct WindowAdjustmentPlanner: Sendable {
         let tolerance: CGFloat
         let minimumSize: CGFloat
@@ -578,6 +603,174 @@ final class AccessibilityService {
         }
     }
 
+    // MARK: - Experimental Window Layout Memory
+
+    static func captureRestorableWindowSnapshots(
+        displayUUIDByDisplayId: [CGDirectDisplayID: String]
+    ) -> [RestorableWindowSnapshot] {
+        guard let windowList = CGWindowListCopyWindowInfo(
+            [.optionOnScreenOnly, .excludeDesktopElements],
+            kCGNullWindowID
+        ) as? [[CFString: Any]] else { return [] }
+
+        let activeDisplayBounds = activeDisplayBoundsById()
+        guard !activeDisplayBounds.isEmpty else { return [] }
+        let assignmentScreens: [(displayId: UInt32, bounds: WindowBounds)] = activeDisplayBounds.map { displayId, rect in
+            (
+                UInt32(displayId),
+                WindowBounds(x: rect.origin.x, y: rect.origin.y, width: rect.width, height: rect.height)
+            )
+        }
+        let ownPid = ProcessInfo.processInfo.processIdentifier
+        let planner = WindowAdjustmentPlanner()
+        var snapshots: [RestorableWindowSnapshot] = []
+        snapshots.reserveCapacity(windowList.count)
+
+        for dict in windowList {
+            let layer = parseInt(dict[kCGWindowLayer as CFString]) ?? 0
+            guard layer == 0 else { continue }
+            guard let pid = parsePid(dict[kCGWindowOwnerPID as CFString]), pid != ownPid else { continue }
+            guard let windowId = parseWindowNumber(dict[kCGWindowNumber as CFString]) else { continue }
+            guard let boundsDict = dict[kCGWindowBounds as CFString] as? NSDictionary else { continue }
+
+            var rect = CGRect.zero
+            guard CGRectMakeWithDictionaryRepresentation(boundsDict, &rect) else { continue }
+            guard rect.width >= 80, rect.height >= 80 else { continue }
+
+            let windowBounds = WindowBounds(x: rect.origin.x, y: rect.origin.y, width: rect.width, height: rect.height)
+            if planner.windowSpansMultipleDisplays(windowBounds, screens: assignmentScreens) { continue }
+
+            let monitorId = DisplayAssignment.monitorId(for: windowBounds, screens: assignmentScreens)
+            let displayId = CGDirectDisplayID(monitorId.raw)
+            guard let displayUUID = displayUUIDByDisplayId[displayId] else { continue }
+
+            let title = dict[kCGWindowName as CFString] as? String ?? ""
+            let bundleId = NSRunningApplication(processIdentifier: pid)?.bundleIdentifier ?? ""
+            snapshots.append(
+                RestorableWindowSnapshot(
+                    pid: pid,
+                    bundleId: bundleId,
+                    windowId: windowId,
+                    title: title,
+                    frame: rect,
+                    displayUUID: displayUUID
+                )
+            )
+        }
+
+        return snapshots
+    }
+
+    @discardableResult
+    static func restoreWindowFrame(
+        _ snapshot: RestorableWindowSnapshot,
+        activeDisplayBoundsByUUID: [String: CGRect]
+    ) -> Bool {
+        let catalog = makeRestorableWindowCatalog()
+        var axWindowsByPID: [pid_t: CFArray] = [:]
+        return restoreWindowFrameResult(
+            snapshot,
+            activeDisplayBoundsByUUID: activeDisplayBoundsByUUID,
+            liveWindowCatalog: catalog,
+            axWindowsByPID: &axWindowsByPID
+        ).restored
+    }
+
+    static func restoreWindowFrames(
+        _ snapshots: [RestorableWindowSnapshot],
+        activeDisplayBoundsByUUID: [String: CGRect]
+    ) -> RestorableWindowRestoreBatchResult {
+        guard !snapshots.isEmpty else {
+            return RestorableWindowRestoreBatchResult(completedSnapshots: [], restoredWindowCount: 0)
+        }
+
+        let catalog = makeRestorableWindowCatalog()
+        var axWindowsByPID: [pid_t: CFArray] = [:]
+        var completed: [RestorableWindowSnapshot] = []
+        completed.reserveCapacity(snapshots.count)
+        var restored = 0
+
+        for snapshot in snapshots {
+            let result = restoreWindowFrameResult(
+                snapshot,
+                activeDisplayBoundsByUUID: activeDisplayBoundsByUUID,
+                liveWindowCatalog: catalog,
+                axWindowsByPID: &axWindowsByPID
+            )
+            if result.completed {
+                completed.append(snapshot)
+            }
+            if result.restored {
+                restored += 1
+            }
+        }
+
+        return RestorableWindowRestoreBatchResult(
+            completedSnapshots: completed,
+            restoredWindowCount: restored
+        )
+    }
+
+    private struct WindowFrameRestoreResult {
+        let completed: Bool
+        let restored: Bool
+    }
+
+    private static func restoreWindowFrameResult(
+        _ snapshot: RestorableWindowSnapshot,
+        activeDisplayBoundsByUUID: [String: CGRect],
+        liveWindowCatalog: RestorableWindowCatalog,
+        axWindowsByPID: inout [pid_t: CFArray]
+    ) -> WindowFrameRestoreResult {
+        guard !MouseTracker.isDragging else {
+            return WindowFrameRestoreResult(completed: false, restored: false)
+        }
+        guard let displayBounds = activeDisplayBoundsByUUID[snapshot.displayUUID],
+              displayBounds.insetBy(dx: -8, dy: -8).intersects(snapshot.frame) else {
+            return WindowFrameRestoreResult(completed: false, restored: false)
+        }
+        guard let liveWindow = findRestorableLiveWindow(for: snapshot, in: liveWindowCatalog) else {
+            return WindowFrameRestoreResult(completed: false, restored: false)
+        }
+        guard !framesAreClose(liveWindow.frame, snapshot.frame, tolerance: 3.0) else {
+            return WindowFrameRestoreResult(completed: true, restored: false)
+        }
+
+        let appEl = AXUIElementCreateApplication(liveWindow.pid)
+        guard let axWindows = copyAXWindows(for: liveWindow.pid, appElement: appEl, cache: &axWindowsByPID) else {
+            return WindowFrameRestoreResult(completed: false, restored: false)
+        }
+
+        let targetTitle = liveWindow.title.isEmpty ? snapshot.title : liveWindow.title
+        if let axWin = matchAXWindow(
+            in: axWindows,
+            targetWindowId: liveWindow.windowId,
+            targetBounds: liveWindow.frame,
+            targetTitle: targetTitle
+        ) {
+            let resized = setAXSize(axWin, size: snapshot.frame.size)
+            let moved = setAXPosition(axWin, point: snapshot.frame.origin)
+            guard resized || moved,
+                  let finalPosition = getAXPosition(axWin),
+                  let finalSize = getAXSize(axWin) else {
+                return WindowFrameRestoreResult(completed: false, restored: false)
+            }
+
+            let finalFrame = CGRect(origin: finalPosition, size: finalSize)
+            let completed = framesAreClose(finalFrame, snapshot.frame, tolerance: 4.0)
+            return WindowFrameRestoreResult(completed: completed, restored: completed)
+        }
+
+        return WindowFrameRestoreResult(completed: false, restored: false)
+    }
+
+    nonisolated static func framesAreClose(_ lhs: CGRect, _ rhs: CGRect, tolerance: CGFloat) -> Bool {
+        abs(lhs.origin.x - rhs.origin.x) <= tolerance &&
+            abs(lhs.origin.y - rhs.origin.y) <= tolerance &&
+            abs(lhs.width - rhs.width) <= tolerance &&
+            abs(lhs.height - rhs.height) <= tolerance
+    }
+
     // MARK: - Unhide / Unminimize
 
     /// Hide an app by bundle identifier (Cmd+H behavior).
@@ -674,6 +867,76 @@ final class AccessibilityService {
     }
 
     // MARK: - Private Helpers
+
+    private struct RestorableWindowKey: Hashable {
+        let pid: pid_t
+        let windowId: UInt32
+    }
+
+    private struct RestorableWindowTitleKey: Hashable {
+        let pid: pid_t
+        let title: String
+    }
+
+    private struct RestorableWindowCatalog {
+        let byWindowKey: [RestorableWindowKey: RestorableLiveWindow]
+        let uniqueByTitleKey: [RestorableWindowTitleKey: RestorableLiveWindow]
+    }
+
+    private static func findRestorableLiveWindow(
+        for snapshot: RestorableWindowSnapshot,
+        in catalog: RestorableWindowCatalog
+    ) -> RestorableLiveWindow? {
+        if !snapshot.bundleId.isEmpty,
+           NSRunningApplication(processIdentifier: snapshot.pid)?.bundleIdentifier != snapshot.bundleId {
+            return nil
+        }
+
+        if let exact = catalog.byWindowKey[RestorableWindowKey(pid: snapshot.pid, windowId: snapshot.windowId)] {
+            return exact
+        }
+
+        guard !snapshot.title.isEmpty else { return nil }
+        return catalog.uniqueByTitleKey[RestorableWindowTitleKey(pid: snapshot.pid, title: snapshot.title)]
+    }
+
+    private static func makeRestorableWindowCatalog() -> RestorableWindowCatalog {
+        guard let windowList = CGWindowListCopyWindowInfo(
+            [.optionOnScreenOnly, .excludeDesktopElements],
+            kCGNullWindowID
+        ) as? [[CFString: Any]] else {
+            return RestorableWindowCatalog(byWindowKey: [:], uniqueByTitleKey: [:])
+        }
+
+        var byWindowKey: [RestorableWindowKey: RestorableLiveWindow] = [:]
+        var titleBuckets: [RestorableWindowTitleKey: [RestorableLiveWindow]] = [:]
+        byWindowKey.reserveCapacity(windowList.count)
+        for dict in windowList {
+            let layer = parseInt(dict[kCGWindowLayer as CFString]) ?? 0
+            guard layer == 0 else { continue }
+            guard let pid = parsePid(dict[kCGWindowOwnerPID as CFString]) else { continue }
+            guard let windowId = parseWindowNumber(dict[kCGWindowNumber as CFString]) else { continue }
+            guard let boundsDict = dict[kCGWindowBounds as CFString] as? NSDictionary else { continue }
+
+            var rect = CGRect.zero
+            guard CGRectMakeWithDictionaryRepresentation(boundsDict, &rect) else { continue }
+            let title = dict[kCGWindowName as CFString] as? String ?? ""
+            let candidate = RestorableLiveWindow(pid: pid, windowId: windowId, frame: rect, title: title)
+            byWindowKey[RestorableWindowKey(pid: pid, windowId: windowId)] = candidate
+
+            if !title.isEmpty {
+                titleBuckets[RestorableWindowTitleKey(pid: pid, title: title), default: []].append(candidate)
+            }
+        }
+
+        let uniqueByTitleKey = titleBuckets.compactMapValues { matches in
+            matches.count == 1 ? matches[0] : nil
+        }
+        return RestorableWindowCatalog(
+            byWindowKey: byWindowKey,
+            uniqueByTitleKey: uniqueByTitleKey
+        )
+    }
 
     private static func findCGWindow(windowId: UInt32) -> (pid_t, CGRect, String)? {
         guard let windowList = CGWindowListCopyWindowInfo(
@@ -1121,6 +1384,19 @@ final class AccessibilityService {
         return cfArray(from: value)
     }
 
+    private static func copyAXWindows(
+        for pid: pid_t,
+        appElement: AXUIElement,
+        cache: inout [pid_t: CFArray]
+    ) -> CFArray? {
+        if let cached = cache[pid] {
+            return cached
+        }
+        guard let windows = copyAXWindows(appElement) else { return nil }
+        cache[pid] = windows
+        return windows
+    }
+
     private static func getAXPosition(_ element: AXUIElement) -> CGPoint? {
         var value: CFTypeRef?
         AXUIElementCopyAttributeValue(element, kAXPositionAttribute as CFString, &value)
@@ -1183,16 +1459,18 @@ final class AccessibilityService {
     }
     #endif
 
-    private static func setAXPosition(_ element: AXUIElement, point: CGPoint) {
+    @discardableResult
+    private static func setAXPosition(_ element: AXUIElement, point: CGPoint) -> Bool {
         var p = point
-        guard let value = AXValueCreate(.cgPoint, &p) else { return }
-        AXUIElementSetAttributeValue(element, kAXPositionAttribute as CFString, value)
+        guard let value = AXValueCreate(.cgPoint, &p) else { return false }
+        return AXUIElementSetAttributeValue(element, kAXPositionAttribute as CFString, value) == .success
     }
 
-    private static func setAXSize(_ element: AXUIElement, size: CGSize) {
+    @discardableResult
+    private static func setAXSize(_ element: AXUIElement, size: CGSize) -> Bool {
         var s = size
-        guard let value = AXValueCreate(.cgSize, &s) else { return }
-        AXUIElementSetAttributeValue(element, kAXSizeAttribute as CFString, value)
+        guard let value = AXValueCreate(.cgSize, &s) else { return false }
+        return AXUIElementSetAttributeValue(element, kAXSizeAttribute as CFString, value) == .success
     }
 
     private static func activeDisplayBoundsById() -> [CGDirectDisplayID: CGRect] {

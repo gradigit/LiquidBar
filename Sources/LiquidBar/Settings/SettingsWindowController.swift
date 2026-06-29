@@ -216,6 +216,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTe
     private var perfHangDiagnosticsCheckbox: NSButton!
     private var perfLogIntervalField: NSTextField!
     private var pluginsEnabledCheckbox: NSButton!
+    private var windowLayoutMemoryCheckbox: NSButton!
     private var windowTabGroupsCheckbox: NSButton!
     private var tabGroupHoverDelayField: NSTextField!
     private var tabGroupCollapseCheckbox: NSButton!
@@ -1399,6 +1400,13 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTe
 
         y -= 30
 
+        windowLayoutMemoryCheckbox = makeCheckbox(L10n.tr("Remember window layouts after display changes"), at: NSPoint(x: controlX, y: y))
+        windowLayoutMemoryCheckbox.target = self
+        windowLayoutMemoryCheckbox.action = #selector(controlChanged(_:))
+        view.addSubview(windowLayoutMemoryCheckbox)
+
+        y -= 30
+
         windowTabGroupsCheckbox = makeCheckbox(L10n.tr("Enable window tab groups"), at: NSPoint(x: controlX, y: y))
         windowTabGroupsCheckbox.target = self
         windowTabGroupsCheckbox.action = #selector(controlChanged(_:))
@@ -1728,6 +1736,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTe
         perfHangDiagnosticsCheckbox.state = config.performanceHangDiagnosticsEnabled ? .on : .off
         perfLogIntervalField.stringValue = "\(config.performanceLogIntervalMs)"
         pluginsEnabledCheckbox.state = config.pluginsEnabled ? .on : .off
+        windowLayoutMemoryCheckbox.state = config.experimentalWindowLayoutMemoryEnabled ? .on : .off
         windowTabGroupsCheckbox.state = config.windowTabGroupsEnabled ? .on : .off
         tabGroupHoverDelayField.stringValue = "\(config.tabGroupHoverExpandDelayMs)"
         tabGroupCollapseCheckbox.state = config.tabGroupCollapseOnOutsideClick ? .on : .off
@@ -2217,6 +2226,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTe
         config.showHiddenApps = showHiddenCheckbox.state == .on
         config.showMinimizedWindows = showMinimizedCheckbox.state == .on
         let previousAdjustWindows = config.adjustWindowsForTaskbar
+        let previousWindowLayoutMemory = config.experimentalWindowLayoutMemoryEnabled
         config.adjustWindowsForTaskbar = adjustWindowsCheckbox.state == .on
 
         // Hidden mode
@@ -2373,6 +2383,7 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTe
         if let interval = Int(perfLogIntervalField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)) {
             config.performanceLogIntervalMs = interval
         }
+        config.experimentalWindowLayoutMemoryEnabled = windowLayoutMemoryCheckbox.state == .on
 
         config.blacklistedApps = blacklist
         if let pendingPinnedApps {
@@ -2413,6 +2424,9 @@ final class SettingsWindowController: NSWindowController, NSWindowDelegate, NSTe
         let languageChanged = config.appLanguage != previousConfig.appLanguage
 
         if config.adjustWindowsForTaskbar && !previousAdjustWindows {
+            AccessibilityService.requestPermission()
+        }
+        if config.experimentalWindowLayoutMemoryEnabled && !previousWindowLayoutMemory {
             AccessibilityService.requestPermission()
         }
 

@@ -32,6 +32,7 @@ struct LocalizationTests {
         #expect(korean["Language:"] == "언어:")
         #expect(korean["English"] == "영어")
         #expect(korean["Korean"] == "한국어")
+        #expect(korean["Remember window layouts after display changes"] == "디스플레이 변경 후 윈도우 배치 기억")
         #expect(korean["CPU"] == "CPU")
         #expect(korean["GPU"] == "GPU")
         #expect(korean["RAM"] == "RAM")

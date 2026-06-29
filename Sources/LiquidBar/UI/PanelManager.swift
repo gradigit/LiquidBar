@@ -32,8 +32,13 @@ final class PanelManager {
     private var occlusionObservers: [CGDirectDisplayID: NSObjectProtocol] = [:]
     private weak var renderer: NativeBarRenderer?
     private var lastConfig: Config?
-    private var suppressedDisplayIds: Set<CGDirectDisplayID> = []
+    private var spaceSuppressedDisplayIds: Set<CGDirectDisplayID> = []
+    private var fullscreenSuppressedDisplayIds: Set<CGDirectDisplayID> = []
     private var lastViewSyncSnapshotByDisplay: [CGDirectDisplayID: ViewSyncSnapshot] = [:]
+
+    private var suppressedDisplayIds: Set<CGDirectDisplayID> {
+        spaceSuppressedDisplayIds.union(fullscreenSuppressedDisplayIds)
+    }
 
     init() {}
 
@@ -83,6 +88,9 @@ final class PanelManager {
         )
 
         panels[displayId] = panel
+        if suppressedDisplayIds.contains(displayId) {
+            panel.setSpaceSuppressed(true)
+        }
 
         renderer?.registerPanel(
             displayId: displayId,
@@ -181,14 +189,14 @@ final class PanelManager {
 
         let targetDisplayIds = Set(entries.map(\.displayId))
         if targetDisplayIds != Set(panels.keys) {
-            rebuildPanels(config: config, renderer: renderer)
+            rebuildPanels(config: config, renderer: renderer, preserveSuppression: true)
             return .rebuilt
         }
 
         var didUpdateGeometry = false
         for entry in entries {
             guard let panel = panels[entry.displayId] else {
-                rebuildPanels(config: config, renderer: renderer)
+                rebuildPanels(config: config, renderer: renderer, preserveSuppression: true)
                 return .rebuilt
             }
 
@@ -381,6 +389,48 @@ final class PanelManager {
         return (suppressed, previousSuppressed.subtracting(suppressed))
     }
 
+    nonisolated static func fullscreenCoveredDisplayIds(
+        windows: [WindowInfo],
+        displayBoundsById: [CGDirectDisplayID: CGRect]
+    ) -> Set<CGDirectDisplayID> {
+        var covered = Set<CGDirectDisplayID>()
+        guard !windows.isEmpty, !displayBoundsById.isEmpty else { return covered }
+
+        for window in windows where !window.isHidden && !window.isMinimized {
+            guard !systemApps.contains(window.bundleId.raw) else { continue }
+            for (displayId, displayBounds) in displayBoundsById {
+                if shouldTreatAsFullscreenCover(window: window, displayBounds: displayBounds) {
+                    covered.insert(displayId)
+                }
+            }
+        }
+
+        return covered
+    }
+
+    nonisolated static func shouldTreatAsFullscreenCover(
+        window: WindowInfo,
+        displayBounds: CGRect,
+        coverageThreshold: Double = 0.985,
+        dimensionTolerance: Double = 32.0
+    ) -> Bool {
+        guard displayBounds.width > 1, displayBounds.height > 1 else { return false }
+        let display = WindowBounds(
+            x: displayBounds.origin.x,
+            y: displayBounds.origin.y,
+            width: displayBounds.width,
+            height: displayBounds.height
+        )
+        let displayArea = max(1.0, display.width * display.height)
+        let coverage = window.bounds.intersectionArea(with: display) / displayArea
+        guard coverage >= coverageThreshold else { return false }
+
+        return window.bounds.width >= display.width - dimensionTolerance &&
+            window.bounds.height >= display.height - dimensionTolerance &&
+            window.bounds.width <= display.width + dimensionTolerance &&
+            window.bounds.height <= display.height + dimensionTolerance
+    }
+
     func updateItems(
         _ allItems: [TaskbarItem],
         config: Config,
@@ -504,18 +554,35 @@ final class PanelManager {
     ) {
         let transition = Self.taskbarSpaceTransition(
             currentSpaceInfoByDisplay: currentSpaceInfoByDisplay,
-            previousSuppressed: suppressedDisplayIds
+            previousSuppressed: spaceSuppressedDisplayIds
         )
-        suppressedDisplayIds = transition.suppressed
+        spaceSuppressedDisplayIds = transition.suppressed
+        applyTaskbarSuppression(config: config, renderer: renderer)
+    }
 
+    func reconcileFullscreenWindowSuppression(
+        windows: [WindowInfo],
+        config: Config,
+        renderer: NativeBarRenderer
+    ) {
+        let coveredDisplays = Self.fullscreenCoveredDisplayIds(
+            windows: windows,
+            displayBoundsById: Self.activeDisplayBoundsById()
+        )
+        guard coveredDisplays != fullscreenSuppressedDisplayIds else { return }
+        fullscreenSuppressedDisplayIds = coveredDisplays
+        applyTaskbarSuppression(config: config, renderer: renderer)
+    }
+
+    private func applyTaskbarSuppression(config: Config, renderer: NativeBarRenderer) {
         for (displayId, panel) in panels {
-            if transition.suppressed.contains(displayId) {
+            if suppressedDisplayIds.contains(displayId) {
                 panel.setSpaceSuppressed(true)
                 pauseDisplayLink(for: displayId)
                 continue
             }
 
-            guard transition.restored.contains(displayId) else { continue }
+            guard panel.isSpaceSuppressed else { continue }
             guard let screen = panel.screen ?? NSScreen.screens.first(where: { $0.displayId == displayId }) else {
                 panel.setSpaceSuppressed(false)
                 resumeDisplayLink(for: displayId)
@@ -541,6 +608,25 @@ final class PanelManager {
             renderer.forceRedraw(displayId: displayId)
             resumeDisplayLink(for: displayId)
         }
+    }
+
+    private static func activeDisplayBoundsById() -> [CGDirectDisplayID: CGRect] {
+        var count: UInt32 = 0
+        guard CGGetActiveDisplayList(0, nil, &count) == .success, count > 0 else {
+            return [:]
+        }
+
+        var displayIds = [CGDirectDisplayID](repeating: 0, count: Int(count))
+        guard CGGetActiveDisplayList(count, &displayIds, &count) == .success else {
+            return [:]
+        }
+
+        var result: [CGDirectDisplayID: CGRect] = [:]
+        result.reserveCapacity(Int(count))
+        for displayId in displayIds.prefix(Int(count)) {
+            result[displayId] = CGDisplayBounds(displayId)
+        }
+        return result
     }
 
     // MARK: - Display Link Management
@@ -663,20 +749,24 @@ final class PanelManager {
 
     // MARK: - Rebuild
 
-    func rebuildPanels(config: Config, renderer: NativeBarRenderer) {
-        destroyAllPanels()
+    func rebuildPanels(config: Config, renderer: NativeBarRenderer, preserveSuppression: Bool = false) {
+        destroyAllPanels(preserveSuppression: preserveSuppression)
         createPanels(config: config, renderer: renderer)
     }
 
     // MARK: - Cleanup
 
-    func destroyAllPanels() {
+    func destroyAllPanels(preserveSuppression: Bool = false) {
         // Invalidate all display links
         for (_, link) in displayLinks {
             link.invalidate()
         }
         displayLinks.removeAll()
         lastViewSyncSnapshotByDisplay.removeAll()
+        if !preserveSuppression {
+            spaceSuppressedDisplayIds.removeAll(keepingCapacity: true)
+            fullscreenSuppressedDisplayIds.removeAll(keepingCapacity: true)
+        }
 
         // Remove occlusion observers
         for (_, obs) in occlusionObservers {

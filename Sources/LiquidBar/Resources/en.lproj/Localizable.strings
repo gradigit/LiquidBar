@@ -215,6 +215,7 @@
 "Reload config.json" = "Reload config.json";
 "Reload" = "Reload";
 "Remove from Tab Group" = "Remove from Tab Group";
+"Remember window layouts after display changes" = "Remember window layouts after display changes";
 "Rename Tab Group…" = "Rename Tab Group…";
 "Rename Window…" = "Rename Window…";
 "Reset All" = "Reset All";

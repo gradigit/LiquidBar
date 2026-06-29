@@ -209,6 +209,7 @@ struct SettingsWindowControllerTests {
         _ = try findButton(title: L10n.tr("Performance logging"), in: contentView)
         _ = try findButton(title: L10n.tr("Hang diagnostics"), in: contentView)
         _ = try findButton(title: L10n.tr("Enable plugins"), in: contentView)
+        _ = try findButton(title: L10n.tr("Remember window layouts after display changes"), in: contentView)
         _ = try findButton(title: L10n.tr("Enable window tab groups"), in: contentView)
     }
 
@@ -231,6 +232,7 @@ struct SettingsWindowControllerTests {
             L10n.tr("Performance logging"),
             L10n.tr("Hang diagnostics"),
             L10n.tr("Enable plugins"),
+            L10n.tr("Remember window layouts after display changes"),
             L10n.tr("Enable window tab groups"),
             L10n.tr("Collapse group on outside click")
         ]

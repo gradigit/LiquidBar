@@ -57,6 +57,7 @@ final class EventLoop {
     private let providerRuntime: ProviderRuntime
     private let systemMetricsProvider: SystemMetricsProvider
     private let thumbnailService: WindowThumbnailService
+    private let windowLayoutMemoryService = WindowLayoutMemoryService()
     // AccessibilityService is all-static, no instance needed
     private var config: Config
     private var userState: UserState
@@ -143,6 +144,8 @@ final class EventLoop {
     private var spaceChangeObserver: NSObjectProtocol?
     private var workspaceAppObservers: [NSObjectProtocol] = []
     private var workspaceRefreshWorkItem: DispatchWorkItem?
+    private var displayReconfigurationObserver: DisplayReconfigurationObserver?
+    private var windowLayoutMemoryRestoreWorkItems: [DispatchWorkItem] = []
     private var localEventMonitor: Any?
     private var hotkeyMonitor: HotkeyMonitor?
     private var lastSpaceChangeAt: CFAbsoluteTime = 0
@@ -441,6 +444,7 @@ final class EventLoop {
 
         installLocalEventMonitor()
         configureSwitcherHotkey()
+        configureDisplayReconfigurationObserver()
 
         Log.event.info("EventLoop started")
     }
@@ -459,6 +463,10 @@ final class EventLoop {
         workspaceAppObservers.removeAll()
         workspaceRefreshWorkItem?.cancel()
         workspaceRefreshWorkItem = nil
+        displayReconfigurationObserver?.stop()
+        displayReconfigurationObserver = nil
+        cancelWindowLayoutMemoryRestoreWorkItems()
+        windowLayoutMemoryService.clear()
 
         #if DEBUG
         if !testControlObservers.isEmpty {
@@ -718,6 +726,11 @@ final class EventLoop {
                     spacesService: spacesService
                 ))
             }
+            panelManager.reconcileFullscreenWindowSuppression(
+                windows: windows,
+                config: config,
+                renderer: renderer
+            )
 
             // Detect new and moved windows
             let observedWindowIds = Set(windows.map { $0.id.raw })
@@ -4010,13 +4023,14 @@ final class EventLoop {
         sidebarRevealUntilByDisplay.removeAll()
         sidebarPresentationByDisplay.removeAll()
         configureSwitcherHotkey()
+        configureDisplayReconfigurationObserver()
         scheduleAXObserverRefresh(delay: 0.25)
         markWindowRefreshNeeded(invalidateCaches: true)
         userState = UserState.load()
         groupPreviewOrderByKey = userState.groupPreviewOrderByKey
         reloadPlugins()
         if requiresPanelRebuild {
-            panelManager.rebuildPanels(config: config, renderer: renderer)
+            panelManager.rebuildPanels(config: config, renderer: renderer, preserveSuppression: true)
         }
         refreshSpaceKeyCache(displayIds: panelManager.allDisplayIds)
         renderUI()
@@ -4026,6 +4040,31 @@ final class EventLoop {
             panelManager.resumeAllDisplayLinks()
         }
         Log.config.info("Config reloaded")
+    }
+
+    private func configureDisplayReconfigurationObserver() {
+        guard config.experimentalWindowLayoutMemoryEnabled else {
+            displayReconfigurationObserver?.stop()
+            displayReconfigurationObserver = nil
+            cancelWindowLayoutMemoryRestoreWorkItems()
+            windowLayoutMemoryService.clear()
+            return
+        }
+
+        if displayReconfigurationObserver == nil {
+            displayReconfigurationObserver = DisplayReconfigurationObserver { [weak self] event in
+                MainActor.assumeIsolated {
+                    self?.handleDisplayReconfiguration(event)
+                }
+            }
+        }
+        displayReconfigurationObserver?.start()
+    }
+
+    private func handleDisplayReconfiguration(_ event: DisplayReconfigurationObserver.Event) {
+        guard config.experimentalWindowLayoutMemoryEnabled else { return }
+        guard event.isBeginConfiguration else { return }
+        windowLayoutMemoryService.captureBeforeDisplayChange()
     }
 
     private func scheduleAXObserverRefresh(delay: TimeInterval) {
@@ -4247,6 +4286,8 @@ final class EventLoop {
             }
         }
 
+        scheduleWindowLayoutMemoryRestorePasses(token: token)
+
         PerformanceMonitor.shared.recordDiagnosticSnapshot(
             "screen_change",
             minIntervalSeconds: 0.25
@@ -4254,6 +4295,39 @@ final class EventLoop {
             "token=\(token) displays_before=\(displayCountBeforeReconcile) suppress_adjust_ms=\(Self.fmt2(Self.screenChangeAdjustmentSuppression * 1000.0))"
         }
         Log.event.info("Screen parameters changed — scheduled panel recovery and suppressed window adjustment")
+    }
+
+    private func scheduleWindowLayoutMemoryRestorePasses(token: UInt64) {
+        guard config.experimentalWindowLayoutMemoryEnabled else { return }
+        cancelWindowLayoutMemoryRestoreWorkItems()
+
+        let delays: [TimeInterval] = [1.20, 2.80, 5.50, 10.0]
+        for (index, delay) in delays.enumerated() {
+            let work = DispatchWorkItem { [weak self] in
+                guard let self else { return }
+                guard self.screenChangeToken == token else { return }
+                guard self.config.experimentalWindowLayoutMemoryEnabled else { return }
+
+                let summary = self.windowLayoutMemoryService.restoreAfterDisplayChangeIfPossible()
+                if index == delays.count - 1, summary.remainingWindowCount > 0 {
+                    self.windowLayoutMemoryService.clear()
+                }
+
+                guard summary.restoredWindowCount > 0 else { return }
+                self.markWindowRefreshNeeded(invalidateCaches: true)
+                self.pollAndUpdate(forceRender: true)
+                self.panelManager.resumeAllDisplayLinks()
+            }
+            windowLayoutMemoryRestoreWorkItems.append(work)
+            DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: work)
+        }
+    }
+
+    private func cancelWindowLayoutMemoryRestoreWorkItems() {
+        for work in windowLayoutMemoryRestoreWorkItems {
+            work.cancel()
+        }
+        windowLayoutMemoryRestoreWorkItems.removeAll()
     }
 
     private func runScreenChangeRecoveryPass(token: UInt64) {
