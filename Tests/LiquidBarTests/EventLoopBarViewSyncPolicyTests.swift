@@ -1,3 +1,4 @@
+import CoreFoundation
 import Testing
 @testable import LiquidBar
 
@@ -88,12 +89,40 @@ struct EventLoopBarViewSyncPolicyTests {
         )
     }
 
-    @Test func screenChangeRecoveryKeepsDelayedAdjustmentPasses() {
+    @Test func screenChangeRecoveryUsesStaggeredPollingOnly() {
         let delays = EventLoop.screenChangeRecoveryDelays
         #expect(delays == delays.sorted())
         #expect(delays.first == 0.05)
-        #expect(delays.contains(where: { $0 >= 0.40 }))
         #expect(delays.contains(where: { $0 >= 1.0 }))
+    }
+
+    @Test func screenChangeSuppressesWindowAdjustmentDuringDisplayRestore() {
+        let lastScreenChangeAt: CFAbsoluteTime = 100
+
+        #expect(
+            EventLoop.shouldSuppressWindowAdjustmentForScreenChange(
+                now: 100,
+                lastScreenChangeAt: lastScreenChangeAt
+            )
+        )
+        #expect(
+            EventLoop.shouldSuppressWindowAdjustmentForScreenChange(
+                now: 107.99,
+                lastScreenChangeAt: lastScreenChangeAt
+            )
+        )
+        #expect(
+            EventLoop.shouldSuppressWindowAdjustmentForScreenChange(
+                now: 108.01,
+                lastScreenChangeAt: lastScreenChangeAt
+            ) == false
+        )
+        #expect(
+            EventLoop.shouldSuppressWindowAdjustmentForScreenChange(
+                now: 108.01,
+                lastScreenChangeAt: 0
+            ) == false
+        )
     }
 
     @Test func spaceChangeRecoveryUsesSparseDelayedPolls() {

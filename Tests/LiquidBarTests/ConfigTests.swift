@@ -233,6 +233,7 @@ struct ConfigTests {
         let decoder = JSONDecoder()
         decoder.keyDecodingStrategy = .convertFromSnakeCase
         let config = try decoder.decode(Config.self, from: json.data(using: .utf8)!)
+        #expect(config.adjustWindowsForTaskbar == false)
         #expect(config.hoverIntensity == .subtle)
         #expect(config.visualDepth == .balanced)
         #expect(config.pinnedAppsScope == .global)

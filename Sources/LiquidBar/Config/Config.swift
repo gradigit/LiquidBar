@@ -605,7 +605,7 @@ struct Config: Codable, Sendable, Equatable {
         animationProfile = try c.decodeIfPresent(AnimationProfile.self, forKey: .animationProfile) ?? .balancedSpring
         showHiddenApps = try c.decode(Bool.self, forKey: .showHiddenApps)
         showMinimizedWindows = try c.decodeIfPresent(Bool.self, forKey: .showMinimizedWindows) ?? true
-        adjustWindowsForTaskbar = try c.decodeIfPresent(Bool.self, forKey: .adjustWindowsForTaskbar) ?? true
+        adjustWindowsForTaskbar = try c.decodeIfPresent(Bool.self, forKey: .adjustWindowsForTaskbar) ?? false
         multiMonitorMode = try c.decode(MultiMonitorMode.self, forKey: .multiMonitorMode)
         windowDisplayMode = try c.decode(WindowDisplayMode.self, forKey: .windowDisplayMode)
         blacklistedApps = try c.decode([String].self, forKey: .blacklistedApps)

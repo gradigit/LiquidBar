@@ -119,6 +119,7 @@ final class EventLoop {
     private var lastWindowPositions: [UInt32: (x: Double, y: Double, w: Double, h: Double)] = [:]
     private var lastAdjustCheck: CFAbsoluteTime = 0
     private var pendingAXWindowAdjustmentCheck: Bool = false
+    private var lastScreenParametersChangeAt: CFAbsoluteTime = 0
 
     // Memory monitoring
     private var memoryBaseline: Int = 0
@@ -356,7 +357,16 @@ final class EventLoop {
     }
 
     nonisolated static let screenChangeRecoveryDelays: [TimeInterval] = [0.05, 0.18, 0.40, 0.85, 1.60]
+    nonisolated static let screenChangeAdjustmentSuppression: CFTimeInterval = 8.0
     nonisolated static let spaceChangeRecoveryDelays: [TimeInterval] = [0.15, 0.45, 1.00]
+
+    nonisolated static func shouldSuppressWindowAdjustmentForScreenChange(
+        now: CFAbsoluteTime,
+        lastScreenChangeAt: CFAbsoluteTime
+    ) -> Bool {
+        lastScreenChangeAt > 0
+            && now - lastScreenChangeAt < screenChangeAdjustmentSuppression
+    }
 
     init(
         config: Config,
@@ -748,9 +758,17 @@ final class EventLoop {
 
             // Window adjustment
             if config.adjustWindowsForTaskbar, AXIsProcessTrusted() {
+                let suppressForScreenChange = Self.shouldSuppressWindowAdjustmentForScreenChange(
+                    now: now,
+                    lastScreenChangeAt: lastScreenParametersChangeAt
+                )
+                if suppressForScreenChange {
+                    pendingAXWindowAdjustmentCheck = false
+                }
                 let movedTrigger = hasMovedWindows && (now - lastAdjustCheck > 0.80)
                 let axEventTrigger = pendingAXWindowAdjustmentCheck && (now - lastAdjustCheck > 0.20)
-                let shouldAdjust = !isDragging
+                let shouldAdjust = !suppressForScreenChange
+                    && !isDragging
                     && (hasNewWindows || movedTrigger || axEventTrigger || (now - lastAdjustCheck > 2.0))
                     // Avoid running heavy AX mutations while Spaces are transitioning.
                     && (now - lastSpaceChangeAt > 0.6)
@@ -821,13 +839,20 @@ final class EventLoop {
         let spaceAgeMs: Double = lastSpaceChangeAt > 0
             ? max(0, (now - lastSpaceChangeAt) * 1000.0)
             : -1
+        let screenAgeMs: Double = lastScreenParametersChangeAt > 0
+            ? max(0, (now - lastScreenParametersChangeAt) * 1000.0)
+            : -1
+        let adjustmentSuppressed = Self.shouldSuppressWindowAdjustmentForScreenChange(
+            now: now,
+            lastScreenChangeAt: lastScreenParametersChangeAt
+        )
         PerformanceMonitor.shared.recordDiagnosticSnapshot(
             "poll_state"
         ) {
             let rss = MemoryMonitor.getRSSBytes()
             let thumbnails = thumbnailService.memorySummary()
             let axTrusted = AXIsProcessTrusted()
-            return "reason=\(reason) duration_ms=\(Self.fmt2(durationMs)) enumerated=\(enumerated ? 1 : 0) force=\(forceRender ? 1 : 0) dragging=\(isDragging ? 1 : 0) windows=\(max(0, windowCount)) items=\(currentItems.count) displays=\(panelManager.allPanels.count) poll_interval_ms=\(Self.fmt2(currentPollInterval * 1000.0)) space_age_ms=\(Self.fmt2(spaceAgeMs)) ax_active=\(isAXObserverActive ? 1 : 0) ax_trusted=\(axTrusted ? 1 : 0) metrics=\(config.systemIndicatorsEnabled ? 1 : 0) adjust=\(config.adjustWindowsForTaskbar ? 1 : 0) rss=\(rss) thumbnail_cache_entries=\(thumbnails.cacheEntries) thumbnail_cache_bytes=\(thumbnails.cacheBytes) thumbnail_last_good_entries=\(thumbnails.lastGoodEntries) thumbnail_last_good_bytes=\(thumbnails.lastGoodBytes) thumbnail_queued=\(thumbnails.queuedRequests) thumbnail_inflight=\(thumbnails.inFlightRequests)"
+            return "reason=\(reason) duration_ms=\(Self.fmt2(durationMs)) enumerated=\(enumerated ? 1 : 0) force=\(forceRender ? 1 : 0) dragging=\(isDragging ? 1 : 0) windows=\(max(0, windowCount)) items=\(currentItems.count) displays=\(panelManager.allPanels.count) poll_interval_ms=\(Self.fmt2(currentPollInterval * 1000.0)) space_age_ms=\(Self.fmt2(spaceAgeMs)) screen_age_ms=\(Self.fmt2(screenAgeMs)) adjust_suppressed=\(adjustmentSuppressed ? 1 : 0) ax_active=\(isAXObserverActive ? 1 : 0) ax_trusted=\(axTrusted ? 1 : 0) metrics=\(config.systemIndicatorsEnabled ? 1 : 0) adjust=\(config.adjustWindowsForTaskbar ? 1 : 0) rss=\(rss) thumbnail_cache_entries=\(thumbnails.cacheEntries) thumbnail_cache_bytes=\(thumbnails.cacheBytes) thumbnail_last_good_entries=\(thumbnails.lastGoodEntries) thumbnail_last_good_bytes=\(thumbnails.lastGoodBytes) thumbnail_queued=\(thumbnails.queuedRequests) thumbnail_inflight=\(thumbnails.inFlightRequests)"
         }
     }
 
@@ -4198,30 +4223,40 @@ final class EventLoop {
         hideSwitcher(commitSelection: false)
 
         windowListStabilizer.noteSpaceChange()
-        lastSpaceChangeAt = CFAbsoluteTimeGetCurrent()
+        let now = CFAbsoluteTimeGetCurrent()
+        lastSpaceChangeAt = now
+        lastScreenParametersChangeAt = now
         screenChangeToken &+= 1
         let token = screenChangeToken
+        let displayCountBeforeReconcile = panelManager.allPanels.count
 
         knownWindowIds.removeAll(keepingCapacity: true)
         lastWindowPositions.removeAll(keepingCapacity: true)
-        lastAdjustCheck = 0
+        lastAdjustCheck = now
+        pendingAXWindowAdjustmentCheck = false
         pruneDisplayScopedStateToActivePanels()
         markWindowRefreshNeeded(invalidateCaches: true)
 
-        runScreenChangeRecoveryPass(token: token, allowWindowAdjustment: false)
+        runScreenChangeRecoveryPass(token: token)
 
         for delay in Self.screenChangeRecoveryDelays {
             DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
                 guard let self else { return }
                 guard self.screenChangeToken == token else { return }
-                self.runScreenChangeRecoveryPass(token: token, allowWindowAdjustment: delay >= 0.40)
+                self.runScreenChangeRecoveryPass(token: token)
             }
         }
 
-        Log.event.info("Screen parameters changed — scheduled panel and window-geometry recovery")
+        PerformanceMonitor.shared.recordDiagnosticSnapshot(
+            "screen_change",
+            minIntervalSeconds: 0.25
+        ) {
+            "token=\(token) displays_before=\(displayCountBeforeReconcile) suppress_adjust_ms=\(Self.fmt2(Self.screenChangeAdjustmentSuppression * 1000.0))"
+        }
+        Log.event.info("Screen parameters changed — scheduled panel recovery and suppressed window adjustment")
     }
 
-    private func runScreenChangeRecoveryPass(token: UInt64, allowWindowAdjustment: Bool) {
+    private func runScreenChangeRecoveryPass(token: UInt64) {
         guard screenChangeToken == token else { return }
 
         let reconcileResult = panelManager.reconcilePanelsForCurrentScreens(config: config, renderer: renderer)
@@ -4243,20 +4278,7 @@ final class EventLoop {
             guard self.screenChangeToken == token else { return }
             self.pollAndUpdate(forceRender: true)
             self.panelManager.resumeAllDisplayLinks()
-
-            guard allowWindowAdjustment else { return }
-            self.adjustWindowsAfterDisplayChangeIfAllowed()
         }
-    }
-
-    private func adjustWindowsAfterDisplayChangeIfAllowed() {
-        guard config.adjustWindowsForTaskbar, AXIsProcessTrusted() else { return }
-        guard !MouseTracker.isDragging else { return }
-
-        let now = CFAbsoluteTimeGetCurrent()
-        guard now - lastSpaceChangeAt > 0.35 else { return }
-        adjustWindows()
-        lastAdjustCheck = now
     }
 
     private func pruneDisplayScopedStateToActivePanels() {
