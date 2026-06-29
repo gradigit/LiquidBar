@@ -11,6 +11,7 @@ Read this before changing code.
 - CI: GitHub Actions runs `swift test -c debug` on `macos-26`
 - Package: SwiftPM executable target `LiquidBar` plus test target
   `LiquidBarTests`
+- Current release line: `v1.0.1`
 - Runtime baseline: native AppKit panels with retained AppKit/Core Animation
   rendering, not a permanent full-surface GPU render loop
 - Release trust: official update checks and release links are scoped to

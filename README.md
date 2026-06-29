@@ -167,10 +167,12 @@ LIQUIDBAR_CREATE_DMG=1 LIQUIDBAR_CREATE_ZIP=0 ./scripts/build_release_app.sh
 open build/release/LiquidBar.app
 ```
 
-The release builder can produce `build/release/LiquidBar-1.0.0.dmg` and applies
-ad-hoc signing by default. Early GitHub binaries may be published this way when
-they are clearly labeled as unsigned/ad-hoc; macOS Gatekeeper will warn until
-Developer ID signing and notarization are added. See `docs/RELEASE.md`.
+The release builder can produce `build/release/LiquidBar-1.0.1.dmg`. Set
+`LIQUIDBAR_CODESIGN_IDENTITY=-` for the unsigned/ad-hoc public artifact, or pass
+a Developer ID identity when notarized distribution is available. Early GitHub
+binaries may be published as unsigned/ad-hoc when clearly labeled; macOS
+Gatekeeper will warn until Developer ID signing and notarization are added. See
+`docs/RELEASE.md`.
 
 The developer test bundle still exists for local TCC reset/regrant workflows,
 but it is not a release artifact:
@@ -237,7 +239,9 @@ and notarized assets when available; unsigned/ad-hoc assets must be labeled.
 
 ## Status
 
-LiquidBar v1 is the first public release line. Initial binaries may be ad-hoc
+LiquidBar v1 is the first public release line. The current patch release is
+`v1.0.1`, focused on fullscreen behavior, display-change stability, memory
+cleanup, preferences polish, and documentation. Initial binaries may be ad-hoc
 signed and clearly labeled unsigned/ad-hoc while Developer ID notarization
 remains pending. Sidebar mode and provider plugins remain experimental and are
 not part of the primary v1 showcase until their UX is release-grade.

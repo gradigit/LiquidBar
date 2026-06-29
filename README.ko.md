@@ -171,10 +171,12 @@ LIQUIDBAR_CREATE_DMG=1 LIQUIDBAR_CREATE_ZIP=0 ./scripts/build_release_app.sh
 open build/release/LiquidBar.app
 ```
 
-릴리스 빌더는 `build/release/LiquidBar-1.0.0.dmg`를 만들 수 있으며, 기본적으로
-ad-hoc 서명을 적용합니다. 초기 GitHub 바이너리는 unsigned/ad-hoc 상태임을 명확히
-표시한 뒤 배포될 수 있습니다. Developer ID 서명과 공증이 추가되기 전까지는
-macOS Gatekeeper 경고가 표시됩니다. 자세한 내용은 `docs/RELEASE.md`를 참고하세요.
+릴리스 빌더는 `build/release/LiquidBar-1.0.1.dmg`를 만들 수 있습니다. 공개용
+unsigned/ad-hoc 산출물은 `LIQUIDBAR_CODESIGN_IDENTITY=-`를 지정해 만들고, 공증
+배포가 준비되면 Developer ID identity를 전달하세요. 초기 GitHub 바이너리는
+unsigned/ad-hoc 상태임을 명확히 표시한 뒤 배포될 수 있습니다. Developer ID 서명과
+공증이 추가되기 전까지는 macOS Gatekeeper 경고가 표시됩니다. 자세한 내용은
+`docs/RELEASE.md`를 참고하세요.
 
 개발용 테스트 번들은 로컬 TCC 초기화와 권한 재부여 워크플로를 위해 남아 있지만,
 릴리스 산출물은 아닙니다.
@@ -242,10 +244,12 @@ https://github.com/gradigit/LiquidBar/releases
 
 ## 상태
 
-LiquidBar v1은 첫 공개 릴리스 라인입니다. 초기 바이너리는 Developer ID 공증이
-준비될 때까지 ad-hoc 서명 상태로 배포될 수 있으며, 이 경우 unsigned/ad-hoc 상태가
-명확히 표시됩니다. 사이드바 모드와 제공자 플러그인은 아직 실험적이며, UX가 릴리스
-수준에 도달하기 전까지는 v1의 주요 쇼케이스로 다루지 않습니다.
+LiquidBar v1은 첫 공개 릴리스 라인입니다. 현재 패치 릴리스는 `v1.0.1`이며,
+전체 화면 동작, 디스플레이 변경 안정성, 메모리 정리, 환경설정 다듬기, 문서 개선에
+초점을 맞췄습니다. 초기 바이너리는 Developer ID 공증이 준비될 때까지 ad-hoc 서명
+상태로 배포될 수 있으며, 이 경우 unsigned/ad-hoc 상태가 명확히 표시됩니다. 사이드바
+모드와 제공자 플러그인은 아직 실험적이며, UX가 릴리스 수준에 도달하기 전까지는
+v1의 주요 쇼케이스로 다루지 않습니다.
 
 ## 라이선스
 

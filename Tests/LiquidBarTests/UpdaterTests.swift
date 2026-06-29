@@ -15,7 +15,7 @@ import Testing
 
 @Test func testUpdaterUsesCanonicalReleaseRepository() {
     #expect(Updater.githubRepo == "gradigit/LiquidBar")
-    #expect(Updater.currentVersion == "1.0.0")
+    #expect(Updater.currentVersion == "1.0.1")
     #expect(Updater.latestReleaseAPIURL.absoluteString == "https://api.github.com/repos/gradigit/LiquidBar/releases/latest")
     #expect(Updater.repositoryURL.absoluteString == "https://github.com/gradigit/LiquidBar")
 }

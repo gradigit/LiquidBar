@@ -37,7 +37,8 @@ tracked research note. Do not commit raw logs or local benchmark artifacts.
 Build a release-mode app bundle:
 
 ```sh
-LIQUIDBAR_RELEASE_VERSION=1.0.0 \
+LIQUIDBAR_RELEASE_VERSION=1.0.1 \
+LIQUIDBAR_CODESIGN_IDENTITY=- \
 LIQUIDBAR_CREATE_DMG=1 \
 LIQUIDBAR_CREATE_ZIP=0 \
 ./scripts/build_release_app.sh
@@ -47,17 +48,19 @@ This writes:
 
 ```text
 build/release/LiquidBar.app
-build/release/LiquidBar-1.0.0.dmg
+build/release/LiquidBar-1.0.1.dmg
 ```
 
-Without `LIQUIDBAR_CODESIGN_IDENTITY`, the script ad-hoc signs the bundle. An
-ad-hoc binary can be attached to an early GitHub release only if the release
-notes clearly label it as unsigned/ad-hoc and mention that macOS Gatekeeper will
-warn. The preferred public distribution path is a Developer ID Application
-identity:
+Set `LIQUIDBAR_CODESIGN_IDENTITY=-` for an explicit unsigned/ad-hoc public
+artifact. Without `LIQUIDBAR_CODESIGN_IDENTITY`, the script uses the first local
+Apple Development signing identity when one is available, then falls back to
+ad-hoc signing. An ad-hoc binary can be attached to an early GitHub release only
+if the release notes clearly label it as unsigned/ad-hoc and mention that macOS
+Gatekeeper will warn. The preferred public distribution path is a Developer ID
+Application identity:
 
 ```sh
-LIQUIDBAR_RELEASE_VERSION=1.0.0 \
+LIQUIDBAR_RELEASE_VERSION=1.0.1 \
 LIQUIDBAR_CODESIGN_IDENTITY="Developer ID Application: Example, Inc. (TEAMID)" \
 ./scripts/build_release_app.sh
 ```
@@ -80,7 +83,7 @@ spctl -a -vv --type execute build/release/LiquidBar.app
 Submit the DMG for notarization with the project Apple Developer account:
 
 ```sh
-xcrun notarytool submit build/release/LiquidBar-1.0.0.dmg \
+xcrun notarytool submit build/release/LiquidBar-1.0.1.dmg \
   --keychain-profile "<notary-profile>" \
   --wait
 ```
@@ -89,9 +92,9 @@ After notarization succeeds:
 
 ```sh
 xcrun stapler staple build/release/LiquidBar.app
-xcrun stapler staple build/release/LiquidBar-1.0.0.dmg
+xcrun stapler staple build/release/LiquidBar-1.0.1.dmg
 spctl -a -vv --type execute build/release/LiquidBar.app
-hdiutil verify build/release/LiquidBar-1.0.0.dmg
+hdiutil verify build/release/LiquidBar-1.0.1.dmg
 ```
 
 When notarization is complete, attach the notarized archive to the GitHub
