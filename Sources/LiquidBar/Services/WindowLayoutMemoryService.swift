@@ -26,6 +26,7 @@ final class WindowLayoutMemoryService {
         let displays: [DisplaySignature]
 
         var displayCount: Int { displays.count }
+        var displayUUIDs: Set<String> { Set(displays.map(\.uuid)) }
     }
 
     struct RestoreSummary: Equatable, Sendable {
@@ -55,6 +56,11 @@ final class WindowLayoutMemoryService {
         let capturedAt: CFAbsoluteTime
     }
 
+    private enum CaptureMode {
+        case displayChange
+        case stableRefresh
+    }
+
     private var snapshotBatch: SnapshotBatch?
     private let snapshotMaxAge: CFTimeInterval
 
@@ -64,6 +70,15 @@ final class WindowLayoutMemoryService {
 
     @discardableResult
     func captureBeforeDisplayChange() -> CaptureSummary {
+        captureCurrentLayout(mode: .displayChange)
+    }
+
+    @discardableResult
+    func refreshStableSnapshot() -> CaptureSummary {
+        captureCurrentLayout(mode: .stableRefresh)
+    }
+
+    private func captureCurrentLayout(mode: CaptureMode) -> CaptureSummary {
         let context = Self.currentDisplayContext()
         guard context.topology.displayCount > 1 else {
             // Preserve a useful multi-display snapshot across reconnect. A reconnect
@@ -72,7 +87,8 @@ final class WindowLayoutMemoryService {
         }
 
         let windows = AccessibilityService.captureRestorableWindowSnapshots(
-            displayUUIDByDisplayId: context.uuidByDisplayId
+            displayUUIDByDisplayId: context.uuidByDisplayId,
+            displayBoundsByUUID: context.boundsByUUID
         )
         guard !windows.isEmpty else {
             return CaptureSummary(reason: "no_windows", capturedWindowCount: 0, replacedExistingSnapshot: false)
@@ -85,7 +101,8 @@ final class WindowLayoutMemoryService {
             existingCapturedAt: snapshotBatch?.capturedAt,
             newTopology: context.topology,
             now: now,
-            maxAge: snapshotMaxAge
+            maxAge: snapshotMaxAge,
+            allowsSameDisplaySetReplacement: mode == .stableRefresh
         ) else {
             Log.event.debug("Window layout memory kept existing snapshot; new capture ignored windows=\(windows.count) displays=\(context.topology.displayCount)")
             return CaptureSummary(reason: "kept_existing", capturedWindowCount: windows.count, replacedExistingSnapshot: false)
@@ -191,6 +208,15 @@ final class WindowLayoutMemoryService {
         } else {
             reason = "attempted"
         }
+        if result.completedWindowCount == 0 {
+            PerformanceMonitor.shared.recordDiagnosticSnapshot(
+                "window_layout_memory_restore",
+                minIntervalSeconds: 1.0
+            ) {
+                "reason=\(reason) completed=0 restored=0 remaining=\(remaining.count) captured=\(batch.totalWindowCount)"
+            }
+            Log.event.debug("Window layout memory restore pass reason=\(reason) remaining=\(remaining.count) captured=\(batch.totalWindowCount)")
+        }
         return RestoreSummary(
             reason: reason,
             capturedWindowCount: batch.totalWindowCount,
@@ -211,7 +237,10 @@ final class WindowLayoutMemoryService {
         now: CFAbsoluteTime,
         maxAge: CFTimeInterval
     ) -> Bool {
-        snapshotTopology == currentTopology && now - capturedAt <= maxAge
+        guard now - capturedAt <= maxAge else { return false }
+        let snapshotDisplayUUIDs = snapshotTopology.displayUUIDs
+        guard !snapshotDisplayUUIDs.isEmpty else { return false }
+        return snapshotDisplayUUIDs.isSubset(of: currentTopology.displayUUIDs)
     }
 
     nonisolated static func shouldReplaceSnapshot(
@@ -219,11 +248,14 @@ final class WindowLayoutMemoryService {
         existingCapturedAt: CFAbsoluteTime?,
         newTopology: DisplayTopology,
         now: CFAbsoluteTime,
-        maxAge: CFTimeInterval
+        maxAge: CFTimeInterval,
+        allowsSameDisplaySetReplacement: Bool = false
     ) -> Bool {
         guard let existingTopology, let existingCapturedAt else { return true }
         if now - existingCapturedAt > maxAge { return true }
-        return newTopology.displayCount > existingTopology.displayCount
+        if newTopology.displayCount > existingTopology.displayCount { return true }
+        if allowsSameDisplaySetReplacement, newTopology.displayCount > 1 { return true }
+        return false
     }
 
     nonisolated static func remainingSnapshots(

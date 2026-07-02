@@ -146,6 +146,8 @@ final class EventLoop {
     private var workspaceRefreshWorkItem: DispatchWorkItem?
     private var displayReconfigurationObserver: DisplayReconfigurationObserver?
     private var windowLayoutMemoryRestoreWorkItems: [DispatchWorkItem] = []
+    private var lastWindowLayoutMemoryStableCaptureAt: CFAbsoluteTime = 0
+    private var isWindowLayoutMemoryRestoreActive: Bool = false
     private var localEventMonitor: Any?
     private var hotkeyMonitor: HotkeyMonitor?
     private var lastSpaceChangeAt: CFAbsoluteTime = 0
@@ -361,6 +363,8 @@ final class EventLoop {
 
     nonisolated static let screenChangeRecoveryDelays: [TimeInterval] = [0.05, 0.18, 0.40, 0.85, 1.60]
     nonisolated static let screenChangeAdjustmentSuppression: CFTimeInterval = 8.0
+    nonisolated static let windowLayoutMemoryStableCaptureInterval: CFTimeInterval = 20.0
+    nonisolated static let windowLayoutMemoryStableAfterScreenChangeDelay: CFTimeInterval = 12.0
     nonisolated static let spaceChangeRecoveryDelays: [TimeInterval] = [0.15, 0.45, 1.00]
 
     nonisolated static func shouldSuppressWindowAdjustmentForScreenChange(
@@ -369,6 +373,23 @@ final class EventLoop {
     ) -> Bool {
         lastScreenChangeAt > 0
             && now - lastScreenChangeAt < screenChangeAdjustmentSuppression
+    }
+
+    nonisolated static func shouldRefreshWindowLayoutMemoryStableSnapshot(
+        now: CFAbsoluteTime,
+        lastCaptureAt: CFAbsoluteTime,
+        lastScreenChangeAt: CFAbsoluteTime,
+        isRestoreActive: Bool,
+        isDragging: Bool
+    ) -> Bool {
+        guard !isRestoreActive, !isDragging else { return false }
+        if lastCaptureAt > 0, now - lastCaptureAt < windowLayoutMemoryStableCaptureInterval {
+            return false
+        }
+        if lastScreenChangeAt > 0, now - lastScreenChangeAt < windowLayoutMemoryStableAfterScreenChangeDelay {
+            return false
+        }
+        return true
     }
 
     init(
@@ -768,6 +789,7 @@ final class EventLoop {
             // Update known state
             knownWindowIds = liveWindowIds
             updateWindowPositions(windows)
+            maybeRefreshWindowLayoutMemoryStableSnapshot(now: now, observedWindowCount: windows.count)
 
             // Window adjustment
             if config.adjustWindowsForTaskbar, AXIsProcessTrusted() {
@@ -778,9 +800,13 @@ final class EventLoop {
                 if suppressForScreenChange {
                     pendingAXWindowAdjustmentCheck = false
                 }
+                if isWindowLayoutMemoryRestoreActive {
+                    pendingAXWindowAdjustmentCheck = false
+                }
                 let movedTrigger = hasMovedWindows && (now - lastAdjustCheck > 0.80)
                 let axEventTrigger = pendingAXWindowAdjustmentCheck && (now - lastAdjustCheck > 0.20)
                 let shouldAdjust = !suppressForScreenChange
+                    && !isWindowLayoutMemoryRestoreActive
                     && !isDragging
                     && (hasNewWindows || movedTrigger || axEventTrigger || (now - lastAdjustCheck > 2.0))
                     // Avoid running heavy AX mutations while Spaces are transitioning.
@@ -4300,6 +4326,7 @@ final class EventLoop {
     private func scheduleWindowLayoutMemoryRestorePasses(token: UInt64) {
         guard config.experimentalWindowLayoutMemoryEnabled else { return }
         cancelWindowLayoutMemoryRestoreWorkItems()
+        isWindowLayoutMemoryRestoreActive = true
 
         let delays: [TimeInterval] = [1.20, 2.80, 5.50, 10.0]
         for (index, delay) in delays.enumerated() {
@@ -4309,8 +4336,17 @@ final class EventLoop {
                 guard self.config.experimentalWindowLayoutMemoryEnabled else { return }
 
                 let summary = self.windowLayoutMemoryService.restoreAfterDisplayChangeIfPossible()
+                PerformanceMonitor.shared.recordDiagnosticSnapshot(
+                    "window_layout_memory_restore_pass",
+                    minIntervalSeconds: 0.5
+                ) {
+                    "index=\(index) reason=\(summary.reason) restored=\(summary.restoredWindowCount) completed=\(summary.completedWindowCount) remaining=\(summary.remainingWindowCount) captured=\(summary.capturedWindowCount)"
+                }
                 if index == delays.count - 1, summary.remainingWindowCount > 0 {
                     self.windowLayoutMemoryService.clear()
+                }
+                if summary.remainingWindowCount == 0 || index == delays.count - 1 {
+                    self.isWindowLayoutMemoryRestoreActive = false
                 }
 
                 guard summary.restoredWindowCount > 0 else { return }
@@ -4328,6 +4364,38 @@ final class EventLoop {
             work.cancel()
         }
         windowLayoutMemoryRestoreWorkItems.removeAll()
+        isWindowLayoutMemoryRestoreActive = false
+    }
+
+    private func maybeRefreshWindowLayoutMemoryStableSnapshot(
+        now: CFAbsoluteTime,
+        observedWindowCount: Int
+    ) {
+        guard config.experimentalWindowLayoutMemoryEnabled,
+              observedWindowCount > 0,
+              panelManager.allPanels.count > 1 else {
+            return
+        }
+        guard Self.shouldRefreshWindowLayoutMemoryStableSnapshot(
+            now: now,
+            lastCaptureAt: lastWindowLayoutMemoryStableCaptureAt,
+            lastScreenChangeAt: lastScreenParametersChangeAt,
+            isRestoreActive: isWindowLayoutMemoryRestoreActive,
+            isDragging: MouseTracker.isDragging
+        ) else {
+            return
+        }
+
+        let summary = windowLayoutMemoryService.refreshStableSnapshot()
+        lastWindowLayoutMemoryStableCaptureAt = now
+        if summary.reason == "captured" {
+            PerformanceMonitor.shared.recordDiagnosticSnapshot(
+                "window_layout_memory_stable_capture",
+                minIntervalSeconds: 5.0
+            ) {
+                "windows=\(summary.capturedWindowCount) replaced=\(summary.replacedExistingSnapshot)"
+            }
+        }
     }
 
     private func runScreenChangeRecoveryPass(token: UInt64) {

@@ -125,6 +125,54 @@ struct EventLoopBarViewSyncPolicyTests {
         )
     }
 
+    @Test func stableLayoutMemoryCaptureWaitsForIdleDisplayState() {
+        #expect(
+            EventLoop.shouldRefreshWindowLayoutMemoryStableSnapshot(
+                now: 100,
+                lastCaptureAt: 0,
+                lastScreenChangeAt: 0,
+                isRestoreActive: false,
+                isDragging: false
+            )
+        )
+        #expect(
+            EventLoop.shouldRefreshWindowLayoutMemoryStableSnapshot(
+                now: 110,
+                lastCaptureAt: 100,
+                lastScreenChangeAt: 0,
+                isRestoreActive: false,
+                isDragging: false
+            ) == false
+        )
+        #expect(
+            EventLoop.shouldRefreshWindowLayoutMemoryStableSnapshot(
+                now: 130,
+                lastCaptureAt: 100,
+                lastScreenChangeAt: 119,
+                isRestoreActive: false,
+                isDragging: false
+            ) == false
+        )
+        #expect(
+            EventLoop.shouldRefreshWindowLayoutMemoryStableSnapshot(
+                now: 130,
+                lastCaptureAt: 100,
+                lastScreenChangeAt: 100,
+                isRestoreActive: true,
+                isDragging: false
+            ) == false
+        )
+        #expect(
+            EventLoop.shouldRefreshWindowLayoutMemoryStableSnapshot(
+                now: 130,
+                lastCaptureAt: 100,
+                lastScreenChangeAt: 100,
+                isRestoreActive: false,
+                isDragging: false
+            )
+        )
+    }
+
     @Test func spaceChangeRecoveryUsesSparseDelayedPolls() {
         let delays = EventLoop.spaceChangeRecoveryDelays
         #expect(delays == delays.sorted())
