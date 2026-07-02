@@ -75,7 +75,8 @@ final class WindowStateStore {
             guard let previous = windows[id],
                   hiddenBundleIds.contains(previous.bundleId.raw),
                   !config.isBlacklisted(previous.bundleId.raw) else { continue }
-            merged.append(WindowInfo(
+
+            let retained = WindowInfo(
                 id: previous.id,
                 bundleId: previous.bundleId,
                 appName: previous.appName,
@@ -84,7 +85,17 @@ final class WindowStateStore {
                 isMinimized: previous.isMinimized,
                 monitorId: previous.monitorId,
                 bounds: previous.bounds
-            ))
+            )
+
+            if let matchIndex = merged.firstIndex(where: { WindowLogicalIdentity.isLikelySameWindow($0, retained) }) {
+                merged[matchIndex] = WindowLogicalIdentity.carryingForwardTitle(
+                    from: retained,
+                    to: merged[matchIndex]
+                )
+                continue
+            }
+
+            merged.append(retained)
         }
 
         return merged

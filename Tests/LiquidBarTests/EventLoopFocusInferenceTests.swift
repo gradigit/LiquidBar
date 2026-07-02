@@ -107,6 +107,23 @@ struct EventLoopFocusInferenceTests {
         #expect(candidates.map(\.id.raw) == [1, 2, 3])
     }
 
+    @Test func switcherCandidatesCollapseLogicalDuplicates() {
+        let bounds = WindowBounds(x: 100, y: 100, width: 900, height: 640)
+        let windows = [
+            makeTestWindow(id: 1, bundle: "com.example.one", title: "One", monitorId: 1),
+            makeTestWindow(id: 2, bundle: "com.example.one", title: "One", isMinimized: true, monitorId: 1, bounds: bounds),
+            makeTestWindow(id: 3, bundle: "com.example.one", title: "One", monitorId: 1, bounds: bounds),
+        ]
+
+        let candidates = EventLoop.switcherCandidateWindows(
+            windows: windows,
+            scope: .allDisplays,
+            focusDisplayId: nil
+        )
+
+        #expect(candidates.map(\.id.raw) == [1, 3])
+    }
+
     @Test func switcherCandidatesCanLimitToFocusedDisplay() {
         let windows = [
             makeTestWindow(id: 1, bundle: "com.example.one", title: "One", monitorId: 1),

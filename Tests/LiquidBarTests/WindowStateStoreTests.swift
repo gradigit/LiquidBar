@@ -99,6 +99,69 @@ struct WindowStateStoreTests {
         #expect(windows[0].isHidden == true)
     }
 
+    @Test @MainActor func hiddenRetentionDropsStaleIdWhenReplacementSurfaceIsObserved() {
+        let store = WindowStateStore()
+        var config = Config()
+        config.showHiddenApps = true
+        config.groupByApp = false
+
+        let bounds = WindowBounds(x: 100, y: 120, width: 900, height: 640)
+        let original = makeTestWindow(id: 10, bundle: "com.test.hidden", title: "Project", bounds: bounds)
+        #expect(store.update(windows: [original], config: config))
+
+        let replacement = makeTestWindow(
+            id: 20,
+            bundle: "com.test.hidden",
+            title: "Project",
+            isHidden: true,
+            bounds: WindowBounds(x: 108, y: 120, width: 900, height: 640)
+        )
+        #expect(store.update(
+            windows: [replacement],
+            config: config,
+            hiddenBundleIds: ["com.test.hidden"]
+        ))
+
+        let windows = store.getWindows()
+        #expect(windows.map(\.id.raw) == [20])
+        #expect(windows[0].isHidden)
+    }
+
+    @Test @MainActor func hiddenRetentionKeepsDistinctSameTitleWindows() {
+        let store = WindowStateStore()
+        var config = Config()
+        config.showHiddenApps = true
+
+        let first = makeTestWindow(
+            id: 10,
+            bundle: "com.test.hidden",
+            title: "Untitled",
+            bounds: WindowBounds(x: 0, y: 0, width: 640, height: 480)
+        )
+        let second = makeTestWindow(
+            id: 20,
+            bundle: "com.test.hidden",
+            title: "Untitled",
+            bounds: WindowBounds(x: 760, y: 0, width: 640, height: 480)
+        )
+        #expect(store.update(windows: [first, second], config: config))
+
+        let observedSecond = makeTestWindow(
+            id: 30,
+            bundle: "com.test.hidden",
+            title: "Untitled",
+            isHidden: true,
+            bounds: WindowBounds(x: 760, y: 0, width: 640, height: 480)
+        )
+        #expect(store.update(
+            windows: [observedSecond],
+            config: config,
+            hiddenBundleIds: ["com.test.hidden"]
+        ))
+
+        #expect(store.getWindows().map(\.id.raw) == [10, 30])
+    }
+
     @Test @MainActor func missingHiddenAppWindowsAreDroppedWhenHiddenAppsDisabled() {
         let store = WindowStateStore()
         var config = Config()

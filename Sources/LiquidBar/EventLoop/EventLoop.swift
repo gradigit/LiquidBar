@@ -298,6 +298,7 @@ final class EventLoop {
         mruWindowIds: [UInt32]
     ) -> [WindowInfo] {
         guard !windows.isEmpty else { return [] }
+        let windows = WindowLogicalIdentity.deduped(windows)
 
         var byId: [UInt32: WindowInfo] = [:]
         byId.reserveCapacity(windows.count)
@@ -343,8 +344,7 @@ final class EventLoop {
             }
         }
 
-        var seen = Set<UInt32>()
-        return scoped.filter { seen.insert($0.id.raw).inserted }
+        return WindowLogicalIdentity.deduped(scoped)
     }
 
     nonisolated static func initialSwitcherSelectedIndex(

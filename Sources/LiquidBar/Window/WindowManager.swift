@@ -133,7 +133,7 @@ final class WindowManager {
         for dict in windowList {
             if usingAllFallback && !isOnscreen(dict) { continue }
             guard let parsed = parseWindowDict(dict, screens: screens, appInfoProvider: appInfo),
-                  shouldInclude(parsed.info) else { continue }
+                  shouldInclude(parsed.info, axSnapshotProvider: axEnabled ? { snapshots(for: parsed.pid) } : nil) else { continue }
             parsedWindows.append(parsed)
             seenWindowIds.insert(parsed.info.id.raw)
             if parsedWindows.count >= maxWindows { break }
@@ -170,7 +170,7 @@ final class WindowManager {
                             if isOnscreen(dict) { continue }
 
                             guard let parsed = parseWindowDict(dict, screens: screens, appInfoProvider: appInfo),
-                                  shouldInclude(parsed.info) else { continue }
+                                  shouldInclude(parsed.info, axSnapshotProvider: axEnabled ? { snapshots(for: parsed.pid) } : nil) else { continue }
 
                             // Respect user prefs: hidden vs minimized are separate.
                             if parsed.info.isHidden {
@@ -216,6 +216,10 @@ final class WindowManager {
 
                 for entry in offscreenCacheEntries {
                     guard !seenWindowIds.contains(entry.info.id.raw) else { continue }
+                    guard !parsedWindows.contains(where: { existing in
+                        existing.pid == entry.pid &&
+                            WindowLogicalIdentity.isLikelySameWindow(existing.info, entry.info)
+                    }) else { continue }
                     parsedWindows.append(entry)
                     seenWindowIds.insert(entry.info.id.raw)
                     if parsedWindows.count >= maxWindows { break }
@@ -619,12 +623,31 @@ final class WindowManager {
         return (app.bundleIdentifier ?? "", app.isHidden)
     }
 
-    private func shouldInclude(_ info: WindowInfo) -> Bool {
+    private func shouldInclude(
+        _ info: WindowInfo,
+        axSnapshotProvider: (() -> [AXWindowSnapshot])? = nil
+    ) -> Bool {
         if systemApps.contains(info.bundleId.raw) {
             return false
         }
         if info.bundleId.raw.isEmpty && info.title.isEmpty && info.appName.isEmpty {
             return false
+        }
+        if !WindowSurfaceClassifier.hasUsableGeometry(info.bounds) {
+            return false
+        }
+        if WindowSurfaceClassifier.needsAXSurfaceValidation(info) {
+            if let axSnapshotProvider {
+                let snapshots = axSnapshotProvider()
+                if Self.bestAXSnapshotMatch(info: info, snapshots: snapshots) != nil {
+                    return true
+                }
+                if snapshots.isEmpty {
+                    return !WindowSurfaceClassifier.shouldRejectWithoutAXValidation(info)
+                }
+                return false
+            }
+            return !WindowSurfaceClassifier.shouldRejectWithoutAXValidation(info)
         }
         return true
     }
@@ -641,9 +664,6 @@ final class WindowManager {
         var seenIds = Set<UInt32>()
         seenIds.reserveCapacity(entries.count)
 
-        var seenSignatures = Set<String>()
-        seenSignatures.reserveCapacity(entries.count)
-
         for entry in entries {
             let w = entry.info
 
@@ -651,43 +671,13 @@ final class WindowManager {
                 continue
             }
 
-            let title = w.title.isEmpty ? w.appName : w.title
-            // 16pt buckets absorb tiny reporting jitter while preserving genuinely
-            // separate windows that are not fully overlapped.
-            let bx = Int((w.bounds.x / 16.0).rounded())
-            let by = Int((w.bounds.y / 16.0).rounded())
-            let bw = Int((w.bounds.width / 16.0).rounded())
-            let bh = Int((w.bounds.height / 16.0).rounded())
-            let dim = (w.isHidden || w.isMinimized) ? "1" : "0"
-            let sig = "\(w.bundleId.raw)|\(entry.pid)|\(w.monitorId.raw)|\(dim)|\(title)|\(bx),\(by),\(bw),\(bh)"
-            if !seenSignatures.insert(sig).inserted {
-                continue
-            }
-
-            // Near-overlap collapse for same app/process/display/title:
-            // keep only one surface when two windows are effectively the same rectangle.
-            let titleKey = title
-            let area = max(0.0, w.bounds.width) * max(0.0, w.bounds.height)
             var replaced = false
             for i in out.indices {
                 let e = out[i]
-                let ow = e.info
-                let otherTitle = ow.title.isEmpty ? ow.appName : ow.title
                 guard e.pid == entry.pid,
-                      ow.bundleId.raw == w.bundleId.raw,
-                      ow.monitorId.raw == w.monitorId.raw,
-                      otherTitle == titleKey else { continue }
+                      WindowLogicalIdentity.isLikelySameWindow(e.info, w) else { continue }
 
-                let otherArea = max(0.0, ow.bounds.width) * max(0.0, ow.bounds.height)
-                let minArea = max(1.0, min(area, otherArea))
-                let overlap = w.bounds.intersectionArea(with: ow.bounds)
-                let overlapRatio = overlap / minArea
-                guard overlapRatio >= 0.92 else { continue }
-
-                // Prefer the entry that has a real title, then larger area.
-                let currentHasTitle = !w.title.isEmpty
-                let otherHasTitle = !ow.title.isEmpty
-                if (currentHasTitle && !otherHasTitle) || (currentHasTitle == otherHasTitle && area > otherArea) {
+                if WindowLogicalIdentity.prefers(w, over: e.info) {
                     out[i] = entry
                 }
                 replaced = true

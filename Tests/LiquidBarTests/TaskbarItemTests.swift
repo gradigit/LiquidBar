@@ -7,6 +7,7 @@ func makeTestWindow(
     bundle: String,
     title: String,
     isHidden: Bool = false,
+    isMinimized: Bool = false,
     monitorId: UInt32 = 0,
     bounds: WindowBounds = WindowBounds()
 ) -> WindowInfo {
@@ -16,7 +17,7 @@ func makeTestWindow(
         appName: bundle.split(separator: ".").last.map(String.init) ?? bundle,
         title: title,
         isHidden: isHidden,
-        isMinimized: false,
+        isMinimized: isMinimized,
         monitorId: MonitorId(monitorId),
         bounds: bounds
     )
@@ -41,6 +42,62 @@ struct TaskbarItemTests {
 
         let items = UIRenderer.render(from: store, config: config)
         #expect(items.count == 2)
+    }
+
+    @Test @MainActor func ungroupedDedupesLogicalDuplicateWindows() {
+        let store = WindowStateStore()
+        let config = Config(groupByApp: false)
+        let bounds = WindowBounds(x: 100, y: 100, width: 1280, height: 800)
+
+        let windows = [
+            makeTestWindow(id: 1, bundle: "com.app.Ghostty", title: "~/project", bounds: bounds),
+            makeTestWindow(
+                id: 2,
+                bundle: "com.app.Ghostty",
+                title: "~/project",
+                isMinimized: true,
+                bounds: WindowBounds(x: 108, y: 100, width: 1280, height: 800)
+            ),
+        ]
+        _ = store.update(windows: windows, config: config)
+
+        let items = UIRenderer.render(from: store, config: config)
+        #expect(items.count == 1)
+        if case .window(let id, _, _, _, _, _, _) = items[0] {
+            #expect(id.raw == 1)
+        } else {
+            Issue.record("Expected a deduped window item")
+        }
+    }
+
+    @Test @MainActor func ungroupedPreservesDistinctSameTitleWindows() {
+        let store = WindowStateStore()
+        let config = Config(groupByApp: false)
+
+        let windows = [
+            makeTestWindow(
+                id: 1,
+                bundle: "com.app.Editor",
+                title: "Untitled",
+                bounds: WindowBounds(x: 0, y: 0, width: 640, height: 480)
+            ),
+            makeTestWindow(
+                id: 2,
+                bundle: "com.app.Editor",
+                title: "Untitled",
+                bounds: WindowBounds(x: 720, y: 0, width: 640, height: 480)
+            ),
+        ]
+        _ = store.update(windows: windows, config: config)
+
+        let items = UIRenderer.render(from: store, config: config)
+        let ids = items.compactMap { item -> UInt32? in
+            if case .window(let id, _, _, _, _, _, _) = item {
+                return id.raw
+            }
+            return nil
+        }
+        #expect(ids == [1, 2])
     }
 
     @Test @MainActor func testGrouped() {

@@ -196,7 +196,7 @@ enum UIRenderer {
     @MainActor
     static func render(from state: WindowStateStore, config: Config) -> [TaskbarItem] {
         var items: [TaskbarItem] = []
-        let allWindows = state.getWindows()
+        let allWindows = WindowLogicalIdentity.deduped(state.getWindows())
 
         if config.groupByApp {
             for bucket in groupedWindows(allWindows, config: config) {
@@ -276,63 +276,6 @@ enum UIRenderer {
     /// 2) coarse signature dedupe (title + 16pt bounds buckets)
     /// 3) overlap dedupe (same app/title/display + >92% overlap ratio)
     private static func dedupedGroupWindows(_ windows: [WindowInfo]) -> [WindowInfo] {
-        var out: [WindowInfo] = []
-        out.reserveCapacity(windows.count)
-
-        var seenIds = Set<UInt32>()
-        seenIds.reserveCapacity(windows.count)
-
-        var seenSignatures = Set<String>()
-        seenSignatures.reserveCapacity(windows.count)
-
-        for w in windows {
-            if !seenIds.insert(w.id.raw).inserted {
-                continue
-            }
-
-            // Snap bounds to 16pt buckets so tiny reporting jitter doesn't defeat dedupe.
-            let bx = Int((w.bounds.x / 16.0).rounded())
-            let by = Int((w.bounds.y / 16.0).rounded())
-            let bw = Int((w.bounds.width / 16.0).rounded())
-            let bh = Int((w.bounds.height / 16.0).rounded())
-            let title = w.title.isEmpty ? w.appName : w.title
-            let signature = "\(w.bundleId.raw)|\(w.monitorId.raw)|\(title)|\(bx),\(by),\(bw),\(bh)"
-
-            if !seenSignatures.insert(signature).inserted {
-                continue
-            }
-
-            let area = max(0.0, w.bounds.width) * max(0.0, w.bounds.height)
-            var collapsed = false
-            for i in out.indices {
-                let existing = out[i]
-                let existingTitle = existing.title.isEmpty ? existing.appName : existing.title
-                guard existing.bundleId.raw == w.bundleId.raw,
-                      existing.monitorId == w.monitorId,
-                      existingTitle == title else { continue }
-
-                let existingArea = max(0.0, existing.bounds.width) * max(0.0, existing.bounds.height)
-                let minArea = max(1.0, min(area, existingArea))
-                let overlapRatio = w.bounds.intersectionArea(with: existing.bounds) / minArea
-                guard overlapRatio >= 0.92 else { continue }
-
-                // Prefer more informative entries first (real title), then larger surface.
-                let currentHasRealTitle = !w.title.isEmpty
-                let existingHasRealTitle = !existing.title.isEmpty
-                if (currentHasRealTitle && !existingHasRealTitle)
-                    || (currentHasRealTitle == existingHasRealTitle && area > existingArea) {
-                    out[i] = w
-                }
-                collapsed = true
-                break
-            }
-            if collapsed {
-                continue
-            }
-
-            out.append(w)
-        }
-
-        return out
+        WindowLogicalIdentity.deduped(windows)
     }
 }

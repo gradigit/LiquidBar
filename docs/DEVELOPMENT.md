@@ -41,6 +41,17 @@ Build a local release-mode app bundle:
 open build/release/LiquidBar.app
 ```
 
+Build, install, and relaunch the real app from a stable local path:
+
+```sh
+./scripts/install_and_launch_release_app.sh
+```
+
+Use this helper for day-to-day manual QA. It installs to
+`~/Applications/LiquidBar.app` by default and refuses ad-hoc signing unless
+`LIQUIDBAR_ALLOW_ADHOC_INSTALL=1` is set, because ad-hoc rebuilds can make macOS
+privacy permissions look stale after each rebuild.
+
 Inspect or initialize config:
 
 ```sh
@@ -86,8 +97,10 @@ Some features require macOS privacy permissions when running the app bundle:
 - Automation prompts when running UI tests through Xcode.
 
 Use `scripts/build_release_app.sh` for release-candidate checks. Use the stable
-test app bundle from `scripts/build_test_app.sh` only when you need a separate
-developer identity for repeated privacy-permission testing.
+install/relaunch flow from `scripts/install_and_launch_release_app.sh` for
+manual QA against the real app identity. Use the stable test app bundle from
+`scripts/build_test_app.sh` only when you need a separate developer identity for
+repeated privacy-permission testing.
 
 ## Local Config Isolation
 
