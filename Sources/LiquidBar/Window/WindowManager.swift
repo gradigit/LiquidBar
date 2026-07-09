@@ -285,25 +285,15 @@ final class WindowManager {
     }
 
     private func isOnscreen(_ dict: [CFString: Any]) -> Bool {
-        // kCGWindowIsOnscreen is documented but the value type varies.
-        if let v = dict[kCGWindowIsOnscreen as CFString] as? Bool { return v }
-        if let v = dict[kCGWindowIsOnscreen as CFString] as? Int { return v != 0 }
-        if let v = dict[kCGWindowIsOnscreen as CFString] as? NSNumber { return v.boolValue }
-        return false
+        WindowServerSurface.parseBool(dict[kCGWindowIsOnscreen as CFString]) ?? false
     }
 
     private func frontmostWindowId(in windowList: [[CFString: Any]], usingAllFallback: Bool) -> UInt32? {
         let ownPid = ProcessInfo.processInfo.processIdentifier
-        for dict in windowList {
-            if usingAllFallback && !isOnscreen(dict) { continue }
-            let layer = dict[kCGWindowLayer as CFString] as? Int ?? 0
-            guard layer == 0 else { continue }
-            guard let pid = dict[kCGWindowOwnerPID] as? Int32,
-                  pid != ownPid,
-                  let windowId = WindowNumber.parse(dict[kCGWindowNumber]) else {
-                continue
-            }
-            return windowId
+        for surface in WindowServerSurface.surfaces(from: windowList) {
+            if usingAllFallback && !surface.isOnscreen { continue }
+            guard surface.layer == 0, surface.pid != ownPid else { continue }
+            return surface.windowId
         }
         return nil
     }
@@ -317,45 +307,23 @@ final class WindowManager {
         screens: [(displayId: UInt32, bounds: WindowBounds)],
         appInfoProvider: ((pid_t) -> (bundleId: String, isHidden: Bool))? = nil
     ) -> (info: WindowInfo, pid: pid_t)? {
-        guard let windowNumber = WindowNumber.parse(dict[kCGWindowNumber]),
-              let pid = dict[kCGWindowOwnerPID] as? Int32 else {
-            return nil
-        }
+        guard let surface = WindowServerSurface(dict), surface.layer == 0 else { return nil }
 
-        let appName = dict[kCGWindowOwnerName as CFString] as? String ?? ""
-        let title = dict[kCGWindowName as CFString] as? String ?? ""
-        let layer = dict[kCGWindowLayer as CFString] as? Int ?? 0
-
-        guard layer == 0 else { return nil }
-
-        let (bundleId, isHidden) = (appInfoProvider ?? getAppInfo)(pid)
-
-        let bounds: WindowBounds
-        if let boundsDict = dict[kCGWindowBounds as CFString] as? [String: Double] {
-            bounds = WindowBounds(
-                x: boundsDict["X"] ?? 0,
-                y: boundsDict["Y"] ?? 0,
-                width: boundsDict["Width"] ?? 0,
-                height: boundsDict["Height"] ?? 0
-            )
-        } else {
-            bounds = WindowBounds()
-        }
-
-        let monitorId = monitorForWindow(bounds, screens: screens)
+        let (bundleId, isHidden) = (appInfoProvider ?? getAppInfo)(surface.pid)
+        let monitorId = monitorForWindow(surface.bounds, screens: screens)
 
         return (
             info: WindowInfo(
-                id: WindowId(windowNumber),
+                id: WindowId(surface.windowId),
                 bundleId: BundleId(bundleId),
-                appName: appName,
-                title: title,
+                appName: surface.ownerName,
+                title: surface.title,
                 isHidden: isHidden,
                 isMinimized: false,
                 monitorId: monitorId,
-                bounds: bounds
+                bounds: surface.bounds
             ),
-            pid: pid
+            pid: surface.pid
         )
     }
 

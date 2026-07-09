@@ -707,25 +707,12 @@ final class PanelManager {
     }
 
     private static func fullscreenCoverCandidate(from dict: [CFString: Any]) -> FullscreenCoverCandidate? {
-        guard let pid = dict[kCGWindowOwnerPID] as? Int32 else { return nil }
-        let ownerName = dict[kCGWindowOwnerName as CFString] as? String ?? ""
-        let layer = dict[kCGWindowLayer as CFString] as? Int ?? 0
-
-        guard let boundsDict = dict[kCGWindowBounds as CFString] as? [String: Double] else {
-            return nil
-        }
-
-        let bounds = WindowBounds(
-            x: boundsDict["X"] ?? 0,
-            y: boundsDict["Y"] ?? 0,
-            width: boundsDict["Width"] ?? 0,
-            height: boundsDict["Height"] ?? 0
-        )
+        guard let surface = WindowServerSurface(dict) else { return nil }
         return FullscreenCoverCandidate(
-            pid: pid,
-            ownerName: ownerName,
-            layer: layer,
-            bounds: bounds
+            pid: surface.pid,
+            ownerName: surface.ownerName,
+            layer: surface.layer,
+            bounds: surface.bounds
         )
     }
 

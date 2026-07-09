@@ -13,9 +13,9 @@ import QuartzCore
 
 @MainActor
 final class LiquidBarPanel: NSPanel {
-    /// A/B guard: vertical+flush can use a borderless host to avoid titled-window
-    /// top-corner chrome artifacts. Set to false for immediate rollback.
-    private static let useBorderlessHostForVerticalFlush = true
+    /// A/B guard: flush bars use a borderless host so AppKit's titled-window
+    /// frame cannot introduce rounded/chrome artifacts inside the taskbar.
+    nonisolated private static let useBorderlessHostForFlush = true
 
     private(set) var displayId: CGDirectDisplayID = 0
     private(set) var barView: NativeBarView!
@@ -153,8 +153,12 @@ final class LiquidBarPanel: NSPanel {
 
     // MARK: - Panel Configuration
 
-    private static func panelStyleMask(position: Position, barStyle: BarStyle) -> NSWindow.StyleMask {
-        if useBorderlessHostForVerticalFlush, barStyle == .flush, position.isVertical {
+    nonisolated static func usesBorderlessHost(position: Position, barStyle: BarStyle) -> Bool {
+        useBorderlessHostForFlush && barStyle == .flush
+    }
+
+    nonisolated static func panelStyleMask(position: Position, barStyle: BarStyle) -> NSWindow.StyleMask {
+        if usesBorderlessHost(position: position, barStyle: barStyle) {
             return [.borderless, .nonactivatingPanel]
         }
         return [.titled, .fullSizeContentView, .nonactivatingPanel]
@@ -392,7 +396,7 @@ final class LiquidBarPanel: NSPanel {
 
     // MARK: - Frame Computation
 
-    private struct PanelGeometry {
+    struct PanelGeometry: Equatable {
         let frame: NSRect
         let contentInsetLeft: CGFloat
         let contentInsetRight: CGFloat
@@ -403,15 +407,36 @@ final class LiquidBarPanel: NSPanel {
     private static func computeGeometry(screen: NSScreen, barHeight: CGFloat, position: Position, barStyle: BarStyle) -> PanelGeometry {
         let screenFrame = screen.frame
         let visibleFrame = screen.visibleFrame
-        let overscan: CGFloat = 24
+        let globalFrame = NSScreen.screens.map(\.frame).reduce(screenFrame) { $0.union($1) }
+
+        return computeGeometry(
+            screenFrame: screenFrame,
+            visibleFrame: visibleFrame,
+            globalFrame: globalFrame,
+            barHeight: barHeight,
+            position: position,
+            barStyle: barStyle
+        )
+    }
+
+    nonisolated static func computeGeometry(
+        screenFrame: NSRect,
+        visibleFrame: NSRect,
+        globalFrame: NSRect,
+        barHeight: CGFloat,
+        position: Position,
+        barStyle: BarStyle
+    ) -> PanelGeometry {
+        let overscan: CGFloat = usesBorderlessHost(position: position, barStyle: barStyle) ? 0 : 24
 
         switch barStyle {
         case .flush:
             // `.titled` windows keep NSThemeFrame corner rendering even when we try to
             // set a 0pt radius. Slight overscan pushes those corners off-screen.
-            let global = NSScreen.screens.map(\.frame).reduce(screenFrame) { $0.union($1) }
-            let leftOverscan: CGFloat = abs(screenFrame.minX - global.minX) < 0.5 ? overscan : 0
-            let rightOverscan: CGFloat = abs(screenFrame.maxX - global.maxX) < 0.5 ? overscan : 0
+            // Borderless flush hosts do not need that workaround and should remain
+            // exactly edge-aligned.
+            let leftOverscan: CGFloat = abs(screenFrame.minX - globalFrame.minX) < 0.5 ? overscan : 0
+            let rightOverscan: CGFloat = abs(screenFrame.maxX - globalFrame.maxX) < 0.5 ? overscan : 0
 
             switch position {
             case .top:

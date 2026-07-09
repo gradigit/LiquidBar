@@ -113,6 +113,51 @@ struct WindowAdjustmentPlannerTests {
         #expect(!planner.windowSpansMultipleDisplays(singleDisplay, screens: screens))
     }
 
+    @Test func containedSameProcessPreviewSurfaceIsNotMutable() {
+        let parent = AccessibilityService.WindowMutationCandidate(
+            pid: 42,
+            windowId: 100,
+            frame: CGRect(x: 0, y: 32, width: 1240, height: 1080),
+            title: "Bybit API"
+        )
+        let firefoxTabPreview = AccessibilityService.WindowMutationCandidate(
+            pid: 42,
+            windowId: 101,
+            frame: CGRect(x: 190, y: 1010, width: 270, height: 170),
+            title: "What is the Binance VIP Program?"
+        )
+        let otherAppPopup = AccessibilityService.WindowMutationCandidate(
+            pid: 43,
+            windowId: 200,
+            frame: firefoxTabPreview.frame,
+            title: firefoxTabPreview.title
+        )
+
+        #expect(AccessibilityService.isMutableWindowSurfaceCandidate(parent, among: [parent, firefoxTabPreview]))
+        #expect(!AccessibilityService.isMutableWindowSurfaceCandidate(firefoxTabPreview, among: [parent, firefoxTabPreview]))
+        #expect(AccessibilityService.isMutableWindowSurfaceCandidate(otherAppPopup, among: [parent, otherAppPopup]))
+    }
+
+    @Test func containedPreviewSurfaceDoesNotPlausiblyMatchParentAXWindow() {
+        let parent = CGRect(x: 0, y: 32, width: 1240, height: 1080)
+        let firefoxTabPreview = CGRect(x: 190, y: 1010, width: 270, height: 170)
+        let sameOriginPreview = CGRect(x: 0, y: 32, width: 270, height: 170)
+        let sameWindowCGAndAX = CGRect(x: 4, y: 36, width: 1232, height: 1068)
+
+        #expect(!AccessibilityService.isPlausibleAXSurfaceMatch(
+            targetBounds: firefoxTabPreview,
+            axBounds: parent
+        ))
+        #expect(!AccessibilityService.isPlausibleAXSurfaceMatch(
+            targetBounds: sameOriginPreview,
+            axBounds: parent
+        ))
+        #expect(AccessibilityService.isPlausibleAXSurfaceMatch(
+            targetBounds: sameWindowCGAndAX,
+            axBounds: parent
+        ))
+    }
+
     private func makePanel(frame: NSRect, position: Position) -> AccessibilityService.PanelInfo {
         AccessibilityService.PanelInfo(displayId: 1, frame: frame, position: position)
     }

@@ -247,11 +247,11 @@ final class AXObserverService {
         pids.reserveCapacity(windowList.count)
 
         for dict in windowList {
-            if let layer = parseInt(dict[kCGWindowLayer as CFString]), layer != 0 {
+            if let layer = WindowServerSurface.parseInt(dict[kCGWindowLayer as CFString]), layer != 0 {
                 continue
             }
             let ownerName = dict[kCGWindowOwnerName as CFString] as? String
-            guard let pid = parsePid(dict[kCGWindowOwnerPID as CFString]),
+            guard let pid = WindowServerSurface.parsePid(dict[kCGWindowOwnerPID as CFString]),
                   shouldObserve(pid: pid, ownPid: ownPid, ownerName: ownerName) else {
                 continue
             }
@@ -284,19 +284,7 @@ final class AXObserverService {
     }
 
     nonisolated static func parsePid(_ value: Any?) -> pid_t? {
-        if let pid = value as? pid_t { return pid }
-        if let pid = value as? Int { return pid_t(clamping: pid) }
-        if let pid = value as? Int64 { return pid_t(clamping: pid) }
-        if let pid = value as? NSNumber { return pid.int32Value }
-        return nil
-    }
-
-    private nonisolated static func parseInt(_ value: Any?) -> Int? {
-        if let v = value as? Int { return v }
-        if let v = value as? Int32 { return Int(v) }
-        if let v = value as? Int64 { return Int(clamping: v) }
-        if let v = value as? NSNumber { return v.intValue }
-        return nil
+        WindowServerSurface.parsePid(value)
     }
 
     private func addObserver(for pid: pid_t) -> Bool {

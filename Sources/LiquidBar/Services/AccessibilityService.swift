@@ -22,6 +22,11 @@ final class AccessibilityService {
     private static let adjustmentMinHeight: CGFloat = 100.0
     private static let adjustmentCacheTTL: CFTimeInterval = 8.0
     private static let matchedFocusMaxAttempts = 4
+    nonisolated private static let containedAuxiliaryOverlapThreshold: CGFloat = 0.85
+    nonisolated private static let protrudingAuxiliaryOverlapThreshold: CGFloat = 0.55
+    nonisolated private static let containedAuxiliaryMaxAreaRatio: CGFloat = 0.35
+    nonisolated private static let protrudingAuxiliaryMaxAreaRatio: CGFloat = 0.12
+    nonisolated private static let axSurfaceMatchMinAreaRatio: CGFloat = 0.55
 
     private enum FocusFailureReason: String {
         case windowMissing
@@ -153,17 +158,12 @@ final class AccessibilityService {
 
         let ownPid = ProcessInfo.processInfo.processIdentifier
         let ownSwitcherWindowIds = ownAppSwitcherWindowIds()
-        for dict in windowList {
-            let layer = parseInt(dict[kCGWindowLayer as CFString]) ?? 0
-            guard layer == 0 else { continue }
-            guard let ownerPid = parsePid(dict[kCGWindowOwnerPID as CFString]),
-                  let windowId = parseWindowNumber(dict[kCGWindowNumber as CFString]) else {
+        for surface in WindowServerSurface.surfaces(from: windowList) {
+            guard surface.layer == 0 else { continue }
+            if surface.pid == ownPid, !ownSwitcherWindowIds.contains(surface.windowId) {
                 continue
             }
-            if ownerPid == ownPid, !ownSwitcherWindowIds.contains(windowId) {
-                continue
-            }
-            return (pid: ownerPid, windowId: windowId)
+            return (pid: surface.pid, windowId: surface.windowId)
         }
 
         return nil
@@ -326,6 +326,8 @@ final class AccessibilityService {
             completedSnapshots.count
         }
     }
+
+    typealias WindowMutationCandidate = WindowServerSurface
 
     struct WindowAdjustmentPlanner: Sendable {
         let tolerance: CGFloat
@@ -507,18 +509,18 @@ final class AccessibilityService {
         let panelsByDisplayId: [CGDirectDisplayID: PanelInfo] = Dictionary(
             uniqueKeysWithValues: panels.map { ($0.displayId, $0) }
         )
-        let ownPid = ProcessInfo.processInfo.processIdentifier
         let planner = WindowAdjustmentPlanner(tolerance: adjustTolerance, minimumSize: adjustmentMinHeight)
+        let candidates = windowMutationCandidates(
+            from: windowList,
+            excludingPid: ProcessInfo.processInfo.processIdentifier
+        )
 
-        for dict in windowList {
-            guard let layer = dict[kCGWindowLayer] as? Int32, layer == 0 else { continue }
-            guard let pid = dict[kCGWindowOwnerPID] as? pid_t, pid != ownPid else { continue }
-            guard let windowId = parseWindowNumber(dict[kCGWindowNumber]) else { continue }
-            guard let boundsDict = dict[kCGWindowBounds] as? NSDictionary else { continue }
+        for candidate in candidates {
+            guard isMutableWindowSurfaceCandidate(candidate, among: candidates) else { continue }
 
-            var wr = CGRect.zero
-            guard CGRectMakeWithDictionaryRepresentation(boundsDict, &wr) else { continue }
-
+            let pid = candidate.pid
+            let windowId = candidate.windowId
+            let wr = candidate.frame
             let windowBounds = WindowBounds(x: wr.origin.x, y: wr.origin.y, width: wr.width, height: wr.height)
 
             // Skip windows spanning multiple displays — these are often special utility/palette windows.
@@ -557,7 +559,6 @@ final class AccessibilityService {
                abs(last.targetHeight - newH) <= adjustTolerance {
                 continue
             }
-            let title = dict[kCGWindowName as CFString] as? String ?? ""
 
             // Apply via AX API
             let appEl = AXUIElementCreateApplication(pid)
@@ -567,7 +568,7 @@ final class AccessibilityService {
                 in: axWindows,
                 targetWindowId: windowId,
                 targetBounds: wr,
-                targetTitle: title
+                targetTitle: candidate.title
             ) {
                 // Apply size first, then position to keep the final rect deterministic.
                 if needsResize {
@@ -587,8 +588,12 @@ final class AccessibilityService {
             for j in 0..<CFArrayGetCount(axWindows) {
                 guard let axWin = axElement(at: j, in: axWindows) else { continue }
                 guard let axPos = getAXPosition(axWin) else { continue }
+                guard let axSize = getAXSize(axWin) else { continue }
+                let axRect = CGRect(origin: axPos, size: axSize)
 
-                if abs(axPos.x - wr.origin.x) < 5 && abs(axPos.y - wr.origin.y) < 5 {
+                if abs(axPos.x - wr.origin.x) < 5,
+                   abs(axPos.y - wr.origin.y) < 5,
+                   isPlausibleAXSurfaceMatch(targetBounds: wr, axBounds: axRect) {
                     if needsResize {
                         setAXSize(axWin, size: CGSize(width: newW, height: newH))
                     }
@@ -624,20 +629,20 @@ final class AccessibilityService {
                 WindowBounds(x: rect.origin.x, y: rect.origin.y, width: rect.width, height: rect.height)
             )
         }
-        let ownPid = ProcessInfo.processInfo.processIdentifier
         let planner = WindowAdjustmentPlanner()
+        let candidates = windowMutationCandidates(
+            from: windowList,
+            excludingPid: ProcessInfo.processInfo.processIdentifier
+        )
         var snapshots: [RestorableWindowSnapshot] = []
-        snapshots.reserveCapacity(windowList.count)
+        snapshots.reserveCapacity(candidates.count)
 
-        for dict in windowList {
-            let layer = parseInt(dict[kCGWindowLayer as CFString]) ?? 0
-            guard layer == 0 else { continue }
-            guard let pid = parsePid(dict[kCGWindowOwnerPID as CFString]), pid != ownPid else { continue }
-            guard let windowId = parseWindowNumber(dict[kCGWindowNumber as CFString]) else { continue }
-            guard let boundsDict = dict[kCGWindowBounds as CFString] as? NSDictionary else { continue }
+        for candidate in candidates {
+            guard isMutableWindowSurfaceCandidate(candidate, among: candidates) else { continue }
 
-            var rect = CGRect.zero
-            guard CGRectMakeWithDictionaryRepresentation(boundsDict, &rect) else { continue }
+            let pid = candidate.pid
+            let windowId = candidate.windowId
+            let rect = candidate.frame
             guard rect.width >= 80, rect.height >= 80 else { continue }
 
             let windowBounds = WindowBounds(x: rect.origin.x, y: rect.origin.y, width: rect.width, height: rect.height)
@@ -648,14 +653,13 @@ final class AccessibilityService {
             guard let displayUUID = displayUUIDByDisplayId[displayId],
                   let displayFrame = displayBoundsByUUID[displayUUID] else { continue }
 
-            let title = dict[kCGWindowName as CFString] as? String ?? ""
             let bundleId = NSRunningApplication(processIdentifier: pid)?.bundleIdentifier ?? ""
             snapshots.append(
                 RestorableWindowSnapshot(
                     pid: pid,
                     bundleId: bundleId,
                     windowId: windowId,
-                    title: title,
+                    title: candidate.title,
                     frame: rect,
                     displayUUID: displayUUID,
                     displayFrame: displayFrame
@@ -984,37 +988,34 @@ final class AccessibilityService {
             )
         }
 
+        let candidates = windowMutationCandidates(from: windowList)
         var byWindowKey: [RestorableWindowKey: RestorableLiveWindow] = [:]
         var titleBuckets: [RestorableWindowTitleKey: [RestorableLiveWindow]] = [:]
         var bundleTitleBuckets: [RestorableWindowBundleTitleKey: [RestorableLiveWindow]] = [:]
-        byWindowKey.reserveCapacity(windowList.count)
-        for dict in windowList {
-            let layer = parseInt(dict[kCGWindowLayer as CFString]) ?? 0
-            guard layer == 0 else { continue }
-            guard let pid = parsePid(dict[kCGWindowOwnerPID as CFString]) else { continue }
-            guard let windowId = parseWindowNumber(dict[kCGWindowNumber as CFString]) else { continue }
-            guard let boundsDict = dict[kCGWindowBounds as CFString] as? NSDictionary else { continue }
+        byWindowKey.reserveCapacity(candidates.count)
+        for candidate in candidates {
+            guard isMutableWindowSurfaceCandidate(candidate, among: candidates) else { continue }
 
-            var rect = CGRect.zero
-            guard CGRectMakeWithDictionaryRepresentation(boundsDict, &rect) else { continue }
-            let title = dict[kCGWindowName as CFString] as? String ?? ""
+            let pid = candidate.pid
+            let windowId = candidate.windowId
+            let title = candidate.title
             let bundleId = NSRunningApplication(processIdentifier: pid)?.bundleIdentifier ?? ""
-            let candidate = RestorableLiveWindow(
+            let liveWindow = RestorableLiveWindow(
                 pid: pid,
                 bundleId: bundleId,
                 windowId: windowId,
-                frame: rect,
+                frame: candidate.frame,
                 title: title
             )
-            byWindowKey[RestorableWindowKey(pid: pid, windowId: windowId)] = candidate
+            byWindowKey[RestorableWindowKey(pid: pid, windowId: windowId)] = liveWindow
 
             if !title.isEmpty {
-                titleBuckets[RestorableWindowTitleKey(pid: pid, title: title), default: []].append(candidate)
+                titleBuckets[RestorableWindowTitleKey(pid: pid, title: title), default: []].append(liveWindow)
                 if !bundleId.isEmpty {
                     bundleTitleBuckets[
                         RestorableWindowBundleTitleKey(bundleId: bundleId, title: title),
                         default: []
-                    ].append(candidate)
+                    ].append(liveWindow)
                 }
             }
         }
@@ -1038,14 +1039,9 @@ final class AccessibilityService {
             kCGNullWindowID
         ) as? [[CFString: Any]] else { return nil }
 
-        for dict in windowList {
-            guard parseWindowNumber(dict[kCGWindowNumber]) == windowId else { continue }
-            guard let pid = dict[kCGWindowOwnerPID] as? pid_t else { continue }
-            guard let boundsDict = dict[kCGWindowBounds] as? NSDictionary else { continue }
-            var rect = CGRect.zero
-            guard CGRectMakeWithDictionaryRepresentation(boundsDict, &rect) else { continue }
-            let title = dict[kCGWindowName as CFString] as? String ?? ""
-            return (pid, rect, title)
+        for surface in WindowServerSurface.surfaces(from: windowList) {
+            guard surface.windowId == windowId else { continue }
+            return (surface.pid, surface.frame, surface.title)
         }
         return nil
     }
@@ -1057,14 +1053,9 @@ final class AccessibilityService {
             kCGNullWindowID
         ) as? [[CFString: Any]] else { return nil }
 
-        for dict in windowList {
-            guard parseWindowNumber(dict[kCGWindowNumber]) == windowId else { continue }
-            guard let pid = dict[kCGWindowOwnerPID] as? pid_t else { continue }
-            guard let boundsDict = dict[kCGWindowBounds] as? NSDictionary else { continue }
-            var rect = CGRect.zero
-            guard CGRectMakeWithDictionaryRepresentation(boundsDict, &rect) else { continue }
-            let title = dict[kCGWindowName as CFString] as? String ?? ""
-            return (pid, rect, title)
+        for surface in WindowServerSurface.surfaces(from: windowList) {
+            guard surface.windowId == windowId else { continue }
+            return (surface.pid, surface.frame, surface.title)
         }
         return nil
     }
@@ -1363,20 +1354,50 @@ final class AccessibilityService {
         WindowNumber.parse(rawValue)
     }
 
-    private static func parsePid(_ rawValue: Any?) -> pid_t? {
-        if let n = rawValue as? pid_t { return n }
-        if let n = rawValue as? Int { return pid_t(clamping: n) }
-        if let n = rawValue as? Int64 { return pid_t(clamping: n) }
-        if let n = rawValue as? NSNumber { return n.int32Value }
-        return nil
+    private static func windowMutationCandidates(
+        from windowList: [[CFString: Any]],
+        excludingPid excludedPid: pid_t? = nil
+    ) -> [WindowMutationCandidate] {
+        WindowServerSurface.surfaces(from: windowList).filter { surface in
+            surface.layer == 0 && surface.pid != excludedPid
+        }
     }
 
-    private static func parseInt(_ rawValue: Any?) -> Int? {
-        if let n = rawValue as? Int { return n }
-        if let n = rawValue as? Int32 { return Int(n) }
-        if let n = rawValue as? Int64 { return Int(clamping: n) }
-        if let n = rawValue as? NSNumber { return n.intValue }
-        return nil
+    nonisolated static func isMutableWindowSurfaceCandidate(
+        _ candidate: WindowMutationCandidate,
+        among candidates: [WindowMutationCandidate]
+    ) -> Bool {
+        !isContainedAuxiliarySurface(candidate, among: candidates)
+    }
+
+    nonisolated static func isContainedAuxiliarySurface(
+        _ candidate: WindowMutationCandidate,
+        among candidates: [WindowMutationCandidate]
+    ) -> Bool {
+        let candidateArea = candidate.frame.area
+        guard candidateArea > 0 else { return true }
+
+        for sibling in candidates {
+            guard sibling.pid == candidate.pid,
+                  sibling.windowId != candidate.windowId else { continue }
+
+            let siblingArea = sibling.frame.area
+            guard siblingArea > candidateArea else { continue }
+
+            let overlapArea = candidate.frame.intersection(sibling.frame).area
+            let containmentRatio = overlapArea / candidateArea
+            let areaRatio = candidateArea / siblingArea
+            if containmentRatio >= containedAuxiliaryOverlapThreshold,
+               areaRatio <= containedAuxiliaryMaxAreaRatio {
+                return true
+            }
+            if containmentRatio >= protrudingAuxiliaryOverlapThreshold,
+               areaRatio <= protrudingAuxiliaryMaxAreaRatio {
+                return true
+            }
+        }
+
+        return false
     }
 
     private static func getAXString(_ element: AXUIElement, attribute: CFString) -> String? {
@@ -1433,6 +1454,12 @@ final class AccessibilityService {
             if !targetTitle.isEmpty,
                let axTitle = getAXString(axWin, attribute: kAXTitleAttribute as CFString),
                axTitle == targetTitle {
+                if let axPos, let axSize {
+                    let axRect = CGRect(origin: axPos, size: axSize)
+                    guard isPlausibleAXSurfaceMatch(targetBounds: targetBounds, axBounds: axRect) || requireMinimized == true else {
+                        continue
+                    }
+                }
                 titleCandidates.append(Candidate(window: axWin, score: score))
                 continue
             }
@@ -1452,7 +1479,8 @@ final class AccessibilityService {
                 let centerDy = abs(axRect.midY - targetBounds.midY)
                 let relaxedScore = Double((1.0 - overlapRatio) * 300.0 + centerDx + centerDy + (dw * 0.03) + (dh * 0.03))
 
-                if overlapRatio >= 0.70 {
+                if overlapRatio >= 0.70,
+                   isPlausibleAXSurfaceMatch(targetBounds: targetBounds, axBounds: axRect) {
                     relaxedGeometryCandidates.append(Candidate(window: axWin, score: relaxedScore))
                 } else if centerDx <= 60, centerDy <= 90, dw <= 220, dh <= 220 {
                     relaxedGeometryCandidates.append(Candidate(window: axWin, score: relaxedScore + 120.0))
@@ -1470,6 +1498,26 @@ final class AccessibilityService {
             return relaxedGeometryMatch.window
         }
         return nil
+    }
+
+    nonisolated static func isPlausibleAXSurfaceMatch(targetBounds: CGRect, axBounds: CGRect) -> Bool {
+        let targetArea = targetBounds.area
+        let axArea = axBounds.area
+        guard targetArea > 0, axArea > 0 else { return false }
+
+        let minArea = min(targetArea, axArea)
+        let maxArea = max(targetArea, axArea)
+        let areaRatio = minArea / maxArea
+        let overlapRatio = targetBounds.intersection(axBounds).area / max(1.0, minArea)
+        if areaRatio >= axSurfaceMatchMinAreaRatio, overlapRatio >= 0.55 {
+            return true
+        }
+
+        let centerDx = abs(axBounds.midX - targetBounds.midX)
+        let centerDy = abs(axBounds.midY - targetBounds.midY)
+        let widthDelta = abs(axBounds.width - targetBounds.width)
+        let heightDelta = abs(axBounds.height - targetBounds.height)
+        return centerDx <= 60 && centerDy <= 90 && widthDelta <= 220 && heightDelta <= 220
     }
 
     private static func copyAXWindows(_ app: AXUIElement) -> CFArray? {
@@ -1591,4 +1639,10 @@ final class AccessibilityService {
         Log.ax.debug("AccessibilityService deinit")
     }
     #endif
+}
+
+private extension CGRect {
+    var area: CGFloat {
+        max(0, width) * max(0, height)
+    }
 }
