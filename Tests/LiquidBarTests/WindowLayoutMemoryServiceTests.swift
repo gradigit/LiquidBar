@@ -48,6 +48,40 @@ struct WindowLayoutMemoryServiceTests {
         ))
     }
 
+    @Test func restoreRejectsSameUUIDsWithStaleExternalDisplayFrame() {
+        let builtIn = WindowLayoutMemoryService.DisplaySignature(
+            uuid: "built-in",
+            frame: WindowLayoutMemoryService.RoundedRect(CGRect(x: 0, y: 0, width: 1512, height: 982))
+        )
+        let external = WindowLayoutMemoryService.DisplaySignature(
+            uuid: "external",
+            frame: WindowLayoutMemoryService.RoundedRect(CGRect(x: 1512, y: 0, width: 3008, height: 1692))
+        )
+        let staleExternal = WindowLayoutMemoryService.DisplaySignature(
+            uuid: "external",
+            frame: WindowLayoutMemoryService.RoundedRect(CGRect(x: 1512, y: 0, width: 1512, height: 982))
+        )
+        let scaledExternal = WindowLayoutMemoryService.DisplaySignature(
+            uuid: "external",
+            frame: WindowLayoutMemoryService.RoundedRect(CGRect(x: 1512, y: 0, width: 1920, height: 1080))
+        )
+
+        #expect(!WindowLayoutMemoryService.shouldAttemptRestore(
+            snapshotTopology: WindowLayoutMemoryService.DisplayTopology(displays: [builtIn, external]),
+            currentTopology: WindowLayoutMemoryService.DisplayTopology(displays: [builtIn, staleExternal]),
+            capturedAt: 100,
+            now: 110,
+            maxAge: 60
+        ))
+        #expect(WindowLayoutMemoryService.shouldAttemptRestore(
+            snapshotTopology: WindowLayoutMemoryService.DisplayTopology(displays: [builtIn, external]),
+            currentTopology: WindowLayoutMemoryService.DisplayTopology(displays: [builtIn, scaledExternal]),
+            capturedAt: 100,
+            now: 110,
+            maxAge: 60
+        ))
+    }
+
     @Test func displayRelativeRestoreTargetTranslatesAcrossDisplayOriginChanges() {
         let snapshot = AccessibilityService.RestorableWindowSnapshot(
             pid: 100,
@@ -193,6 +227,53 @@ struct WindowLayoutMemoryServiceTests {
             [first, second],
             afterCompleting: []
         ) == [first, second])
+    }
+
+    @Test func restoreTopologyStabilityRequiresRepeatedMatchingTopology() {
+        let builtIn = WindowLayoutMemoryService.DisplaySignature(
+            uuid: "built-in",
+            frame: WindowLayoutMemoryService.RoundedRect(CGRect(x: 0, y: 0, width: 1512, height: 982))
+        )
+        let externalWrongInitialFrame = WindowLayoutMemoryService.DisplaySignature(
+            uuid: "external",
+            frame: WindowLayoutMemoryService.RoundedRect(CGRect(x: 1512, y: 0, width: 1512, height: 982))
+        )
+        let externalSettledFrame = WindowLayoutMemoryService.DisplaySignature(
+            uuid: "external",
+            frame: WindowLayoutMemoryService.RoundedRect(CGRect(x: 1512, y: 0, width: 3840, height: 2160))
+        )
+        let intermediate = WindowLayoutMemoryService.DisplayTopology(displays: [builtIn, externalWrongInitialFrame])
+        let settled = WindowLayoutMemoryService.DisplayTopology(displays: [builtIn, externalSettledFrame])
+
+        var stability = WindowLayoutMemoryService.topologyStability(
+            currentTopology: intermediate,
+            previousTopology: nil,
+            previousObservedAt: 0,
+            now: 100,
+            minStableDuration: 1.25
+        )
+        #expect(!stability.isStable)
+        #expect(stability.observedAt == 100)
+
+        stability = WindowLayoutMemoryService.topologyStability(
+            currentTopology: settled,
+            previousTopology: intermediate,
+            previousObservedAt: stability.observedAt,
+            now: 101,
+            minStableDuration: 1.25
+        )
+        #expect(!stability.isStable)
+        #expect(stability.observedAt == 101)
+
+        stability = WindowLayoutMemoryService.topologyStability(
+            currentTopology: settled,
+            previousTopology: settled,
+            previousObservedAt: stability.observedAt,
+            now: 102.30,
+            minStableDuration: 1.25
+        )
+        #expect(stability.isStable)
+        #expect(stability.observedAt == 101)
     }
 
     private func makeSnapshot(windowId: UInt32) -> AccessibilityService.RestorableWindowSnapshot {

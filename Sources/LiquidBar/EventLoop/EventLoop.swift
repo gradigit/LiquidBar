@@ -69,6 +69,9 @@ final class EventLoop {
 
     // Render state
     private var currentItems: [TaskbarItem] = []
+    private var lastWindowIdentityDiagnosticSignature = ""
+    private var lastTaskbarItemIdentityDiagnosticSignature = ""
+    private var lastTaskbarItemSnapshotDiagnosticSignatureByDisplay: [CGDirectDisplayID: String] = [:]
     private var pinnedBundleIdsByDisplay: [CGDirectDisplayID: Set<String>] = [:]
     private var lastBarViewDataSnapshotByDisplay: [CGDirectDisplayID: BarViewDataSnapshot] = [:]
     private var lastBarViewIdentityByDisplay: [CGDirectDisplayID: ObjectIdentifier] = [:]
@@ -361,8 +364,10 @@ final class EventLoop {
         return direction < 0 ? entries.count - 1 : 0
     }
 
-    nonisolated static let screenChangeRecoveryDelays: [TimeInterval] = [0.05, 0.18, 0.40, 0.85, 1.60]
-    nonisolated static let screenChangeAdjustmentSuppression: CFTimeInterval = 8.0
+    nonisolated static let screenChangeRecoveryDelays: [TimeInterval] = [0.05, 0.18, 0.40, 0.85, 1.60, 3.20, 6.40, 10.0, 16.0, 24.0]
+    nonisolated static let screenChangeAdjustmentSuppression: CFTimeInterval = 30.0
+    nonisolated static let windowLayoutMemoryRestoreDelays: [TimeInterval] = [6.0, 10.0, 16.0, 24.0, 36.0]
+    nonisolated static let windowLayoutMemoryTopologyStableDuration: CFTimeInterval = 2.0
     nonisolated static let windowLayoutMemoryStableCaptureInterval: CFTimeInterval = 20.0
     nonisolated static let windowLayoutMemoryStableAfterScreenChangeDelay: CFTimeInterval = 12.0
     nonisolated static let spaceChangeRecoveryDelays: [TimeInterval] = [0.15, 0.45, 1.00]
@@ -747,6 +752,7 @@ final class EventLoop {
                     spacesService: spacesService
                 ))
             }
+            let observedWindowsForDiagnostics = windows
             panelManager.reconcileFullscreenWindowSuppression(
                 windows: windows,
                 config: config,
@@ -775,6 +781,10 @@ final class EventLoop {
                 return (changed, restoredOrderChanged)
             }
             let liveWindowIds = Set(windowStateStore.getWindows().map { $0.id.raw })
+            recordWindowIdentityDiagnostics(
+                observed: observedWindowsForDiagnostics,
+                state: windowStateStore.getWindows()
+            )
             syncThumbnailLifecycleToLiveWindowIds(liveWindowIds)
 
             let focusChanged = updateCachedFocusIfNeeded(frontmostWindowId: windowManager.lastFrontmostWindowId)
@@ -892,6 +902,347 @@ final class EventLoop {
             let thumbnails = thumbnailService.memorySummary()
             let axTrusted = AXIsProcessTrusted()
             return "reason=\(reason) duration_ms=\(Self.fmt2(durationMs)) enumerated=\(enumerated ? 1 : 0) force=\(forceRender ? 1 : 0) dragging=\(isDragging ? 1 : 0) windows=\(max(0, windowCount)) items=\(currentItems.count) displays=\(panelManager.allPanels.count) poll_interval_ms=\(Self.fmt2(currentPollInterval * 1000.0)) space_age_ms=\(Self.fmt2(spaceAgeMs)) screen_age_ms=\(Self.fmt2(screenAgeMs)) adjust_suppressed=\(adjustmentSuppressed ? 1 : 0) ax_active=\(isAXObserverActive ? 1 : 0) ax_trusted=\(axTrusted ? 1 : 0) metrics=\(config.systemIndicatorsEnabled ? 1 : 0) adjust=\(config.adjustWindowsForTaskbar ? 1 : 0) rss=\(rss) thumbnail_cache_entries=\(thumbnails.cacheEntries) thumbnail_cache_bytes=\(thumbnails.cacheBytes) thumbnail_last_good_entries=\(thumbnails.lastGoodEntries) thumbnail_last_good_bytes=\(thumbnails.lastGoodBytes) thumbnail_queued=\(thumbnails.queuedRequests) thumbnail_inflight=\(thumbnails.inFlightRequests)"
+        }
+    }
+
+    private func recordWindowIdentityDiagnostics(observed: [WindowInfo], state: [WindowInfo]) {
+        guard PerformanceMonitor.shared.isDevDiagnosticsEnabled else { return }
+
+        let observedDetails = Self.windowDuplicateDiagnostics(windows: observed)
+        let stateDetails = Self.windowDuplicateDiagnostics(windows: state)
+
+        guard !observedDetails.isEmpty || !stateDetails.isEmpty else {
+            lastWindowIdentityDiagnosticSignature = ""
+            return
+        }
+
+        let signature = "observed=\(observedDetails)|state=\(stateDetails)"
+        guard signature != lastWindowIdentityDiagnosticSignature else { return }
+        lastWindowIdentityDiagnosticSignature = signature
+
+        PerformanceMonitor.shared.recordDiagnosticSnapshot(
+            "window_identity_duplicates",
+            minIntervalSeconds: 1.0
+        ) {
+            "observed=[\(observedDetails)] state=[\(stateDetails)]"
+        }
+    }
+
+    private func recordTaskbarItemIdentityDiagnostics(displayIds: [CGDirectDisplayID]) {
+        guard PerformanceMonitor.shared.isDevDiagnosticsEnabled else { return }
+
+        let details = Self.taskbarItemDuplicateDiagnostics(
+            items: currentItems,
+            displayIds: displayIds,
+            windowDisplayMode: config.windowDisplayMode
+        )
+
+        guard !details.isEmpty else {
+            lastTaskbarItemIdentityDiagnosticSignature = ""
+            return
+        }
+
+        guard details != lastTaskbarItemIdentityDiagnosticSignature else { return }
+        lastTaskbarItemIdentityDiagnosticSignature = details
+
+        PerformanceMonitor.shared.recordDiagnosticSnapshot(
+            "taskbar_item_identity_duplicates",
+            minIntervalSeconds: 1.0
+        ) {
+            details
+        }
+    }
+
+    private func recordTaskbarItemSnapshotDiagnostics(displayIds: [CGDirectDisplayID]) {
+        guard PerformanceMonitor.shared.isDevDiagnosticsEnabled else { return }
+
+        let activeDisplayIds = Set(displayIds)
+        lastTaskbarItemSnapshotDiagnosticSignatureByDisplay = lastTaskbarItemSnapshotDiagnosticSignatureByDisplay
+            .filter { activeDisplayIds.contains($0.key) }
+
+        for displayId in displayIds {
+            let details = Self.taskbarItemSnapshotDiagnostics(
+                displayId: displayId,
+                items: currentItems,
+                windowDisplayMode: config.windowDisplayMode
+            )
+
+            guard !details.isEmpty else {
+                lastTaskbarItemSnapshotDiagnosticSignatureByDisplay.removeValue(forKey: displayId)
+                continue
+            }
+
+            guard details != lastTaskbarItemSnapshotDiagnosticSignatureByDisplay[displayId] else { continue }
+            lastTaskbarItemSnapshotDiagnosticSignatureByDisplay[displayId] = details
+
+            PerformanceMonitor.shared.recordDiagnosticSnapshot(
+                "taskbar_item_snapshot.\(displayId)",
+                minIntervalSeconds: 2.0
+            ) {
+                details
+            }
+
+            Self.logTaskbarItemSnapshotItems(
+                displayId: displayId,
+                items: currentItems,
+                windowDisplayMode: config.windowDisplayMode
+            )
+        }
+    }
+
+    private static func windowDuplicateDiagnostics(windows: [WindowInfo]) -> String {
+        guard windows.count > 1 else { return "" }
+
+        var pairs: [String] = []
+        for lhsIndex in windows.indices {
+            for rhsIndex in windows.index(after: lhsIndex)..<windows.endIndex {
+                let lhs = windows[lhsIndex]
+                let rhs = windows[rhsIndex]
+                guard areSuspiciousWindowDuplicates(lhs, rhs) else { continue }
+
+                pairs.append("\(formatWindowDiagnostic(lhs)) <-> \(formatWindowDiagnostic(rhs))")
+                if pairs.count >= 8 { return pairs.joined(separator: " | ") + " | truncated=1" }
+            }
+        }
+
+        return pairs.joined(separator: " | ")
+    }
+
+    private static func taskbarItemDuplicateDiagnostics(
+        items: [TaskbarItem],
+        displayIds: [CGDirectDisplayID],
+        windowDisplayMode: WindowDisplayMode
+    ) -> String {
+        guard items.count > 1 else { return "" }
+
+        var perDisplayPairs: [String] = []
+        for displayId in displayIds {
+            let panelItems = itemsForDiagnosticDisplay(
+                displayId,
+                items: items,
+                windowDisplayMode: windowDisplayMode
+            )
+            let windows = panelItems.compactMap(TaskbarWindowDiagnostic.init(item:))
+            guard windows.count > 1 else { continue }
+
+            var pairs: [String] = []
+            for lhsIndex in windows.indices {
+                for rhsIndex in windows.index(after: lhsIndex)..<windows.endIndex {
+                    let lhs = windows[lhsIndex]
+                    let rhs = windows[rhsIndex]
+                    guard areSuspiciousTaskbarDuplicates(lhs, rhs, displayId: UInt32(displayId)) else {
+                        continue
+                    }
+
+                    pairs.append("\(formatTaskbarWindowDiagnostic(lhs)) <-> \(formatTaskbarWindowDiagnostic(rhs))")
+                    if pairs.count >= 6 { break }
+                }
+                if pairs.count >= 6 { break }
+            }
+
+            if !pairs.isEmpty {
+                perDisplayPairs.append("display=\(displayId) pairs=[\(pairs.joined(separator: " | "))]")
+            }
+            if perDisplayPairs.count >= 4 { break }
+        }
+
+        return perDisplayPairs.joined(separator: " ")
+    }
+
+    private static func taskbarItemSnapshotDiagnostics(
+        displayId: CGDirectDisplayID,
+        items: [TaskbarItem],
+        windowDisplayMode: WindowDisplayMode
+    ) -> String {
+        guard !items.isEmpty else { return "" }
+
+        let panelItems = itemsForDiagnosticDisplay(
+            displayId,
+            items: items,
+            windowDisplayMode: windowDisplayMode
+        )
+        let windows = panelItems.compactMap(TaskbarWindowDiagnostic.init(item:))
+        guard !windows.isEmpty else { return "" }
+
+        let formatted = windows
+            .prefix(48)
+            .map(formatTaskbarWindowDiagnostic)
+            .joined(separator: ";")
+        let truncated = windows.count > 48 ? ";truncated=1" : ""
+        return "display=\(displayId) windows=[\(formatted)\(truncated)]"
+    }
+
+    private static func logTaskbarItemSnapshotItems(
+        displayId: CGDirectDisplayID,
+        items: [TaskbarItem],
+        windowDisplayMode: WindowDisplayMode
+    ) {
+        let panelItems = itemsForDiagnosticDisplay(
+            displayId,
+            items: items,
+            windowDisplayMode: windowDisplayMode
+        )
+        for (index, item) in panelItems.enumerated() {
+            guard let window = TaskbarWindowDiagnostic(item: item) else { continue }
+            Log.perf.info(
+                "diag name=taskbar_item_snapshot_item display=\(displayId) index=\(index) \(formatTaskbarWindowDiagnostic(window), privacy: .public)"
+            )
+        }
+    }
+
+    private static func itemsForDiagnosticDisplay(
+        _ displayId: CGDirectDisplayID,
+        items: [TaskbarItem],
+        windowDisplayMode: WindowDisplayMode
+    ) -> [TaskbarItem] {
+        switch windowDisplayMode {
+        case .perDisplay:
+            return items.filter { item in
+                if let sid = item.screenId { return sid == displayId }
+                return true
+            }
+        case .allWindows:
+            return items.filter { item in
+                if case .pinnedApp(_, let sid) = item {
+                    return sid == displayId
+                }
+                if case .pluginTile(_, _, _, _, _, let sid) = item {
+                    return sid == displayId
+                }
+                if case .launcher(let sid) = item {
+                    return sid == displayId
+                }
+                if case .tabGroup(_, _, _, _, _, _, _, let sid) = item {
+                    return sid == displayId
+                }
+                return true
+            }
+        }
+    }
+
+    private static func areSuspiciousWindowDuplicates(_ lhs: WindowInfo, _ rhs: WindowInfo) -> Bool {
+        guard lhs.id != rhs.id,
+              sameBundleFamily(lhs.bundleId.raw, rhs.bundleId.raw),
+              lhs.monitorId == rhs.monitorId else {
+            return false
+        }
+
+        let lhsTitle = normalizedDiagnosticTitle(title: lhs.title, appName: lhs.appName)
+        let rhsTitle = normalizedDiagnosticTitle(title: rhs.title, appName: rhs.appName)
+        if !lhsTitle.isEmpty, lhsTitle == rhsTitle {
+            return true
+        }
+
+        let lhsLowInfo = isLowInformationDiagnosticTitle(title: lhs.title, appName: lhs.appName, otherAppName: rhs.appName)
+        let rhsLowInfo = isLowInformationDiagnosticTitle(title: rhs.title, appName: rhs.appName, otherAppName: lhs.appName)
+        guard lhsLowInfo || rhsLowInfo else { return false }
+
+        return overlapRatio(lhs.bounds, rhs.bounds) >= 0.70
+    }
+
+    private static func areSuspiciousTaskbarDuplicates(
+        _ lhs: TaskbarWindowDiagnostic,
+        _ rhs: TaskbarWindowDiagnostic,
+        displayId: UInt32
+    ) -> Bool {
+        guard lhs.id != rhs.id,
+              lhs.screenId == displayId,
+              rhs.screenId == displayId,
+              sameBundleFamily(lhs.bundleId, rhs.bundleId) else {
+            return false
+        }
+
+        let lhsTitle = normalizedDiagnosticTitle(title: lhs.title, appName: lhs.appName)
+        let rhsTitle = normalizedDiagnosticTitle(title: rhs.title, appName: rhs.appName)
+        if !lhsTitle.isEmpty, lhsTitle == rhsTitle {
+            return true
+        }
+
+        let lhsLowInfo = isLowInformationDiagnosticTitle(title: lhs.title, appName: lhs.appName, otherAppName: rhs.appName)
+        let rhsLowInfo = isLowInformationDiagnosticTitle(title: rhs.title, appName: rhs.appName, otherAppName: lhs.appName)
+        return lhsLowInfo || rhsLowInfo
+    }
+
+    private static func formatWindowDiagnostic(_ window: WindowInfo) -> String {
+        "id=\(window.id.raw),bundle=\(safeDiagnosticText(window.bundleId.raw)),app=\(safeDiagnosticText(window.appName)),title=\(safeDiagnosticText(window.title)),d=\(window.monitorId.raw),hidden=\(window.isHidden ? 1 : 0),min=\(window.isMinimized ? 1 : 0),bounds=\(formatBounds(window.bounds))"
+    }
+
+    private static func formatTaskbarWindowDiagnostic(_ window: TaskbarWindowDiagnostic) -> String {
+        "id=\(window.id),bundle=\(safeDiagnosticText(window.bundleId)),app=\(safeDiagnosticText(window.appName)),title=\(safeDiagnosticText(window.title)),hidden=\(window.isHidden ? 1 : 0),min=\(window.isMinimized ? 1 : 0)"
+    }
+
+    private static func formatBounds(_ bounds: WindowBounds) -> String {
+        "\(Int(bounds.x.rounded())),\(Int(bounds.y.rounded())),\(Int(bounds.width.rounded())),\(Int(bounds.height.rounded()))"
+    }
+
+    private static func overlapRatio(_ lhs: WindowBounds, _ rhs: WindowBounds) -> Double {
+        let minArea = max(1.0, min(
+            max(0.0, lhs.width) * max(0.0, lhs.height),
+            max(0.0, rhs.width) * max(0.0, rhs.height)
+        ))
+        return lhs.intersectionArea(with: rhs) / minArea
+    }
+
+    private static func normalizedDiagnosticTitle(title: String, appName: String) -> String {
+        let text = title.isEmpty ? appName : title
+        return text.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+    }
+
+    private static func isLowInformationDiagnosticTitle(title: String, appName: String, otherAppName: String) -> Bool {
+        let trimmedTitle = title.trimmingCharacters(in: .whitespacesAndNewlines)
+        if trimmedTitle.isEmpty { return true }
+
+        let normalizedTitle = trimmedTitle.lowercased()
+        return (!appName.isEmpty && normalizedTitle == appName.lowercased()) ||
+            (!otherAppName.isEmpty && normalizedTitle == otherAppName.lowercased())
+    }
+
+    private static func sameBundleFamily(_ lhs: String, _ rhs: String) -> Bool {
+        if lhs == rhs { return true }
+        let chromeBundle = "com.google.Chrome"
+        let chromeAppPrefix = "com.google.Chrome.app."
+        return (lhs == chromeBundle && rhs.hasPrefix(chromeAppPrefix)) ||
+            (rhs == chromeBundle && lhs.hasPrefix(chromeAppPrefix))
+    }
+
+    private static func safeDiagnosticText(_ text: String) -> String {
+        let trimmed = text
+            .replacingOccurrences(of: "\n", with: " ")
+            .replacingOccurrences(of: "\t", with: " ")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        let collapsed = trimmed.split(whereSeparator: { $0.isWhitespace }).joined(separator: "_")
+        let sanitized = collapsed.map { character -> Character in
+            if character.isLetter || character.isNumber || character == "." || character == "-" || character == "_" || character == ":" {
+                return character
+            }
+            return "_"
+        }
+        let value = String(sanitized)
+        if value.isEmpty { return "_" }
+        if value.count <= 80 { return value }
+        return String(value.prefix(77)) + "..."
+    }
+
+    private struct TaskbarWindowDiagnostic {
+        let id: UInt32
+        let bundleId: String
+        let title: String
+        let appName: String
+        let isHidden: Bool
+        let isMinimized: Bool
+        let screenId: UInt32
+
+        init?(item: TaskbarItem) {
+            guard case .window(let id, let bundleId, let title, let appName, let isHidden, let isMinimized, let screenId) = item else {
+                return nil
+            }
+            self.id = id.raw
+            self.bundleId = bundleId
+            self.title = title
+            self.appName = appName
+            self.isHidden = isHidden
+            self.isMinimized = isMinimized
+            self.screenId = screenId
         }
     }
 
@@ -1162,6 +1513,8 @@ final class EventLoop {
             systemIndicatorVisuals: systemIndicatorPayload.visuals,
             itemBackgroundColorsByDisplay: itemBackgroundColorsByDisplay
         )
+        recordTaskbarItemIdentityDiagnostics(displayIds: displayIds)
+        recordTaskbarItemSnapshotDiagnostics(displayIds: displayIds)
 
         let sharedBarViewSignature = Self.sharedBarViewDataSignature(
             userCustomItemIds: userCustomItemIds,
@@ -4090,6 +4443,7 @@ final class EventLoop {
     private func handleDisplayReconfiguration(_ event: DisplayReconfigurationObserver.Event) {
         guard config.experimentalWindowLayoutMemoryEnabled else { return }
         guard event.isBeginConfiguration else { return }
+        windowLayoutMemoryService.noteDisplayChangeStarted()
         windowLayoutMemoryService.captureBeforeDisplayChange()
     }
 
@@ -4291,6 +4645,7 @@ final class EventLoop {
         let now = CFAbsoluteTimeGetCurrent()
         lastSpaceChangeAt = now
         lastScreenParametersChangeAt = now
+        windowLayoutMemoryService.noteDisplayChangeStarted()
         screenChangeToken &+= 1
         let token = screenChangeToken
         let displayCountBeforeReconcile = panelManager.allPanels.count
@@ -4328,14 +4683,16 @@ final class EventLoop {
         cancelWindowLayoutMemoryRestoreWorkItems()
         isWindowLayoutMemoryRestoreActive = true
 
-        let delays: [TimeInterval] = [1.20, 2.80, 5.50, 10.0]
+        let delays = Self.windowLayoutMemoryRestoreDelays
         for (index, delay) in delays.enumerated() {
             let work = DispatchWorkItem { [weak self] in
                 guard let self else { return }
                 guard self.screenChangeToken == token else { return }
                 guard self.config.experimentalWindowLayoutMemoryEnabled else { return }
 
-                let summary = self.windowLayoutMemoryService.restoreAfterDisplayChangeIfPossible()
+                let summary = self.windowLayoutMemoryService.restoreAfterDisplayChangeIfPossible(
+                    minStableDuration: Self.windowLayoutMemoryTopologyStableDuration
+                )
                 PerformanceMonitor.shared.recordDiagnosticSnapshot(
                     "window_layout_memory_restore_pass",
                     minIntervalSeconds: 0.5

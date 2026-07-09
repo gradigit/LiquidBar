@@ -144,17 +144,123 @@ struct WindowManagerAXGatingTests {
         #expect(WindowLogicalIdentity.deduped([first, second]).map(\.id.raw) == [10, 20])
     }
 
+    @Test func logicalIdentityCollapsesContainedSameTitleAuxiliarySurface() {
+        let main = entry(
+            id: 10,
+            pid: 42,
+            bundleId: "org.mozilla.firefox",
+            title: "Models - Venice.ai - Venice Uncensored AI",
+            appName: "Firefox",
+            bounds: WindowBounds(x: 0, y: 30, width: 1280, height: 1378)
+        ).info
+        let auxiliary = entry(
+            id: 20,
+            pid: 42,
+            bundleId: "org.mozilla.firefox",
+            title: "Models - Venice.ai - Venice Uncensored AI",
+            appName: "Firefox",
+            bounds: WindowBounds(x: 186, y: 1236, width: 280, height: 194)
+        ).info
+
+        #expect(WindowLogicalIdentity.isLikelySameWindow(main, auxiliary))
+        #expect(WindowLogicalIdentity.deduped([auxiliary, main]).map(\.id.raw) == [10])
+    }
+
+    @Test func logicalIdentityCollapsesLowInformationTitleDuplicateAtSameBounds() {
+        let real = entry(
+            id: 10,
+            pid: 42,
+            title: "axis terminal - Admin | axis",
+            appName: "axis terminal",
+            bounds: WindowBounds(x: 1280, y: 30, width: 1280, height: 1378)
+        ).info
+        let duplicate = entry(
+            id: 20,
+            pid: 42,
+            title: "axis terminal",
+            appName: "axis terminal",
+            bounds: WindowBounds(x: 1280, y: 30, width: 1280, height: 1378)
+        ).info
+
+        #expect(WindowLogicalIdentity.isLikelySameWindow(real, duplicate))
+        #expect(WindowLogicalIdentity.deduped([duplicate, real]).map(\.id.raw) == [10])
+    }
+
+    @Test func logicalIdentityPreservesSameBoundsWithDifferentRealTitles() {
+        let first = entry(
+            id: 10,
+            pid: 42,
+            title: "Document A",
+            bounds: WindowBounds(x: 1280, y: 30, width: 1280, height: 1378)
+        ).info
+        let second = entry(
+            id: 20,
+            pid: 42,
+            title: "Document B",
+            bounds: WindowBounds(x: 1280, y: 30, width: 1280, height: 1378)
+        ).info
+
+        #expect(!WindowLogicalIdentity.isLikelySameWindow(first, second))
+        #expect(WindowLogicalIdentity.deduped([first, second]).map(\.id.raw) == [10, 20])
+    }
+
+    @Test func logicalIdentityCollapsesChromeWrapperFindSurface() {
+        let real = entry(
+            id: 10,
+            pid: 42,
+            bundleId: "com.google.Chrome.app.ncnapjhjgoahlhgibcjoppohjidfieoo",
+            title: "axis terminal - Admin | axis",
+            appName: "axis terminal",
+            bounds: WindowBounds(x: 0, y: 30, width: 1280, height: 1378)
+        ).info
+        let chromeSurface = entry(
+            id: 20,
+            pid: 99,
+            bundleId: "com.google.Chrome",
+            title: "axis terminal",
+            appName: "Google Chrome",
+            bounds: WindowBounds(x: 0, y: 30, width: 1280, height: 1378)
+        ).info
+
+        #expect(WindowLogicalIdentity.isLikelySameWindow(real, chromeSurface))
+        #expect(WindowLogicalIdentity.deduped([chromeSurface, real]).map(\.id.raw) == [10])
+    }
+
+    @Test func logicalIdentityPreservesUnrelatedLowInformationSurface() {
+        let real = entry(
+            id: 10,
+            pid: 42,
+            bundleId: "com.example.real",
+            title: "axis terminal - Admin | axis",
+            appName: "axis terminal",
+            bounds: WindowBounds(x: 0, y: 30, width: 1280, height: 1378)
+        ).info
+        let unrelated = entry(
+            id: 20,
+            pid: 99,
+            bundleId: "com.example.other",
+            title: "axis terminal",
+            appName: "Other",
+            bounds: WindowBounds(x: 0, y: 30, width: 1280, height: 1378)
+        ).info
+
+        #expect(!WindowLogicalIdentity.isLikelySameWindow(real, unrelated))
+        #expect(WindowLogicalIdentity.deduped([real, unrelated]).map(\.id.raw) == [10, 20])
+    }
+
     private func entry(
         id: UInt32,
         pid: pid_t,
+        bundleId: String = "com.example.app",
         title: String,
+        appName: String = "Example",
         bounds: WindowBounds
     ) -> (info: WindowInfo, pid: pid_t) {
         (
             info: WindowInfo(
                 id: WindowId(id),
-                bundleId: BundleId("com.example.app"),
-                appName: "Example",
+                bundleId: BundleId(bundleId),
+                appName: appName,
                 title: title,
                 isHidden: false,
                 isMinimized: false,

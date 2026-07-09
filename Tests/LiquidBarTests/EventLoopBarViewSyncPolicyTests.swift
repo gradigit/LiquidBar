@@ -94,6 +94,7 @@ struct EventLoopBarViewSyncPolicyTests {
         #expect(delays == delays.sorted())
         #expect(delays.first == 0.05)
         #expect(delays.contains(where: { $0 >= 1.0 }))
+        #expect(delays.last == 24.0)
     }
 
     @Test func screenChangeSuppressesWindowAdjustmentDuringDisplayRestore() {
@@ -107,22 +108,30 @@ struct EventLoopBarViewSyncPolicyTests {
         )
         #expect(
             EventLoop.shouldSuppressWindowAdjustmentForScreenChange(
-                now: 107.99,
+                now: 129.99,
                 lastScreenChangeAt: lastScreenChangeAt
             )
         )
         #expect(
             EventLoop.shouldSuppressWindowAdjustmentForScreenChange(
-                now: 108.01,
+                now: 130.01,
                 lastScreenChangeAt: lastScreenChangeAt
             ) == false
         )
         #expect(
             EventLoop.shouldSuppressWindowAdjustmentForScreenChange(
-                now: 108.01,
+                now: 130.01,
                 lastScreenChangeAt: 0
             ) == false
         )
+    }
+
+    @Test func windowLayoutMemoryRestoreWaitsForLateStableDisplayTopology() {
+        let delays = EventLoop.windowLayoutMemoryRestoreDelays
+        #expect(delays == delays.sorted())
+        #expect(delays.first == 6.0)
+        #expect(delays.last == 36.0)
+        #expect(EventLoop.windowLayoutMemoryTopologyStableDuration >= 2.0)
     }
 
     @Test func stableLayoutMemoryCaptureWaitsForIdleDisplayState() {

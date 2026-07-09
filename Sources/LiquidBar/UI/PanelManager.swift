@@ -408,6 +408,63 @@ final class PanelManager {
         return covered
     }
 
+    struct FullscreenCoverCandidate {
+        let pid: pid_t
+        let ownerName: String
+        let layer: Int
+        let bounds: WindowBounds
+    }
+
+    nonisolated static func fullscreenCoveredDisplayIds(
+        candidates: [FullscreenCoverCandidate],
+        displayBoundsById: [CGDirectDisplayID: CGRect],
+        currentProcessId: pid_t
+    ) -> Set<CGDirectDisplayID> {
+        var covered = Set<CGDirectDisplayID>()
+        guard !candidates.isEmpty, !displayBoundsById.isEmpty else { return covered }
+
+        for candidate in candidates {
+            guard candidate.pid != currentProcessId,
+                  candidate.layer == 0,
+                  !isSystemFullscreenCoverCandidate(candidate.ownerName) else {
+                continue
+            }
+
+            let window = WindowInfo(
+                id: WindowId(0),
+                bundleId: BundleId(""),
+                appName: candidate.ownerName,
+                title: "",
+                isHidden: false,
+                isMinimized: false,
+                monitorId: MonitorId(0),
+                bounds: candidate.bounds
+            )
+            for (displayId, displayBounds) in displayBoundsById {
+                if shouldTreatAsFullscreenCover(window: window, displayBounds: displayBounds) {
+                    covered.insert(displayId)
+                }
+            }
+        }
+
+        return covered
+    }
+
+    private nonisolated static func isSystemFullscreenCoverCandidate(_ ownerName: String) -> Bool {
+        switch ownerName.lowercased() {
+        case "dock",
+             "window server",
+             "windowserver",
+             "systemuiserver",
+             "system ui server",
+             "control center",
+             "notification center":
+            return true
+        default:
+            return false
+        }
+    }
+
     nonisolated static func shouldTreatAsFullscreenCover(
         window: WindowInfo,
         displayBounds: CGRect,
@@ -527,7 +584,7 @@ final class PanelManager {
     /// the window becomes visible — no glass rebuild needed.
     private func handleOcclusionRecovery(panel: LiquidBarPanel, displayId: CGDirectDisplayID) {
         if let config = lastConfig,
-           let screen = panel.screen ?? NSScreen.screens.first(where: { $0.displayId == displayId }) {
+           let screen = currentScreen(for: displayId) ?? panel.screen {
             panel.updatePosition(
                 screen: screen,
                 barHeight: panel.barHeight,
@@ -565,10 +622,11 @@ final class PanelManager {
         config: Config,
         renderer: NativeBarRenderer
     ) {
+        let displayBoundsById = Self.activeDisplayBoundsById()
         let coveredDisplays = Self.fullscreenCoveredDisplayIds(
             windows: windows,
-            displayBoundsById: Self.activeDisplayBoundsById()
-        )
+            displayBoundsById: displayBoundsById
+        ).union(Self.rawFullscreenCoveredDisplayIds(displayBoundsById: displayBoundsById))
         guard coveredDisplays != fullscreenSuppressedDisplayIds else { return }
         fullscreenSuppressedDisplayIds = coveredDisplays
         applyTaskbarSuppression(config: config, renderer: renderer)
@@ -583,7 +641,7 @@ final class PanelManager {
             }
 
             guard panel.isSpaceSuppressed else { continue }
-            guard let screen = panel.screen ?? NSScreen.screens.first(where: { $0.displayId == displayId }) else {
+            guard let screen = currentScreen(for: displayId) ?? panel.screen else {
                 panel.setSpaceSuppressed(false)
                 resumeDisplayLink(for: displayId)
                 continue
@@ -627,6 +685,48 @@ final class PanelManager {
             result[displayId] = CGDisplayBounds(displayId)
         }
         return result
+    }
+
+    private func currentScreen(for displayId: CGDirectDisplayID) -> NSScreen? {
+        NSScreen.screens.first(where: { $0.displayId == displayId })
+    }
+
+    private static func rawFullscreenCoveredDisplayIds(
+        displayBoundsById: [CGDirectDisplayID: CGRect]
+    ) -> Set<CGDirectDisplayID> {
+        guard !displayBoundsById.isEmpty else { return [] }
+
+        let options: CGWindowListOption = [.optionOnScreenOnly, .excludeDesktopElements]
+        let windowList = CGWindowListCopyWindowInfo(options, kCGNullWindowID) as? [[CFString: Any]] ?? []
+        let candidates = windowList.compactMap(Self.fullscreenCoverCandidate(from:))
+        return fullscreenCoveredDisplayIds(
+            candidates: candidates,
+            displayBoundsById: displayBoundsById,
+            currentProcessId: getpid()
+        )
+    }
+
+    private static func fullscreenCoverCandidate(from dict: [CFString: Any]) -> FullscreenCoverCandidate? {
+        guard let pid = dict[kCGWindowOwnerPID] as? Int32 else { return nil }
+        let ownerName = dict[kCGWindowOwnerName as CFString] as? String ?? ""
+        let layer = dict[kCGWindowLayer as CFString] as? Int ?? 0
+
+        guard let boundsDict = dict[kCGWindowBounds as CFString] as? [String: Double] else {
+            return nil
+        }
+
+        let bounds = WindowBounds(
+            x: boundsDict["X"] ?? 0,
+            y: boundsDict["Y"] ?? 0,
+            width: boundsDict["Width"] ?? 0,
+            height: boundsDict["Height"] ?? 0
+        )
+        return FullscreenCoverCandidate(
+            pid: pid,
+            ownerName: ownerName,
+            layer: layer,
+            bounds: bounds
+        )
     }
 
     // MARK: - Display Link Management
@@ -709,7 +809,7 @@ final class PanelManager {
               let renderer else {
             return false
         }
-        guard let screen = panel.screen ?? NSScreen.screens.first(where: { $0.displayId == displayId }) else {
+        guard let screen = currentScreen(for: displayId) ?? panel.screen else {
             return false
         }
 

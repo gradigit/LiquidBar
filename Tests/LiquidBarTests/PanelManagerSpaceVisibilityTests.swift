@@ -88,6 +88,44 @@ struct PanelManagerSpaceVisibilityTests {
         #expect(covered.isEmpty)
     }
 
+    @Test func rawFullscreenVideoSurfaceSuppressesCoveredDisplay() {
+        let display: CGDirectDisplayID = 1
+        let covered = PanelManager.fullscreenCoveredDisplayIds(
+            candidates: [
+                .init(
+                    pid: 101,
+                    ownerName: "Google Chrome",
+                    layer: 0,
+                    bounds: WindowBounds(x: 0, y: 0, width: 1440, height: 900)
+                )
+            ],
+            displayBoundsById: [
+                display: CGRect(x: 0, y: 0, width: 1440, height: 900)
+            ],
+            currentProcessId: 999
+        )
+
+        #expect(covered == [display])
+    }
+
+    @Test func rawFullscreenCoverIgnoresOwnSystemAndNonzeroLayerSurfaces() {
+        let display: CGDirectDisplayID = 1
+        let bounds = WindowBounds(x: 0, y: 0, width: 1440, height: 900)
+        let covered = PanelManager.fullscreenCoveredDisplayIds(
+            candidates: [
+                .init(pid: 100, ownerName: "LiquidBar", layer: 0, bounds: bounds),
+                .init(pid: 101, ownerName: "Dock", layer: 0, bounds: bounds),
+                .init(pid: 102, ownerName: "Google Chrome", layer: 25, bounds: bounds)
+            ],
+            displayBoundsById: [
+                display: CGRect(x: 0, y: 0, width: 1440, height: 900)
+            ],
+            currentProcessId: 100
+        )
+
+        #expect(covered.isEmpty)
+    }
+
     private func makeWindow(
         id: UInt32 = 1,
         bundleId: String = "com.example.app",

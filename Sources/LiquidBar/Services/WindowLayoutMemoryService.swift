@@ -63,6 +63,8 @@ final class WindowLayoutMemoryService {
 
     private var snapshotBatch: SnapshotBatch?
     private let snapshotMaxAge: CFTimeInterval
+    private var lastRestoreTopology: DisplayTopology?
+    private var lastRestoreTopologyObservedAt: CFAbsoluteTime = 0
 
     init(snapshotMaxAge: CFTimeInterval = 30 * 60) {
         self.snapshotMaxAge = snapshotMaxAge
@@ -76,6 +78,11 @@ final class WindowLayoutMemoryService {
     @discardableResult
     func refreshStableSnapshot() -> CaptureSummary {
         captureCurrentLayout(mode: .stableRefresh)
+    }
+
+    func noteDisplayChangeStarted() {
+        lastRestoreTopology = nil
+        lastRestoreTopologyObservedAt = 0
     }
 
     private func captureCurrentLayout(mode: CaptureMode) -> CaptureSummary {
@@ -129,7 +136,9 @@ final class WindowLayoutMemoryService {
     }
 
     @discardableResult
-    func restoreAfterDisplayChangeIfPossible() -> RestoreSummary {
+    func restoreAfterDisplayChangeIfPossible(
+        minStableDuration: CFTimeInterval = 0
+    ) -> RestoreSummary {
         guard let batch = snapshotBatch else {
             return RestoreSummary(
                 reason: "no_snapshot",
@@ -141,11 +150,33 @@ final class WindowLayoutMemoryService {
         }
 
         let context = Self.currentDisplayContext()
+        let now = CFAbsoluteTimeGetCurrent()
+        if minStableDuration > 0 {
+            let stability = Self.topologyStability(
+                currentTopology: context.topology,
+                previousTopology: lastRestoreTopology,
+                previousObservedAt: lastRestoreTopologyObservedAt,
+                now: now,
+                minStableDuration: minStableDuration
+            )
+            lastRestoreTopology = context.topology
+            lastRestoreTopologyObservedAt = stability.observedAt
+            guard stability.isStable else {
+                return RestoreSummary(
+                    reason: "topology_unstable",
+                    capturedWindowCount: batch.totalWindowCount,
+                    completedWindowCount: 0,
+                    restoredWindowCount: 0,
+                    remainingWindowCount: batch.pendingWindows.count
+                )
+            }
+        }
+
         guard Self.shouldAttemptRestore(
             snapshotTopology: batch.topology,
             currentTopology: context.topology,
             capturedAt: batch.capturedAt,
-            now: CFAbsoluteTimeGetCurrent(),
+            now: now,
             maxAge: snapshotMaxAge
         ) else {
             return RestoreSummary(
@@ -228,6 +259,7 @@ final class WindowLayoutMemoryService {
 
     func clear() {
         snapshotBatch = nil
+        noteDisplayChangeStarted()
     }
 
     nonisolated static func shouldAttemptRestore(
@@ -240,7 +272,49 @@ final class WindowLayoutMemoryService {
         guard now - capturedAt <= maxAge else { return false }
         let snapshotDisplayUUIDs = snapshotTopology.displayUUIDs
         guard !snapshotDisplayUUIDs.isEmpty else { return false }
-        return snapshotDisplayUUIDs.isSubset(of: currentTopology.displayUUIDs)
+        guard snapshotDisplayUUIDs.isSubset(of: currentTopology.displayUUIDs) else { return false }
+
+        let currentDisplaysByUUID = Dictionary(
+            currentTopology.displays.map { ($0.uuid, $0.frame) },
+            uniquingKeysWith: { first, _ in first }
+        )
+        for snapshotDisplay in snapshotTopology.displays {
+            guard let currentFrame = currentDisplaysByUUID[snapshotDisplay.uuid],
+                  displayFramesAreCompatible(snapshotDisplay.frame, currentFrame) else {
+                return false
+            }
+        }
+        return true
+    }
+
+    nonisolated static func displayFramesAreCompatible(
+        _ snapshot: RoundedRect,
+        _ current: RoundedRect
+    ) -> Bool {
+        let snapshotWidth = Double(snapshot.width)
+        let snapshotHeight = Double(snapshot.height)
+        let currentWidth = Double(current.width)
+        let currentHeight = Double(current.height)
+        guard snapshotWidth > 1,
+              snapshotHeight > 1,
+              currentWidth > 1,
+              currentHeight > 1 else {
+            return false
+        }
+
+        let widthRatio = currentWidth / snapshotWidth
+        let heightRatio = currentHeight / snapshotHeight
+        guard widthRatio >= 0.40,
+              widthRatio <= 2.50,
+              heightRatio >= 0.40,
+              heightRatio <= 2.50 else {
+            return false
+        }
+
+        let snapshotAspect = snapshotWidth / snapshotHeight
+        let currentAspect = currentWidth / currentHeight
+        let aspectRatio = currentAspect / snapshotAspect
+        return aspectRatio >= 0.88 && aspectRatio <= 1.12
     }
 
     nonisolated static func shouldReplaceSnapshot(
@@ -256,6 +330,25 @@ final class WindowLayoutMemoryService {
         if newTopology.displayCount > existingTopology.displayCount { return true }
         if allowsSameDisplaySetReplacement, newTopology.displayCount > 1 { return true }
         return false
+    }
+
+    nonisolated static func topologyStability(
+        currentTopology: DisplayTopology,
+        previousTopology: DisplayTopology?,
+        previousObservedAt: CFAbsoluteTime,
+        now: CFAbsoluteTime,
+        minStableDuration: CFTimeInterval
+    ) -> (isStable: Bool, observedAt: CFAbsoluteTime) {
+        guard minStableDuration > 0 else {
+            return (true, now)
+        }
+        guard currentTopology.displayCount > 0 else {
+            return (false, now)
+        }
+        guard previousTopology == currentTopology, previousObservedAt > 0 else {
+            return (false, now)
+        }
+        return (now - previousObservedAt >= minStableDuration, previousObservedAt)
     }
 
     nonisolated static func remainingSnapshots(
