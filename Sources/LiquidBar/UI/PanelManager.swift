@@ -413,6 +413,21 @@ final class PanelManager {
         let ownerName: String
         let layer: Int
         let bounds: WindowBounds
+        let alpha: Double
+
+        init(
+            pid: pid_t,
+            ownerName: String,
+            layer: Int,
+            bounds: WindowBounds,
+            alpha: Double = 1.0
+        ) {
+            self.pid = pid
+            self.ownerName = ownerName
+            self.layer = layer
+            self.bounds = bounds
+            self.alpha = alpha
+        }
     }
 
     nonisolated static func fullscreenCoveredDisplayIds(
@@ -423,25 +438,20 @@ final class PanelManager {
         var covered = Set<CGDirectDisplayID>()
         guard !candidates.isEmpty, !displayBoundsById.isEmpty else { return covered }
 
+        // Browser video fullscreen surfaces may use an elevated WindowServer
+        // layer. Treat every opaque app surface with true display-sized geometry
+        // consistently; transient controls and overlays must not expose the bar.
         for candidate in candidates {
-            guard candidate.pid != currentProcessId,
-                  candidate.layer == 0,
-                  !isSystemFullscreenCoverCandidate(candidate.ownerName) else {
-                continue
-            }
+            guard isEligibleFullscreenCoverCandidate(
+                candidate,
+                currentProcessId: currentProcessId
+            ) else { continue }
 
-            let window = WindowInfo(
-                id: WindowId(0),
-                bundleId: BundleId(""),
-                appName: candidate.ownerName,
-                title: "",
-                isHidden: false,
-                isMinimized: false,
-                monitorId: MonitorId(0),
-                bounds: candidate.bounds
-            )
             for (displayId, displayBounds) in displayBoundsById {
-                if shouldTreatAsFullscreenCover(window: window, displayBounds: displayBounds) {
+                if shouldTreatAsFullscreenCover(
+                    bounds: candidate.bounds,
+                    displayBounds: displayBounds
+                ) {
                     covered.insert(displayId)
                 }
             }
@@ -450,9 +460,19 @@ final class PanelManager {
         return covered
     }
 
+    private nonisolated static func isEligibleFullscreenCoverCandidate(
+        _ candidate: FullscreenCoverCandidate,
+        currentProcessId: pid_t
+    ) -> Bool {
+        candidate.pid != currentProcessId &&
+            candidate.alpha > 0.01 &&
+            !isSystemFullscreenCoverCandidate(candidate.ownerName)
+    }
+
     private nonisolated static func isSystemFullscreenCoverCandidate(_ ownerName: String) -> Bool {
         switch ownerName.lowercased() {
         case "dock",
+             "loginwindow",
              "window server",
              "windowserver",
              "systemuiserver",
@@ -471,6 +491,20 @@ final class PanelManager {
         coverageThreshold: Double = 0.985,
         dimensionTolerance: Double = 32.0
     ) -> Bool {
+        shouldTreatAsFullscreenCover(
+            bounds: window.bounds,
+            displayBounds: displayBounds,
+            coverageThreshold: coverageThreshold,
+            dimensionTolerance: dimensionTolerance
+        )
+    }
+
+    private nonisolated static func shouldTreatAsFullscreenCover(
+        bounds: WindowBounds,
+        displayBounds: CGRect,
+        coverageThreshold: Double = 0.985,
+        dimensionTolerance: Double = 32.0
+    ) -> Bool {
         guard displayBounds.width > 1, displayBounds.height > 1 else { return false }
         let display = WindowBounds(
             x: displayBounds.origin.x,
@@ -479,13 +513,13 @@ final class PanelManager {
             height: displayBounds.height
         )
         let displayArea = max(1.0, display.width * display.height)
-        let coverage = window.bounds.intersectionArea(with: display) / displayArea
+        let coverage = bounds.intersectionArea(with: display) / displayArea
         guard coverage >= coverageThreshold else { return false }
 
-        return window.bounds.width >= display.width - dimensionTolerance &&
-            window.bounds.height >= display.height - dimensionTolerance &&
-            window.bounds.width <= display.width + dimensionTolerance &&
-            window.bounds.height <= display.height + dimensionTolerance
+        return bounds.width >= display.width - dimensionTolerance &&
+            bounds.height >= display.height - dimensionTolerance &&
+            bounds.width <= display.width + dimensionTolerance &&
+            bounds.height <= display.height + dimensionTolerance
     }
 
     func updateItems(
@@ -712,7 +746,8 @@ final class PanelManager {
             pid: surface.pid,
             ownerName: surface.ownerName,
             layer: surface.layer,
-            bounds: surface.bounds
+            bounds: surface.bounds,
+            alpha: (dict[kCGWindowAlpha as CFString] as? NSNumber)?.doubleValue ?? 1.0
         )
     }
 

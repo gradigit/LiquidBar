@@ -108,14 +108,163 @@ struct PanelManagerSpaceVisibilityTests {
         #expect(covered == [display])
     }
 
-    @Test func rawFullscreenCoverIgnoresOwnSystemAndNonzeroLayerSurfaces() {
+    @Test func elevatedBrowserVideoSurfaceSuppressesCoveredDisplay() {
+        let display: CGDirectDisplayID = 1
+        let covered = PanelManager.fullscreenCoveredDisplayIds(
+            candidates: [
+                .init(
+                    pid: 102,
+                    ownerName: "Safari",
+                    layer: 25,
+                    bounds: WindowBounds(x: 0, y: 0, width: 1440, height: 900)
+                )
+            ],
+            displayBoundsById: [
+                display: CGRect(x: 0, y: 0, width: 1440, height: 900)
+            ],
+            currentProcessId: 100
+        )
+
+        #expect(covered == [display])
+    }
+
+    @Test func browserControlsDoNotExposeBarOverElevatedFullscreenSurface() {
+        let display: CGDirectDisplayID = 1
+        let covered = PanelManager.fullscreenCoveredDisplayIds(
+            candidates: [
+                .init(
+                    pid: 104,
+                    ownerName: "Safari Web Content",
+                    layer: 30,
+                    bounds: WindowBounds(x: 0, y: 700, width: 1440, height: 200)
+                ),
+                .init(
+                    pid: 102,
+                    ownerName: "Safari",
+                    layer: 25,
+                    bounds: WindowBounds(x: 0, y: 0, width: 1440, height: 900)
+                )
+            ],
+            displayBoundsById: [
+                display: CGRect(x: 0, y: 0, width: 1440, height: 900)
+            ],
+            currentProcessId: 100
+        )
+
+        #expect(covered == [display])
+    }
+
+    @Test func unrelatedOverlayDoesNotExposeBarOverFullscreenSurface() {
+        let display: CGDirectDisplayID = 1
+        let covered = PanelManager.fullscreenCoveredDisplayIds(
+            candidates: [
+                .init(
+                    pid: 103,
+                    ownerName: "Notes",
+                    layer: 0,
+                    bounds: WindowBounds(x: 100, y: 100, width: 1000, height: 650)
+                ),
+                .init(
+                    pid: 102,
+                    ownerName: "Safari",
+                    layer: 25,
+                    bounds: WindowBounds(x: 0, y: 0, width: 1440, height: 900)
+                )
+            ],
+            displayBoundsById: [
+                display: CGRect(x: 0, y: 0, width: 1440, height: 900)
+            ],
+            currentProcessId: 100
+        )
+
+        #expect(covered == [display])
+    }
+
+    @Test func smallAuxiliaryWindowDoesNotBlockFullscreenSurface() {
+        let display: CGDirectDisplayID = 1
+        let covered = PanelManager.fullscreenCoveredDisplayIds(
+            candidates: [
+                .init(
+                    pid: 103,
+                    ownerName: "Password Manager",
+                    layer: 40,
+                    bounds: WindowBounds(x: 1120, y: 40, width: 240, height: 160)
+                ),
+                .init(
+                    pid: 102,
+                    ownerName: "Safari",
+                    layer: 25,
+                    bounds: WindowBounds(x: 0, y: 0, width: 1440, height: 900)
+                )
+            ],
+            displayBoundsById: [
+                display: CGRect(x: 0, y: 0, width: 1440, height: 900)
+            ],
+            currentProcessId: 100
+        )
+
+        #expect(covered == [display])
+    }
+
+    @Test func elevatedFullscreenSurfaceSuppressesOnlyItsDisplay() {
+        let primary: CGDirectDisplayID = 1
+        let secondary: CGDirectDisplayID = 2
+        let covered = PanelManager.fullscreenCoveredDisplayIds(
+            candidates: [
+                .init(
+                    pid: 102,
+                    ownerName: "Safari",
+                    layer: 25,
+                    bounds: WindowBounds(x: 1440, y: -180, width: 2560, height: 1440)
+                ),
+                .init(
+                    pid: 103,
+                    ownerName: "Codex",
+                    layer: 0,
+                    bounds: WindowBounds(x: 0, y: 25, width: 1440, height: 875)
+                )
+            ],
+            displayBoundsById: [
+                primary: CGRect(x: 0, y: 0, width: 1440, height: 900),
+                secondary: CGRect(x: 1440, y: -180, width: 2560, height: 1440)
+            ],
+            currentProcessId: 100
+        )
+
+        #expect(covered == [secondary])
+    }
+
+    @Test func windowSpanningDisplaysDoesNotCountAsFullscreenOnEitherDisplay() {
+        let primary: CGDirectDisplayID = 1
+        let secondary: CGDirectDisplayID = 2
+        let covered = PanelManager.fullscreenCoveredDisplayIds(
+            candidates: [
+                .init(
+                    pid: 102,
+                    ownerName: "Presentation App",
+                    layer: 0,
+                    bounds: WindowBounds(x: 0, y: 0, width: 4000, height: 1440)
+                )
+            ],
+            displayBoundsById: [
+                primary: CGRect(x: 0, y: 0, width: 1440, height: 900),
+                secondary: CGRect(x: 1440, y: 0, width: 2560, height: 1440)
+            ],
+            currentProcessId: 100
+        )
+
+        #expect(covered.isEmpty)
+    }
+
+    @Test func rawFullscreenCoverIgnoresOwnSystemAndTransparentSurfaces() {
         let display: CGDirectDisplayID = 1
         let bounds = WindowBounds(x: 0, y: 0, width: 1440, height: 900)
         let covered = PanelManager.fullscreenCoveredDisplayIds(
             candidates: [
                 .init(pid: 100, ownerName: "LiquidBar", layer: 0, bounds: bounds),
                 .init(pid: 101, ownerName: "Dock", layer: 0, bounds: bounds),
-                .init(pid: 102, ownerName: "Google Chrome", layer: 25, bounds: bounds)
+                .init(pid: 102, ownerName: "loginwindow", layer: 2004, bounds: bounds),
+                .init(pid: 103, ownerName: "Safari", layer: 25, bounds: bounds, alpha: 0)
             ],
             displayBoundsById: [
                 display: CGRect(x: 0, y: 0, width: 1440, height: 900)
