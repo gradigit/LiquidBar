@@ -437,10 +437,12 @@ final class PanelManager {
     ) -> Set<CGDirectDisplayID> {
         var covered = Set<CGDirectDisplayID>()
         guard !candidates.isEmpty, !displayBoundsById.isEmpty else { return covered }
+        let candidatesByPid = Dictionary(grouping: candidates, by: \.pid)
 
         // Browser video fullscreen surfaces may use an elevated WindowServer
         // layer. Treat every opaque app surface with true display-sized geometry
-        // consistently; transient controls and overlays must not expose the bar.
+        // consistently. Safari can instead expose fullscreen as a layer-0 content
+        // window plus a transparent elevated strip for hidden menu-bar chrome.
         for candidate in candidates {
             guard isEligibleFullscreenCoverCandidate(
                 candidate,
@@ -450,6 +452,10 @@ final class PanelManager {
             for (displayId, displayBounds) in displayBoundsById {
                 if shouldTreatAsFullscreenCover(
                     bounds: candidate.bounds,
+                    displayBounds: displayBounds
+                ) || shouldTreatAsFullscreenComposite(
+                    primary: candidate,
+                    companions: candidatesByPid[candidate.pid] ?? [],
                     displayBounds: displayBounds
                 ) {
                     covered.insert(displayId)
@@ -483,6 +489,76 @@ final class PanelManager {
         default:
             return false
         }
+    }
+
+    private nonisolated static func shouldTreatAsFullscreenComposite(
+        primary: FullscreenCoverCandidate,
+        companions: [FullscreenCoverCandidate],
+        displayBounds: CGRect,
+        coverageThreshold: Double = 0.985,
+        dimensionTolerance: Double = 32.0
+    ) -> Bool {
+        guard primary.layer == 0,
+              displayBounds.width > 1,
+              displayBounds.height > 1 else {
+            return false
+        }
+
+        let displayRect = displayBounds.standardized
+        let displayArea = Double(displayRect.width * displayRect.height)
+        let primaryRect = CGRect(
+            x: primary.bounds.x,
+            y: primary.bounds.y,
+            width: primary.bounds.width,
+            height: primary.bounds.height
+        ).standardized
+        let primaryIntersection = primaryRect.intersection(displayRect)
+        guard !primaryIntersection.isNull,
+              !primaryIntersection.isEmpty,
+              Double(primaryIntersection.width * primaryIntersection.height) / displayArea >= 0.80,
+              abs(primaryRect.minX - displayRect.minX) <= dimensionTolerance,
+              abs(primaryRect.maxX - displayRect.maxX) <= dimensionTolerance,
+              abs(primaryRect.maxY - displayRect.maxY) <= dimensionTolerance else {
+            return false
+        }
+
+        for companion in companions where companion.layer != 0 && companion.alpha <= 0.01 {
+            let companionRect = CGRect(
+                x: companion.bounds.x,
+                y: companion.bounds.y,
+                width: companion.bounds.width,
+                height: companion.bounds.height
+            ).standardized
+            let companionIntersection = companionRect.intersection(displayRect)
+            guard !companionIntersection.isNull, !companionIntersection.isEmpty else { continue }
+
+            let overlap = primaryIntersection.intersection(companionIntersection)
+            let overlapArea = overlap.isNull || overlap.isEmpty
+                ? 0.0
+                : Double(overlap.width * overlap.height)
+            let unionArea = Double(primaryIntersection.width * primaryIntersection.height) +
+                Double(companionIntersection.width * companionIntersection.height) -
+                overlapArea
+            guard unionArea / displayArea >= coverageThreshold else { continue }
+
+            let unionRect = primaryRect.union(companionRect)
+            let unionBounds = WindowBounds(
+                x: unionRect.origin.x,
+                y: unionRect.origin.y,
+                width: unionRect.width,
+                height: unionRect.height
+            )
+            if shouldTreatAsFullscreenCover(
+                bounds: unionBounds,
+                displayBounds: displayBounds,
+                coverageThreshold: coverageThreshold,
+                dimensionTolerance: dimensionTolerance
+            ) {
+                return true
+            }
+        }
+
+        return false
     }
 
     nonisolated static func shouldTreatAsFullscreenCover(

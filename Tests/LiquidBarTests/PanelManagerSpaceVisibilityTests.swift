@@ -128,6 +128,80 @@ struct PanelManagerSpaceVisibilityTests {
         #expect(covered == [display])
     }
 
+    @Test func safariMenuBarCompositeSuppressesCoveredDisplay() {
+        let display: CGDirectDisplayID = 1
+        let covered = PanelManager.fullscreenCoveredDisplayIds(
+            candidates: [
+                .init(
+                    pid: 102,
+                    ownerName: "Safari",
+                    layer: 26,
+                    bounds: WindowBounds(x: 0, y: 0, width: 1710, height: 39),
+                    alpha: 0
+                ),
+                .init(
+                    pid: 102,
+                    ownerName: "Safari",
+                    layer: 0,
+                    bounds: WindowBounds(x: 0, y: 39, width: 1710, height: 1073)
+                )
+            ],
+            displayBoundsById: [
+                display: CGRect(x: 0, y: 0, width: 1710, height: 1112)
+            ],
+            currentProcessId: 100
+        )
+
+        #expect(covered == [display])
+    }
+
+    @Test func menuBarInsetWindowWithoutTransparentCompanionIsNotFullscreen() {
+        let display: CGDirectDisplayID = 1
+        let covered = PanelManager.fullscreenCoveredDisplayIds(
+            candidates: [
+                .init(
+                    pid: 102,
+                    ownerName: "Safari",
+                    layer: 0,
+                    bounds: WindowBounds(x: 0, y: 39, width: 1710, height: 1073)
+                )
+            ],
+            displayBoundsById: [
+                display: CGRect(x: 0, y: 0, width: 1710, height: 1112)
+            ],
+            currentProcessId: 100
+        )
+
+        #expect(covered.isEmpty)
+    }
+
+    @Test func unrelatedTransparentStripDoesNotMakeWindowFullscreen() {
+        let display: CGDirectDisplayID = 1
+        let covered = PanelManager.fullscreenCoveredDisplayIds(
+            candidates: [
+                .init(
+                    pid: 103,
+                    ownerName: "Overlay",
+                    layer: 26,
+                    bounds: WindowBounds(x: 0, y: 0, width: 1710, height: 39),
+                    alpha: 0
+                ),
+                .init(
+                    pid: 102,
+                    ownerName: "Safari",
+                    layer: 0,
+                    bounds: WindowBounds(x: 0, y: 39, width: 1710, height: 1073)
+                )
+            ],
+            displayBoundsById: [
+                display: CGRect(x: 0, y: 0, width: 1710, height: 1112)
+            ],
+            currentProcessId: 100
+        )
+
+        #expect(covered.isEmpty)
+    }
+
     @Test func browserControlsDoNotExposeBarOverElevatedFullscreenSurface() {
         let display: CGDirectDisplayID = 1
         let covered = PanelManager.fullscreenCoveredDisplayIds(
