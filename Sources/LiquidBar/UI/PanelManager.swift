@@ -410,25 +410,33 @@ final class PanelManager {
 
     struct FullscreenCoverCandidate {
         let pid: pid_t
+        let windowId: UInt32
         let ownerName: String
         let layer: Int
         let bounds: WindowBounds
         let alpha: Double
+        let activationPolicyRawValue: Int
 
         init(
             pid: pid_t,
+            windowId: UInt32 = 0,
             ownerName: String,
             layer: Int,
             bounds: WindowBounds,
-            alpha: Double = 1.0
+            alpha: Double = 1.0,
+            activationPolicyRawValue: Int = NSApplication.ActivationPolicy.regular.rawValue
         ) {
             self.pid = pid
+            self.windowId = windowId
             self.ownerName = ownerName
             self.layer = layer
             self.bounds = bounds
             self.alpha = alpha
+            self.activationPolicyRawValue = activationPolicyRawValue
         }
     }
+
+    nonisolated static let unresolvedActivationPolicyRawValue = -1
 
     nonisolated static func fullscreenCoveredDisplayIds(
         candidates: [FullscreenCoverCandidate],
@@ -438,6 +446,11 @@ final class PanelManager {
         var covered = Set<CGDirectDisplayID>()
         guard !candidates.isEmpty, !displayBoundsById.isEmpty else { return covered }
         let candidatesByPid = Dictionary(grouping: candidates, by: \.pid)
+        let ignoredGlobalOverlayPids = Set(unresolvedGlobalOverlayMatches(
+            candidates: candidates,
+            displayBoundsById: displayBoundsById,
+            currentProcessId: currentProcessId
+        ).keys)
 
         // Browser video fullscreen surfaces may use an elevated WindowServer
         // layer. Treat every opaque app surface with true display-sized geometry
@@ -446,7 +459,8 @@ final class PanelManager {
         for candidate in candidates {
             guard isEligibleFullscreenCoverCandidate(
                 candidate,
-                currentProcessId: currentProcessId
+                currentProcessId: currentProcessId,
+                ignoredGlobalOverlayPids: ignoredGlobalOverlayPids
             ) else { continue }
 
             for (displayId, displayBounds) in displayBoundsById {
@@ -466,12 +480,143 @@ final class PanelManager {
         return covered
     }
 
+    nonisolated static func fullscreenSuppressionDiagnosticEvidence(
+        windows: [WindowInfo],
+        candidates: [FullscreenCoverCandidate],
+        displayBoundsById: [CGDirectDisplayID: CGRect],
+        currentProcessId: pid_t
+    ) -> [String] {
+        var evidence: [String] = []
+        let ignoredGlobalOverlayPids = Set(unresolvedGlobalOverlayMatches(
+            candidates: candidates,
+            displayBoundsById: displayBoundsById,
+            currentProcessId: currentProcessId
+        ).keys)
+
+        for window in windows where !window.isHidden && !window.isMinimized {
+            guard !systemApps.contains(window.bundleId.raw) else { continue }
+            for (displayId, displayBounds) in displayBoundsById where
+                shouldTreatAsFullscreenCover(window: window, displayBounds: displayBounds) {
+                evidence.append(
+                    "tracked:d=\(displayId),wid=\(window.id.raw),bundle=\(diagnosticToken(window.bundleId.raw)),bounds=\(diagnosticBounds(window.bounds))"
+                )
+            }
+        }
+
+        let candidatesByPid = Dictionary(grouping: candidates, by: \.pid)
+        for candidate in candidates {
+            guard isEligibleFullscreenCoverCandidate(
+                candidate,
+                currentProcessId: currentProcessId,
+                ignoredGlobalOverlayPids: ignoredGlobalOverlayPids
+            ) else { continue }
+
+            for (displayId, displayBounds) in displayBoundsById {
+                if shouldTreatAsFullscreenCover(bounds: candidate.bounds, displayBounds: displayBounds) {
+                    evidence.append(
+                        "raw_direct:d=\(displayId),pid=\(candidate.pid),wid=\(candidate.windowId),owner=\(diagnosticToken(candidate.ownerName)),layer=\(candidate.layer),policy=\(candidate.activationPolicyRawValue),alpha=\(diagnosticAlpha(candidate.alpha)),bounds=\(diagnosticBounds(candidate.bounds))"
+                    )
+                } else if shouldTreatAsFullscreenComposite(
+                    primary: candidate,
+                    companions: candidatesByPid[candidate.pid] ?? [],
+                    displayBounds: displayBounds
+                ) {
+                    let companions = (candidatesByPid[candidate.pid] ?? [])
+                        .filter { $0.layer != 0 && $0.alpha <= 0.01 }
+                        .map {
+                            "wid=\($0.windowId),layer=\($0.layer),alpha=\(diagnosticAlpha($0.alpha)),bounds=\(diagnosticBounds($0.bounds))"
+                        }
+                        .joined(separator: "+")
+                    evidence.append(
+                        "raw_composite:d=\(displayId),pid=\(candidate.pid),wid=\(candidate.windowId),owner=\(diagnosticToken(candidate.ownerName)),layer=\(candidate.layer),policy=\(candidate.activationPolicyRawValue),alpha=\(diagnosticAlpha(candidate.alpha)),bounds=\(diagnosticBounds(candidate.bounds)),companions={\(companions)}"
+                    )
+                }
+            }
+        }
+
+        return evidence.sorted()
+    }
+
+    nonisolated static func ignoredGlobalOverlayDiagnosticEvidence(
+        candidates: [FullscreenCoverCandidate],
+        displayBoundsById: [CGDirectDisplayID: CGRect],
+        currentProcessId: pid_t
+    ) -> [String] {
+        let matches = unresolvedGlobalOverlayMatches(
+            candidates: candidates,
+            displayBoundsById: displayBoundsById,
+            currentProcessId: currentProcessId
+        )
+
+        return matches.keys.sorted().map { pid in
+            let owners = Set(candidates.lazy.filter { $0.pid == pid }.map { diagnosticToken($0.ownerName) })
+                .sorted()
+                .joined(separator: "+")
+            let displayIds = matches[pid]?.displayIds.sorted().map(String.init).joined(separator: ",") ?? ""
+            let windowIds = matches[pid]?.windowIds.sorted().map(String.init).joined(separator: ",") ?? ""
+            return "pid=\(pid),owner=\(owners),policy=\(unresolvedActivationPolicyRawValue),displays=[\(displayIds)],windows=[\(windowIds)]"
+        }
+    }
+
+    private typealias GlobalOverlayMatch = (
+        displayIds: Set<CGDirectDisplayID>,
+        windowIds: Set<UInt32>
+    )
+
+    private nonisolated static func unresolvedGlobalOverlayMatches(
+        candidates: [FullscreenCoverCandidate],
+        displayBoundsById: [CGDirectDisplayID: CGRect],
+        currentProcessId: pid_t
+    ) -> [pid_t: GlobalOverlayMatch] {
+        guard displayBoundsById.count > 1 else { return [:] }
+
+        var matchesByPid: [pid_t: GlobalOverlayMatch] = [:]
+        for candidate in candidates where
+            candidate.pid != currentProcessId &&
+            candidate.layer != 0 &&
+            candidate.alpha > 0.01 &&
+            candidate.activationPolicyRawValue == unresolvedActivationPolicyRawValue &&
+            !isSystemFullscreenCoverCandidate(candidate.ownerName) {
+            for (displayId, displayBounds) in displayBoundsById where
+                shouldTreatAsFullscreenCover(bounds: candidate.bounds, displayBounds: displayBounds) {
+                var match = matchesByPid[candidate.pid] ?? (displayIds: [], windowIds: [])
+                match.displayIds.insert(displayId)
+                match.windowIds.insert(candidate.windowId)
+                matchesByPid[candidate.pid] = match
+            }
+        }
+
+        let activeDisplayIds = Set(displayBoundsById.keys)
+        return matchesByPid.filter { _, match in
+            match.displayIds == activeDisplayIds &&
+                match.windowIds.count >= activeDisplayIds.count
+        }
+    }
+
+    private nonisolated static func diagnosticToken(_ value: String) -> String {
+        let sanitized = value.map { character -> Character in
+            character.isLetter || character.isNumber || ".-_".contains(character) ? character : "_"
+        }
+        return String(sanitized.prefix(80))
+    }
+
+    private nonisolated static func diagnosticBounds(_ bounds: WindowBounds) -> String {
+        "\(Int(bounds.x.rounded())),\(Int(bounds.y.rounded())),\(Int(bounds.width.rounded())),\(Int(bounds.height.rounded()))"
+    }
+
+    private nonisolated static func diagnosticAlpha(_ alpha: Double) -> String {
+        String(format: "%.3f", alpha)
+    }
+
     private nonisolated static func isEligibleFullscreenCoverCandidate(
         _ candidate: FullscreenCoverCandidate,
-        currentProcessId: pid_t
+        currentProcessId: pid_t,
+        ignoredGlobalOverlayPids: Set<pid_t>
     ) -> Bool {
         candidate.pid != currentProcessId &&
             candidate.alpha > 0.01 &&
+            candidate.activationPolicyRawValue != NSApplication.ActivationPolicy.prohibited.rawValue &&
+            !ignoredGlobalOverlayPids.contains(candidate.pid) &&
             !isSystemFullscreenCoverCandidate(candidate.ownerName)
     }
 
@@ -719,12 +864,25 @@ final class PanelManager {
         config: Config,
         renderer: NativeBarRenderer
     ) {
+        let previousSuppressed = spaceSuppressedDisplayIds
         let transition = Self.taskbarSpaceTransition(
             currentSpaceInfoByDisplay: currentSpaceInfoByDisplay,
             previousSuppressed: spaceSuppressedDisplayIds
         )
         spaceSuppressedDisplayIds = transition.suppressed
         applyTaskbarSuppression(config: config, renderer: renderer)
+        guard previousSuppressed != spaceSuppressedDisplayIds else { return }
+
+        PerformanceMonitor.shared.recordDiagnosticSnapshot(
+            "panel_visibility_transition",
+            minIntervalSeconds: 0
+        ) {
+            let types = currentSpaceInfoByDisplay
+                .map { "\($0.key):\($0.value.type)" }
+                .sorted()
+                .joined(separator: ",")
+            return "source=space previous=\(Self.diagnosticDisplayIds(previousSuppressed)) current=\(Self.diagnosticDisplayIds(self.spaceSuppressedDisplayIds)) types=[\(types)] \(self.visibilityDiagnosticSummary())"
+        }
     }
 
     func reconcileFullscreenWindowSuppression(
@@ -733,13 +891,51 @@ final class PanelManager {
         renderer: NativeBarRenderer
     ) {
         let displayBoundsById = Self.activeDisplayBoundsById()
-        let coveredDisplays = Self.fullscreenCoveredDisplayIds(
+        let trackedCoveredDisplays = Self.fullscreenCoveredDisplayIds(
             windows: windows,
             displayBoundsById: displayBoundsById
-        ).union(Self.rawFullscreenCoveredDisplayIds(displayBoundsById: displayBoundsById))
+        )
+        let rawCandidates = Self.rawFullscreenCoverCandidates(
+            displayBoundsById: displayBoundsById
+        )
+        if PerformanceMonitor.shared.isDevDiagnosticsEnabled {
+            let ignoredOverlayEvidence = Self.ignoredGlobalOverlayDiagnosticEvidence(
+                candidates: rawCandidates,
+                displayBoundsById: displayBoundsById,
+                currentProcessId: getpid()
+            )
+            if !ignoredOverlayEvidence.isEmpty {
+                PerformanceMonitor.shared.recordDiagnosticSnapshot(
+                    "fullscreen_overlay_ignored",
+                    minIntervalSeconds: 2.0
+                ) {
+                    "evidence=[\(ignoredOverlayEvidence.joined(separator: ";"))]"
+                }
+            }
+        }
+        let rawCoveredDisplays = Self.fullscreenCoveredDisplayIds(
+            candidates: rawCandidates,
+            displayBoundsById: displayBoundsById,
+            currentProcessId: getpid()
+        )
+        let coveredDisplays = trackedCoveredDisplays.union(rawCoveredDisplays)
         guard coveredDisplays != fullscreenSuppressedDisplayIds else { return }
+        let previousSuppressed = fullscreenSuppressedDisplayIds
         fullscreenSuppressedDisplayIds = coveredDisplays
         applyTaskbarSuppression(config: config, renderer: renderer)
+
+        PerformanceMonitor.shared.recordDiagnosticSnapshot(
+            "panel_visibility_transition",
+            minIntervalSeconds: 0
+        ) {
+            let evidence = Self.fullscreenSuppressionDiagnosticEvidence(
+                windows: windows,
+                candidates: rawCandidates,
+                displayBoundsById: displayBoundsById,
+                currentProcessId: getpid()
+            ).joined(separator: ";")
+            return "source=fullscreen previous=\(Self.diagnosticDisplayIds(previousSuppressed)) current=\(Self.diagnosticDisplayIds(self.fullscreenSuppressedDisplayIds)) tracked=\(Self.diagnosticDisplayIds(trackedCoveredDisplays)) raw=\(Self.diagnosticDisplayIds(rawCoveredDisplays)) evidence=[\(evidence)] \(self.visibilityDiagnosticSummary())"
+        }
     }
 
     private func applyTaskbarSuppression(config: Config, renderer: NativeBarRenderer) {
@@ -801,30 +997,108 @@ final class PanelManager {
         NSScreen.screens.first(where: { $0.displayId == displayId })
     }
 
-    private static func rawFullscreenCoveredDisplayIds(
+    private static func rawFullscreenCoverCandidates(
         displayBoundsById: [CGDirectDisplayID: CGRect]
-    ) -> Set<CGDirectDisplayID> {
-        guard !displayBoundsById.isEmpty else { return [] }
-
+    ) -> [FullscreenCoverCandidate] {
         let options: CGWindowListOption = [.optionOnScreenOnly, .excludeDesktopElements]
         let windowList = CGWindowListCopyWindowInfo(options, kCGNullWindowID) as? [[CFString: Any]] ?? []
-        let candidates = windowList.compactMap(Self.fullscreenCoverCandidate(from:))
-        return fullscreenCoveredDisplayIds(
+        var candidates: [FullscreenCoverCandidate] = []
+        candidates.reserveCapacity(windowList.count)
+
+        for dict in windowList {
+            guard let surface = WindowServerSurface(dict) else { continue }
+            candidates.append(Self.fullscreenCoverCandidate(
+                from: dict,
+                surface: surface,
+                activationPolicyRawValue: unresolvedActivationPolicyRawValue
+            ))
+        }
+
+        let policyRelevantPids = fullscreenGeometryCandidatePids(
             candidates: candidates,
             displayBoundsById: displayBoundsById,
             currentProcessId: getpid()
         )
+        guard !policyRelevantPids.isEmpty else { return candidates }
+
+        let activationPolicyByPid = Dictionary(uniqueKeysWithValues: policyRelevantPids.compactMap { pid in
+            NSRunningApplication(processIdentifier: pid).map { (pid, $0.activationPolicy.rawValue) }
+        })
+        guard !activationPolicyByPid.isEmpty else { return candidates }
+
+        return candidates.map { candidate in
+            guard let activationPolicyRawValue = activationPolicyByPid[candidate.pid] else {
+                return candidate
+            }
+            return FullscreenCoverCandidate(
+                pid: candidate.pid,
+                windowId: candidate.windowId,
+                ownerName: candidate.ownerName,
+                layer: candidate.layer,
+                bounds: candidate.bounds,
+                alpha: candidate.alpha,
+                activationPolicyRawValue: activationPolicyRawValue
+            )
+        }
     }
 
-    private static func fullscreenCoverCandidate(from dict: [CFString: Any]) -> FullscreenCoverCandidate? {
-        guard let surface = WindowServerSurface(dict) else { return nil }
+    nonisolated static func fullscreenGeometryCandidatePids(
+        candidates: [FullscreenCoverCandidate],
+        displayBoundsById: [CGDirectDisplayID: CGRect],
+        currentProcessId: pid_t
+    ) -> Set<pid_t> {
+        guard !candidates.isEmpty, !displayBoundsById.isEmpty else { return [] }
+        let candidatesByPid = Dictionary(grouping: candidates, by: \.pid)
+        var pids = Set<pid_t>()
+
+        for candidate in candidates where
+            candidate.pid != currentProcessId &&
+            candidate.alpha > 0.01 &&
+            !isSystemFullscreenCoverCandidate(candidate.ownerName) {
+            for displayBounds in displayBoundsById.values where
+                shouldTreatAsFullscreenCover(bounds: candidate.bounds, displayBounds: displayBounds) ||
+                shouldTreatAsFullscreenComposite(
+                    primary: candidate,
+                    companions: candidatesByPid[candidate.pid] ?? [],
+                    displayBounds: displayBounds
+                ) {
+                pids.insert(candidate.pid)
+                break
+            }
+        }
+
+        return pids
+    }
+
+    private static func fullscreenCoverCandidate(
+        from dict: [CFString: Any],
+        surface: WindowServerSurface,
+        activationPolicyRawValue: Int
+    ) -> FullscreenCoverCandidate {
         return FullscreenCoverCandidate(
             pid: surface.pid,
+            windowId: surface.windowId,
             ownerName: surface.ownerName,
             layer: surface.layer,
             bounds: surface.bounds,
-            alpha: (dict[kCGWindowAlpha as CFString] as? NSNumber)?.doubleValue ?? 1.0
+            alpha: (dict[kCGWindowAlpha as CFString] as? NSNumber)?.doubleValue ?? 1.0,
+            activationPolicyRawValue: activationPolicyRawValue
         )
+    }
+
+    func visibilityDiagnosticSummary() -> String {
+        let panelStates = panels.keys.sorted().compactMap { displayId -> String? in
+            guard let panel = panels[displayId] else { return nil }
+            let frame = panel.frame
+            let frameText = "\(Int(frame.origin.x.rounded())),\(Int(frame.origin.y.rounded())),\(Int(frame.width.rounded())),\(Int(frame.height.rounded()))"
+            let alpha = String(format: "%.3f", Double(panel.alphaValue))
+            return "d=\(displayId),visible=\(panel.isVisible ? 1 : 0),suppressed=\(panel.isSpaceSuppressed ? 1 : 0),occluded=\(panel.occlusionState.contains(.visible) ? 0 : 1),alpha=\(alpha),frame=\(frameText)"
+        }
+        return "space=\(Self.diagnosticDisplayIds(spaceSuppressedDisplayIds)) fullscreen=\(Self.diagnosticDisplayIds(fullscreenSuppressedDisplayIds)) panels=[\(panelStates.joined(separator: ";"))]"
+    }
+
+    private nonisolated static func diagnosticDisplayIds(_ displayIds: Set<CGDirectDisplayID>) -> String {
+        "[\(displayIds.sorted().map(String.init).joined(separator: ","))]"
     }
 
     // MARK: - Display Link Management

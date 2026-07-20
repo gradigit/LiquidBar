@@ -1,3 +1,4 @@
+import AppKit
 import CoreGraphics
 import Testing
 @testable import LiquidBar
@@ -202,6 +203,70 @@ struct PanelManagerSpaceVisibilityTests {
         #expect(covered.isEmpty)
     }
 
+    @Test func fullscreenDiagnosticsIdentifyCompositeSurfaceWithoutWindowTitles() {
+        let display: CGDirectDisplayID = 1
+        let evidence = PanelManager.fullscreenSuppressionDiagnosticEvidence(
+            windows: [],
+            candidates: [
+                .init(
+                    pid: 102,
+                    windowId: 11,
+                    ownerName: "Safari",
+                    layer: 26,
+                    bounds: WindowBounds(x: 0, y: 0, width: 1710, height: 39),
+                    alpha: 0
+                ),
+                .init(
+                    pid: 102,
+                    windowId: 12,
+                    ownerName: "Safari",
+                    layer: 0,
+                    bounds: WindowBounds(x: 0, y: 39, width: 1710, height: 1073)
+                )
+            ],
+            displayBoundsById: [
+                display: CGRect(x: 0, y: 0, width: 1710, height: 1112)
+            ],
+            currentProcessId: 100
+        )
+
+        #expect(evidence.count == 1)
+        #expect(evidence[0].contains("raw_composite"))
+        #expect(evidence[0].contains("owner=Safari"))
+        #expect(evidence[0].contains("wid=12"))
+        #expect(evidence[0].contains("companions={wid=11"))
+    }
+
+    @Test func fullscreenDiagnosticsExcludeUnrelatedTransparentCompanion() {
+        let display: CGDirectDisplayID = 1
+        let evidence = PanelManager.fullscreenSuppressionDiagnosticEvidence(
+            windows: [],
+            candidates: [
+                .init(
+                    pid: 103,
+                    windowId: 11,
+                    ownerName: "Overlay",
+                    layer: 26,
+                    bounds: WindowBounds(x: 0, y: 0, width: 1710, height: 39),
+                    alpha: 0
+                ),
+                .init(
+                    pid: 102,
+                    windowId: 12,
+                    ownerName: "Safari",
+                    layer: 0,
+                    bounds: WindowBounds(x: 0, y: 39, width: 1710, height: 1073)
+                )
+            ],
+            displayBoundsById: [
+                display: CGRect(x: 0, y: 0, width: 1710, height: 1112)
+            ],
+            currentProcessId: 100
+        )
+
+        #expect(evidence.isEmpty)
+    }
+
     @Test func browserControlsDoNotExposeBarOverElevatedFullscreenSurface() {
         let display: CGDirectDisplayID = 1
         let covered = PanelManager.fullscreenCoveredDisplayIds(
@@ -347,6 +412,151 @@ struct PanelManagerSpaceVisibilityTests {
         )
 
         #expect(covered.isEmpty)
+    }
+
+    @Test func backgroundOnlyElevatedOverlayDoesNotSuppressTaskbar() {
+        let display1: CGDirectDisplayID = 1
+        let display2: CGDirectDisplayID = 2
+        let display3: CGDirectDisplayID = 3
+        let backgroundOnly = NSApplication.ActivationPolicy.prohibited.rawValue
+        let covered = PanelManager.fullscreenCoveredDisplayIds(
+            candidates: [
+                .init(
+                    pid: 67996,
+                    windowId: 30439,
+                    ownerName: "confetti",
+                    layer: 25,
+                    bounds: WindowBounds(x: 3, y: 1442, width: 1704, height: 1108),
+                    activationPolicyRawValue: backgroundOnly
+                ),
+                .init(
+                    pid: 67996,
+                    windowId: 30438,
+                    ownerName: "confetti",
+                    layer: 25,
+                    bounds: WindowBounds(x: 7, y: 4, width: 2546, height: 1432),
+                    activationPolicyRawValue: backgroundOnly
+                ),
+                .init(
+                    pid: 67996,
+                    windowId: 30440,
+                    ownerName: "confetti",
+                    layer: 25,
+                    bounds: WindowBounds(x: -2553, y: 4, width: 2546, height: 1432),
+                    activationPolicyRawValue: backgroundOnly
+                )
+            ],
+            displayBoundsById: [
+                display1: CGRect(x: 0, y: 1440, width: 1710, height: 1112),
+                display2: CGRect(x: 0, y: 0, width: 2560, height: 1440),
+                display3: CGRect(x: -2560, y: 0, width: 2560, height: 1440)
+            ],
+            currentProcessId: 100
+        )
+
+        #expect(covered.isEmpty)
+    }
+
+    @Test func unresolvedProcessPolicyStillAllowsFullscreenSurface() {
+        let display: CGDirectDisplayID = 1
+        let covered = PanelManager.fullscreenCoveredDisplayIds(
+            candidates: [
+                .init(
+                    pid: 104,
+                    ownerName: "Browser Helper",
+                    layer: 25,
+                    bounds: WindowBounds(x: 0, y: 0, width: 1440, height: 900),
+                    activationPolicyRawValue: PanelManager.unresolvedActivationPolicyRawValue
+                )
+            ],
+            displayBoundsById: [
+                display: CGRect(x: 0, y: 0, width: 1440, height: 900)
+            ],
+            currentProcessId: 100
+        )
+
+        #expect(covered == [display])
+    }
+
+    @Test func unresolvedGlobalOverlayDoesNotSuppressAnyDisplay() {
+        let display1: CGDirectDisplayID = 1
+        let display2: CGDirectDisplayID = 2
+        let display3: CGDirectDisplayID = 3
+        let candidates: [PanelManager.FullscreenCoverCandidate] = [
+            .init(
+                pid: 67996,
+                windowId: 30439,
+                ownerName: "confetti",
+                layer: 25,
+                bounds: WindowBounds(x: 3, y: 1442, width: 1704, height: 1108),
+                activationPolicyRawValue: PanelManager.unresolvedActivationPolicyRawValue
+            ),
+            .init(
+                pid: 67996,
+                windowId: 30438,
+                ownerName: "confetti",
+                layer: 25,
+                bounds: WindowBounds(x: 7, y: 4, width: 2546, height: 1432),
+                activationPolicyRawValue: PanelManager.unresolvedActivationPolicyRawValue
+            ),
+            .init(
+                pid: 67996,
+                windowId: 30440,
+                ownerName: "confetti",
+                layer: 25,
+                bounds: WindowBounds(x: -2553, y: 4, width: 2546, height: 1432),
+                activationPolicyRawValue: PanelManager.unresolvedActivationPolicyRawValue
+            )
+        ]
+        let displays: [CGDirectDisplayID: CGRect] = [
+            display1: CGRect(x: 0, y: 1440, width: 1710, height: 1112),
+            display2: CGRect(x: 0, y: 0, width: 2560, height: 1440),
+            display3: CGRect(x: -2560, y: 0, width: 2560, height: 1440)
+        ]
+
+        let covered = PanelManager.fullscreenCoveredDisplayIds(
+            candidates: candidates,
+            displayBoundsById: displays,
+            currentProcessId: 100
+        )
+        let evidence = PanelManager.ignoredGlobalOverlayDiagnosticEvidence(
+            candidates: candidates,
+            displayBoundsById: displays,
+            currentProcessId: 100
+        )
+
+        #expect(covered.isEmpty)
+        #expect(evidence.count == 1)
+        #expect(evidence[0].contains("displays=[1,2,3]"))
+        #expect(evidence[0].contains("windows=[30438,30439,30440]"))
+    }
+
+    @Test func activationPolicyLookupIsLimitedToFullscreenGeometry() {
+        let display: CGDirectDisplayID = 1
+        let pids = PanelManager.fullscreenGeometryCandidatePids(
+            candidates: [
+                .init(
+                    pid: 101,
+                    ownerName: "Regular Window",
+                    layer: 0,
+                    bounds: WindowBounds(x: 100, y: 100, width: 800, height: 600),
+                    activationPolicyRawValue: PanelManager.unresolvedActivationPolicyRawValue
+                ),
+                .init(
+                    pid: 102,
+                    ownerName: "Fullscreen Surface",
+                    layer: 25,
+                    bounds: WindowBounds(x: 0, y: 0, width: 1440, height: 900),
+                    activationPolicyRawValue: PanelManager.unresolvedActivationPolicyRawValue
+                )
+            ],
+            displayBoundsById: [
+                display: CGRect(x: 0, y: 0, width: 1440, height: 900)
+            ],
+            currentProcessId: 100
+        )
+
+        #expect(pids == [102])
     }
 
     private func makeWindow(

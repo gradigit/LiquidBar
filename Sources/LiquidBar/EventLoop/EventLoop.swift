@@ -753,11 +753,16 @@ final class EventLoop {
                 ))
             }
             let observedWindowsForDiagnostics = windows
-            panelManager.reconcileFullscreenWindowSuppression(
-                windows: windows,
-                config: config,
-                renderer: renderer
-            )
+            PerformanceMonitor.shared.measureSegment(
+                "fullscreen_suppression",
+                thresholdMs: 40.0
+            ) {
+                panelManager.reconcileFullscreenWindowSuppression(
+                    windows: windows,
+                    config: config,
+                    renderer: renderer
+                )
+            }
 
             // Detect new and moved windows
             let observedWindowIds = Set(windows.map { $0.id.raw })
@@ -901,7 +906,7 @@ final class EventLoop {
             let rss = MemoryMonitor.getRSSBytes()
             let thumbnails = thumbnailService.memorySummary()
             let axTrusted = AXIsProcessTrusted()
-            return "reason=\(reason) duration_ms=\(Self.fmt2(durationMs)) enumerated=\(enumerated ? 1 : 0) force=\(forceRender ? 1 : 0) dragging=\(isDragging ? 1 : 0) windows=\(max(0, windowCount)) items=\(currentItems.count) displays=\(panelManager.allPanels.count) poll_interval_ms=\(Self.fmt2(currentPollInterval * 1000.0)) space_age_ms=\(Self.fmt2(spaceAgeMs)) screen_age_ms=\(Self.fmt2(screenAgeMs)) adjust_suppressed=\(adjustmentSuppressed ? 1 : 0) ax_active=\(isAXObserverActive ? 1 : 0) ax_trusted=\(axTrusted ? 1 : 0) metrics=\(config.systemIndicatorsEnabled ? 1 : 0) adjust=\(config.adjustWindowsForTaskbar ? 1 : 0) rss=\(rss) thumbnail_cache_entries=\(thumbnails.cacheEntries) thumbnail_cache_bytes=\(thumbnails.cacheBytes) thumbnail_last_good_entries=\(thumbnails.lastGoodEntries) thumbnail_last_good_bytes=\(thumbnails.lastGoodBytes) thumbnail_queued=\(thumbnails.queuedRequests) thumbnail_inflight=\(thumbnails.inFlightRequests)"
+            return "reason=\(reason) duration_ms=\(Self.fmt2(durationMs)) enumerated=\(enumerated ? 1 : 0) force=\(forceRender ? 1 : 0) dragging=\(isDragging ? 1 : 0) windows=\(max(0, windowCount)) items=\(currentItems.count) displays=\(panelManager.allPanels.count) poll_interval_ms=\(Self.fmt2(currentPollInterval * 1000.0)) space_age_ms=\(Self.fmt2(spaceAgeMs)) screen_age_ms=\(Self.fmt2(screenAgeMs)) adjust_suppressed=\(adjustmentSuppressed ? 1 : 0) ax_active=\(isAXObserverActive ? 1 : 0) ax_trusted=\(axTrusted ? 1 : 0) metrics=\(config.systemIndicatorsEnabled ? 1 : 0) adjust=\(config.adjustWindowsForTaskbar ? 1 : 0) bar_hidden=\(isBarHidden ? 1 : 0) \(panelManager.visibilityDiagnosticSummary()) rss=\(rss) thumbnail_cache_entries=\(thumbnails.cacheEntries) thumbnail_cache_bytes=\(thumbnails.cacheBytes) thumbnail_last_good_entries=\(thumbnails.lastGoodEntries) thumbnail_last_good_bytes=\(thumbnails.lastGoodBytes) thumbnail_queued=\(thumbnails.queuedRequests) thumbnail_inflight=\(thumbnails.inFlightRequests)"
         }
     }
 
@@ -4202,6 +4207,7 @@ final class EventLoop {
     }
 
     private func setBarHidden(_ hidden: Bool) {
+        let previousHidden = isBarHidden
         isBarHidden = hidden
 
         if hidden {
@@ -4221,6 +4227,14 @@ final class EventLoop {
                 panelManager.resumeDisplayLink(for: panel.displayId)
                 panel.animator().alphaValue = 1
             }
+        }
+
+        guard previousHidden != hidden else { return }
+        PerformanceMonitor.shared.recordDiagnosticSnapshot(
+            "panel_visibility_transition",
+            minIntervalSeconds: 0
+        ) {
+            "source=manual_hidden previous=\(previousHidden ? 1 : 0) current=\(hidden ? 1 : 0) \(self.panelManager.visibilityDiagnosticSummary())"
         }
     }
 
@@ -4766,6 +4780,15 @@ final class EventLoop {
                 setBarHidden(true)
             } else {
                 showPanelsAfterDelay()
+            }
+        }
+
+        if reconcileResult != .unchanged {
+            PerformanceMonitor.shared.recordDiagnosticSnapshot(
+                "panel_visibility_transition",
+                minIntervalSeconds: 0
+            ) {
+                "source=screen_reconcile token=\(token) result=\(String(describing: reconcileResult)) bar_hidden=\(self.isBarHidden ? 1 : 0) \(self.panelManager.visibilityDiagnosticSummary())"
             }
         }
 
