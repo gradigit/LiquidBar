@@ -446,12 +446,6 @@ final class PanelManager {
         var covered = Set<CGDirectDisplayID>()
         guard !candidates.isEmpty, !displayBoundsById.isEmpty else { return covered }
         let candidatesByPid = Dictionary(grouping: candidates, by: \.pid)
-        let ignoredGlobalOverlayPids = Set(unresolvedGlobalOverlayMatches(
-            candidates: candidates,
-            displayBoundsById: displayBoundsById,
-            currentProcessId: currentProcessId
-        ).keys)
-
         // Browser video fullscreen surfaces may use an elevated WindowServer
         // layer. Treat every opaque app surface with true display-sized geometry
         // consistently. Safari can instead expose fullscreen as a layer-0 content
@@ -459,8 +453,7 @@ final class PanelManager {
         for candidate in candidates {
             guard isEligibleFullscreenCoverCandidate(
                 candidate,
-                currentProcessId: currentProcessId,
-                ignoredGlobalOverlayPids: ignoredGlobalOverlayPids
+                currentProcessId: currentProcessId
             ) else { continue }
 
             for (displayId, displayBounds) in displayBoundsById {
@@ -487,12 +480,6 @@ final class PanelManager {
         currentProcessId: pid_t
     ) -> [String] {
         var evidence: [String] = []
-        let ignoredGlobalOverlayPids = Set(unresolvedGlobalOverlayMatches(
-            candidates: candidates,
-            displayBoundsById: displayBoundsById,
-            currentProcessId: currentProcessId
-        ).keys)
-
         for window in windows where !window.isHidden && !window.isMinimized {
             guard !systemApps.contains(window.bundleId.raw) else { continue }
             for (displayId, displayBounds) in displayBoundsById where
@@ -507,8 +494,7 @@ final class PanelManager {
         for candidate in candidates {
             guard isEligibleFullscreenCoverCandidate(
                 candidate,
-                currentProcessId: currentProcessId,
-                ignoredGlobalOverlayPids: ignoredGlobalOverlayPids
+                currentProcessId: currentProcessId
             ) else { continue }
 
             for (displayId, displayBounds) in displayBoundsById {
@@ -537,12 +523,12 @@ final class PanelManager {
         return evidence.sorted()
     }
 
-    nonisolated static func ignoredGlobalOverlayDiagnosticEvidence(
+    nonisolated static func ignoredElevatedOverlayDiagnosticEvidence(
         candidates: [FullscreenCoverCandidate],
         displayBoundsById: [CGDirectDisplayID: CGRect],
         currentProcessId: pid_t
     ) -> [String] {
-        let matches = unresolvedGlobalOverlayMatches(
+        let matches = ignoredElevatedOverlayMatches(
             candidates: candidates,
             displayBoundsById: displayBoundsById,
             currentProcessId: currentProcessId
@@ -554,28 +540,29 @@ final class PanelManager {
                 .joined(separator: "+")
             let displayIds = matches[pid]?.displayIds.sorted().map(String.init).joined(separator: ",") ?? ""
             let windowIds = matches[pid]?.windowIds.sorted().map(String.init).joined(separator: ",") ?? ""
-            return "pid=\(pid),owner=\(owners),policy=\(unresolvedActivationPolicyRawValue),displays=[\(displayIds)],windows=[\(windowIds)]"
+            let policies = Set(candidates.lazy.filter { $0.pid == pid }.map(\.activationPolicyRawValue))
+                .sorted()
+                .map(String.init)
+                .joined(separator: ",")
+            return "pid=\(pid),owner=\(owners),policies=[\(policies)],displays=[\(displayIds)],windows=[\(windowIds)]"
         }
     }
 
-    private typealias GlobalOverlayMatch = (
+    private typealias ElevatedOverlayMatch = (
         displayIds: Set<CGDirectDisplayID>,
         windowIds: Set<UInt32>
     )
 
-    private nonisolated static func unresolvedGlobalOverlayMatches(
+    private nonisolated static func ignoredElevatedOverlayMatches(
         candidates: [FullscreenCoverCandidate],
         displayBoundsById: [CGDirectDisplayID: CGRect],
         currentProcessId: pid_t
-    ) -> [pid_t: GlobalOverlayMatch] {
-        guard displayBoundsById.count > 1 else { return [:] }
-
-        var matchesByPid: [pid_t: GlobalOverlayMatch] = [:]
+    ) -> [pid_t: ElevatedOverlayMatch] {
+        var matchesByPid: [pid_t: ElevatedOverlayMatch] = [:]
         for candidate in candidates where
             candidate.pid != currentProcessId &&
-            candidate.layer != 0 &&
             candidate.alpha > 0.01 &&
-            candidate.activationPolicyRawValue == unresolvedActivationPolicyRawValue &&
+            isUnsupportedElevatedOverlayCandidate(candidate) &&
             !isSystemFullscreenCoverCandidate(candidate.ownerName) {
             for (displayId, displayBounds) in displayBoundsById where
                 shouldTreatAsFullscreenCover(bounds: candidate.bounds, displayBounds: displayBounds) {
@@ -585,12 +572,7 @@ final class PanelManager {
                 matchesByPid[candidate.pid] = match
             }
         }
-
-        let activeDisplayIds = Set(displayBoundsById.keys)
-        return matchesByPid.filter { _, match in
-            match.displayIds == activeDisplayIds &&
-                match.windowIds.count >= activeDisplayIds.count
-        }
+        return matchesByPid
     }
 
     private nonisolated static func diagnosticToken(_ value: String) -> String {
@@ -610,14 +592,23 @@ final class PanelManager {
 
     private nonisolated static func isEligibleFullscreenCoverCandidate(
         _ candidate: FullscreenCoverCandidate,
-        currentProcessId: pid_t,
-        ignoredGlobalOverlayPids: Set<pid_t>
+        currentProcessId: pid_t
     ) -> Bool {
         candidate.pid != currentProcessId &&
             candidate.alpha > 0.01 &&
             candidate.activationPolicyRawValue != NSApplication.ActivationPolicy.prohibited.rawValue &&
-            !ignoredGlobalOverlayPids.contains(candidate.pid) &&
+            !isUnsupportedElevatedOverlayCandidate(candidate) &&
             !isSystemFullscreenCoverCandidate(candidate.ownerName)
+    }
+
+    private nonisolated static func isUnsupportedElevatedOverlayCandidate(
+        _ candidate: FullscreenCoverCandidate
+    ) -> Bool {
+        // Ordinary app fullscreen surfaces resolve as regular applications.
+        // Accessory and unresolved processes can still own transient elevated
+        // display overlays; their layer-0 windows remain eligible below.
+        candidate.layer != 0 &&
+            candidate.activationPolicyRawValue != NSApplication.ActivationPolicy.regular.rawValue
     }
 
     private nonisolated static func isSystemFullscreenCoverCandidate(_ ownerName: String) -> Bool {
@@ -899,7 +890,7 @@ final class PanelManager {
             displayBoundsById: displayBoundsById
         )
         if PerformanceMonitor.shared.isDevDiagnosticsEnabled {
-            let ignoredOverlayEvidence = Self.ignoredGlobalOverlayDiagnosticEvidence(
+            let ignoredOverlayEvidence = Self.ignoredElevatedOverlayDiagnosticEvidence(
                 candidates: rawCandidates,
                 displayBoundsById: displayBoundsById,
                 currentProcessId: getpid()

@@ -422,25 +422,25 @@ struct PanelManagerSpaceVisibilityTests {
         let covered = PanelManager.fullscreenCoveredDisplayIds(
             candidates: [
                 .init(
-                    pid: 67996,
-                    windowId: 30439,
-                    ownerName: "confetti",
+                    pid: 201,
+                    windowId: 501,
+                    ownerName: "Visual Effect",
                     layer: 25,
                     bounds: WindowBounds(x: 3, y: 1442, width: 1704, height: 1108),
                     activationPolicyRawValue: backgroundOnly
                 ),
                 .init(
-                    pid: 67996,
-                    windowId: 30438,
-                    ownerName: "confetti",
+                    pid: 201,
+                    windowId: 502,
+                    ownerName: "Visual Effect",
                     layer: 25,
                     bounds: WindowBounds(x: 7, y: 4, width: 2546, height: 1432),
                     activationPolicyRawValue: backgroundOnly
                 ),
                 .init(
-                    pid: 67996,
-                    windowId: 30440,
-                    ownerName: "confetti",
+                    pid: 201,
+                    windowId: 503,
+                    ownerName: "Visual Effect",
                     layer: 25,
                     bounds: WindowBounds(x: -2553, y: 4, width: 2546, height: 1432),
                     activationPolicyRawValue: backgroundOnly
@@ -457,14 +457,14 @@ struct PanelManagerSpaceVisibilityTests {
         #expect(covered.isEmpty)
     }
 
-    @Test func unresolvedProcessPolicyStillAllowsFullscreenSurface() {
+    @Test func unresolvedLayerZeroProcessStillAllowsFullscreenSurface() {
         let display: CGDirectDisplayID = 1
         let covered = PanelManager.fullscreenCoveredDisplayIds(
             candidates: [
                 .init(
                     pid: 104,
                     ownerName: "Browser Helper",
-                    layer: 25,
+                    layer: 0,
                     bounds: WindowBounds(x: 0, y: 0, width: 1440, height: 900),
                     activationPolicyRawValue: PanelManager.unresolvedActivationPolicyRawValue
                 )
@@ -478,31 +478,129 @@ struct PanelManagerSpaceVisibilityTests {
         #expect(covered == [display])
     }
 
+    @Test func accessoryElevatedOverlayDoesNotSuppressSingleDisplay() {
+        let display: CGDirectDisplayID = 1
+        let candidates: [PanelManager.FullscreenCoverCandidate] = [
+            .init(
+                pid: 201,
+                windowId: 501,
+                ownerName: "Visual Effect",
+                layer: 25,
+                bounds: WindowBounds(x: 0, y: 0, width: 1710, height: 1112),
+                activationPolicyRawValue: NSApplication.ActivationPolicy.accessory.rawValue
+            )
+        ]
+        let displays: [CGDirectDisplayID: CGRect] = [
+            display: CGRect(x: 0, y: 0, width: 1710, height: 1112)
+        ]
+
+        let covered = PanelManager.fullscreenCoveredDisplayIds(
+            candidates: candidates,
+            displayBoundsById: displays,
+            currentProcessId: 100
+        )
+        let evidence = PanelManager.ignoredElevatedOverlayDiagnosticEvidence(
+            candidates: candidates,
+            displayBoundsById: displays,
+            currentProcessId: 100
+        )
+
+        #expect(covered.isEmpty)
+        #expect(evidence.count == 1)
+        #expect(evidence[0].contains("policies=[1]"))
+        #expect(evidence[0].contains("displays=[1]"))
+        #expect(evidence[0].contains("windows=[501]"))
+    }
+
+    @Test func unresolvedElevatedOverlayDoesNotSuppressSingleDisplay() {
+        let display: CGDirectDisplayID = 1
+        let covered = PanelManager.fullscreenCoveredDisplayIds(
+            candidates: [
+                .init(
+                    pid: 201,
+                    windowId: 501,
+                    ownerName: "Overlay Helper",
+                    layer: 25,
+                    bounds: WindowBounds(x: 0, y: 0, width: 1710, height: 1112),
+                    activationPolicyRawValue: PanelManager.unresolvedActivationPolicyRawValue
+                )
+            ],
+            displayBoundsById: [
+                display: CGRect(x: 0, y: 0, width: 1710, height: 1112)
+            ],
+            currentProcessId: 100
+        )
+
+        #expect(covered.isEmpty)
+    }
+
+    @Test func accessoryLayerZeroFullscreenSurfaceStillSuppressesSingleDisplay() {
+        let display: CGDirectDisplayID = 1
+        let covered = PanelManager.fullscreenCoveredDisplayIds(
+            candidates: [
+                .init(
+                    pid: 102,
+                    ownerName: "Accessory Window App",
+                    layer: 0,
+                    bounds: WindowBounds(x: 0, y: 0, width: 1710, height: 1112),
+                    activationPolicyRawValue: NSApplication.ActivationPolicy.accessory.rawValue
+                )
+            ],
+            displayBoundsById: [
+                display: CGRect(x: 0, y: 0, width: 1710, height: 1112)
+            ],
+            currentProcessId: 100
+        )
+
+        #expect(covered == [display])
+    }
+
+    @Test func regularElevatedFullscreenSurfaceStillSuppressesSingleDisplay() {
+        let display: CGDirectDisplayID = 1
+        let covered = PanelManager.fullscreenCoveredDisplayIds(
+            candidates: [
+                .init(
+                    pid: 102,
+                    ownerName: "Safari",
+                    layer: 25,
+                    bounds: WindowBounds(x: 0, y: 0, width: 1710, height: 1112),
+                    activationPolicyRawValue: NSApplication.ActivationPolicy.regular.rawValue
+                )
+            ],
+            displayBoundsById: [
+                display: CGRect(x: 0, y: 0, width: 1710, height: 1112)
+            ],
+            currentProcessId: 100
+        )
+
+        #expect(covered == [display])
+    }
+
     @Test func unresolvedGlobalOverlayDoesNotSuppressAnyDisplay() {
         let display1: CGDirectDisplayID = 1
         let display2: CGDirectDisplayID = 2
         let display3: CGDirectDisplayID = 3
         let candidates: [PanelManager.FullscreenCoverCandidate] = [
             .init(
-                pid: 67996,
-                windowId: 30439,
-                ownerName: "confetti",
+                pid: 201,
+                windowId: 501,
+                ownerName: "Visual Effect",
                 layer: 25,
                 bounds: WindowBounds(x: 3, y: 1442, width: 1704, height: 1108),
                 activationPolicyRawValue: PanelManager.unresolvedActivationPolicyRawValue
             ),
             .init(
-                pid: 67996,
-                windowId: 30438,
-                ownerName: "confetti",
+                pid: 201,
+                windowId: 502,
+                ownerName: "Visual Effect",
                 layer: 25,
                 bounds: WindowBounds(x: 7, y: 4, width: 2546, height: 1432),
                 activationPolicyRawValue: PanelManager.unresolvedActivationPolicyRawValue
             ),
             .init(
-                pid: 67996,
-                windowId: 30440,
-                ownerName: "confetti",
+                pid: 201,
+                windowId: 503,
+                ownerName: "Visual Effect",
                 layer: 25,
                 bounds: WindowBounds(x: -2553, y: 4, width: 2546, height: 1432),
                 activationPolicyRawValue: PanelManager.unresolvedActivationPolicyRawValue
@@ -519,7 +617,7 @@ struct PanelManagerSpaceVisibilityTests {
             displayBoundsById: displays,
             currentProcessId: 100
         )
-        let evidence = PanelManager.ignoredGlobalOverlayDiagnosticEvidence(
+        let evidence = PanelManager.ignoredElevatedOverlayDiagnosticEvidence(
             candidates: candidates,
             displayBoundsById: displays,
             currentProcessId: 100
@@ -528,7 +626,7 @@ struct PanelManagerSpaceVisibilityTests {
         #expect(covered.isEmpty)
         #expect(evidence.count == 1)
         #expect(evidence[0].contains("displays=[1,2,3]"))
-        #expect(evidence[0].contains("windows=[30438,30439,30440]"))
+        #expect(evidence[0].contains("windows=[501,502,503]"))
     }
 
     @Test func activationPolicyLookupIsLimitedToFullscreenGeometry() {
