@@ -54,6 +54,10 @@ state of the repository, not a private local worktree.
   `com.liquidbar.test` bundle identifier.
 - Keep generated scan reports and local build artifacts out of git; summarize
   durable conclusions in tracked docs instead.
+- Treat generated documentation tools as review aids, not a second source of
+  truth. Fold verified additions into the most specific canonical document; do
+  not add a parallel generated wiki or write-enabled scheduled documentation
+  workflow without an explicit maintainer decision and security review.
 
 ## Public Research Notes
 

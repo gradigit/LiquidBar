@@ -14,6 +14,26 @@ Use this workflow for changes touching:
 - retained rendering and layer updates
 - previews, switcher UI, panels, or multi-display behavior
 
+## Measurement Layers
+
+A performance claim is stronger when it covers all affected layers:
+
+1. **LiquidBar internals:** poll, render, switcher, animation, and thumbnail
+   timings emitted by `PerformanceMonitor`.
+2. **LiquidBar process:** sustained CPU and resident memory, including idle and
+   interaction phases.
+3. **System impact:** correlated `WindowServer` and capture-service load while
+   LiquidBar enumerates windows, composites panels, or captures thumbnails.
+4. **User-visible behavior:** frame cadence, thumbnail availability, input
+   latency, and correctness on the same display topology.
+
+The checked-in comparator currently gates the first layer. It can optionally
+gate logged FPS and frame-line churn, and `benchmark_performance.sh` records a
+five-second post-capture process sample for diagnosis. It does **not** currently
+calculate or A/B-gate sustained LiquidBar CPU/RSS, `WindowServer` CPU, capture
+service CPU, or system screenshot activity. An internal benchmark `PASS` alone
+therefore does not prove low machine-wide overhead.
+
 ## Preflight
 
 Start from a known source state:
@@ -105,6 +125,11 @@ privacy-safe animation telemetry: animation kind, duration, frame interval p50,
 p95, max, retarget count, and travel distance. These rows are emitted only when
 performance logging or developer diagnostics collection is active.
 
+The privacy-safe poll-state diagnostic also reports whether a poll enumerated,
+its trigger reason, window/item/display counts, RSS, and thumbnail cache/queue
+counts. These diagnostic lines are useful for investigation, but the current
+analyzer does not turn them into comparator metrics.
+
 It also appends a compact local record to:
 
 ```text
@@ -181,6 +206,37 @@ frames, compare frame log count explicitly:
 
 For soak-style investigations where the worst interval should also be a
 relative regression gate, add `--compare-worst`.
+
+## Host-Impact A/B
+
+Add a host-impact pass whenever a change can alter inventory frequency,
+Accessibility work, panel compositing, thumbnail capture, or multi-display
+behavior. Use the same app build mode, config, window set, interaction script,
+display topology, duration, and settling time for baseline and candidate.
+
+Record at minimum:
+
+- LiquidBar CPU and RSS over time, separating idle and interaction phases;
+- `WindowServer` CPU over the same interval;
+- capture-service CPU and thumbnail event counts for preview/switcher work;
+- display count, scaling, refresh rate, and whether windows were moving;
+- screenshot permission state and whether caches started cold or warm.
+
+Activity Monitor, Instruments, or a reviewed local process sampler can provide
+the process-level series. Store raw samples under the ignored run directory and
+summarize only aggregate, privacy-safe values in a PR or tracked research note.
+Do not record window titles, URLs, screenshots, or unrelated process details.
+
+Interpret system processes carefully. `WindowServer` is shared by every visible
+application and display, while capture services are shared system components.
+Higher load that lines up with LiquidBar activity is evidence of correlation;
+attribute it to a specific LiquidBar path only after an A/B toggle or source
+instrumentation changes that path while the rest of the workload stays stable.
+
+For thumbnail investigations, compare cold and warm phases separately. A cache
+hit should not call `SCScreenshotManager.captureImage`; a miss can involve both
+the capture service and `WindowServer`. Include capture counts alongside latency
+so a faster p95 cannot hide a much higher request rate.
 
 ### Switcher Thumbnail Cache A/B
 
@@ -294,4 +350,5 @@ When reporting a performance change, include:
 - interaction pattern or automation used
 - relevant threshold overrides
 - A/B comparison result
+- process and system-impact aggregates when the changed path affects them
 - any remaining uncertainty, such as display layout or manual timing variance

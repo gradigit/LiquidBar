@@ -75,7 +75,7 @@ caveat in release notes.
 Inspect the signed bundle:
 
 ```sh
-codesign -dvvv --entitlements :- build/release/LiquidBar.app
+codesign -dvvv --entitlements - build/release/LiquidBar.app
 codesign --verify --strict --verbose=2 build/release/LiquidBar.app
 spctl -a -vv --type execute build/release/LiquidBar.app
 ```

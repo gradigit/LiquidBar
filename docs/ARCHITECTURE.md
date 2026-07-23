@@ -30,6 +30,11 @@ and one Swift Testing target.
    login items, plugins/providers, thumbnails, logs, updates, and performance
    metrics.
 
+The normal direction is system events and user commands -> `EventLoop` state
+and update decisions -> renderer snapshot -> `PanelManager`/`NativeBarView`
+application. UI interactions should return through `Command` instead of making
+independent mutations to window or rendering state.
+
 ## Source Responsibilities
 
 - `Sources/LiquidBar/App`: lifecycle, status/menu actions, and CLI helpers such
@@ -48,6 +53,23 @@ and one Swift Testing target.
 - `Sources/LiquidBar/Window`: CGWindow/AX-backed inventory, state store, display
   assignment, and stable test window lists.
 
+## Change Guide
+
+Use this as a starting map, then inspect the implementation and focused tests
+before editing. A filename is not a complete ownership boundary.
+
+| Change | Start with | Focused tests |
+| --- | --- | --- |
+| Startup, shutdown, permissions, menu/status integration | `App/AppDelegate.swift` | `AppDelegatePermissionTests.swift` |
+| Config, persisted state, custom items | `Config/` | `ConfigTests.swift`, `UserStateTests.swift`, `CustomItemTests.swift` |
+| Commands, refresh cadence, focus, switcher sessions | `EventLoop/EventLoop.swift`, `Command.swift`, `SwitcherHotkeySession.swift` | `EventLoop*Tests.swift`, `SwitcherSessionStateTests.swift` |
+| Window inventory, filtering, identity, retained state | `Window/WindowManager.swift`, `WindowServerSurface.swift`, `WindowSurfaceClassifier.swift`, `WindowLogicalIdentity.swift`, `WindowStateStore.swift` | `WindowManagerAXGatingTests.swift`, `WindowServerSurfaceTests.swift`, `WindowStateStoreTests.swift` |
+| Accessibility actions, observers, Spaces | `Services/AccessibilityService.swift`, `AXObserverService.swift`, `SpacesService.swift` | `AccessibilityService*Tests.swift`, `AXObserverServiceTests.swift`, `SpacesServiceCurrentSpaceInfoTests.swift` |
+| Experimental display-layout recovery | `Services/WindowLayoutMemoryService.swift`, `Services/AccessibilityService.swift`, `EventLoop/EventLoop.swift` | `WindowLayoutMemoryServiceTests.swift`, `AppDelegatePermissionTests.swift` |
+| Panels, drag, previews, switcher UI | `UI/PanelManager.swift`, `NativeBarView.swift`, preview and switcher panels | `PanelManager*Tests.swift`, `NativeBarView*Tests.swift`, `DragLifecycleTests.swift`, `WindowSwitcherPanelTests.swift` |
+| Retained layout and rendering | `Renderer/NativeBarRenderer.swift` | `NativeBarRenderer*Tests.swift` |
+| Thumbnail capture, scheduling, and retention | `Services/WindowThumbnailService.swift` | `WindowThumbnail*Tests.swift`, `EventLoopThumbnailIntegrationTests.swift` |
+
 ## Rendering Model
 
 The production surface is retained AppKit/Core Animation. LiquidBar avoids a
@@ -63,6 +85,14 @@ Rendering-sensitive code lives primarily in:
 
 Rendering changes should preserve stable dimensions for bar items, avoid layout
 churn when only runtime state changes, and keep idle display-link work low.
+
+Window thumbnails are static, memory-only ScreenCaptureKit images. Requests are
+keyed by window and size tier, coalesced through a priority scheduler, and
+bounded to two in-flight captures and 24 queued requests by default. Larger
+cached tiers may satisfy smaller requests; stale and last-known-good images can
+be shown while an asynchronous refresh runs. Memory pressure removes large
+entries and queued prewarm work. Do not add disk thumbnail persistence because
+captured windows can contain private content.
 
 ## Windowing Model
 
@@ -82,6 +112,63 @@ Windowing-sensitive code lives primarily in:
 Accessibility APIs are used for permission-gated window focus, close, minimize,
 unminimize, and window adjustment operations. Core Graphics is used for window
 inventory. ScreenCaptureKit is used for static preview thumbnails.
+
+### Experimental Display-Layout Recovery
+
+`WindowLayoutMemoryService` is active only when **Remember window layouts after
+display changes** is enabled; applying a saved frame requires Accessibility
+access. It keeps a memory-only baseline of eligible windows on stable
+multi-display topologies. When display reconfiguration begins, the baseline
+becomes recovery-pending and cannot be replaced by transient single-display or
+partially connected states.
+
+After the original display UUIDs and compatible geometry return and remain
+stable, `EventLoop` schedules bounded restore passes. Window matching prefers
+the captured process and window identifier, then a unique same-process title.
+A unique bundle-and-title match may bridge an app process restart only during
+the first 30 minutes; the stricter original-process matches and the pending
+topology baseline remain eligible across longer disconnects. Restored frames
+are translated relative to the target display and clamped to its current
+bounds.
+
+The baseline is not written to disk. It cannot survive a LiquidBar relaunch,
+recreate closed windows, or restore a window whose original display is still
+missing. Diagnostic events record aggregate snapshot identifiers, ages,
+outcomes, and fallback policy without window titles or application content.
+
+## Runtime Cadence And Expensive Boundaries
+
+`EventLoop` is main-actor isolated. Its timer wakes every 0.2 seconds in normal
+operation and every 0.1 seconds while dragging, but a wake does not always
+enumerate windows. A full inventory currently runs when forced, while dragging,
+after a relevant event marks the inventory dirty, or when the 0.8-second
+fallback interval expires. Every debounced AX event batch schedules an
+inventory refresh; only batches that require it invalidate the enumeration
+caches.
+
+`WindowManager.enumerate` performs an on-screen WindowServer pass and may
+perform a separately cached off-screen pass for hidden or minimized windows.
+Off-screen candidates require reliable Space information and AX confirmation
+where ambiguity would otherwise include compositor surfaces. The result then
+passes through title completion, surface classification, logical identity
+deduplication, and retained state.
+
+Some correctness paths add more system work around that inventory:
+
+- fullscreen suppression performs a raw on-screen WindowServer pass so
+  untracked full-display surfaces can still hide the bar;
+- taskbar window adjustment can perform another WindowServer/AX scan when the
+  feature is enabled and its trigger interval is due;
+- switcher prewarm is considered after each inventory, although a content
+  signature prevents unchanged window sets from scheduling new thumbnail work;
+- an actual thumbnail miss reaches `SCScreenshotManager.captureImage`, which can
+  add work in system capture and compositing processes even when LiquidBar's own
+  callback is asynchronous.
+
+These paths favor correctness under Spaces, fullscreen, hidden-window, and
+display-transition edge cases. Changes must measure call frequency and host
+impact, not only the duration of one LiquidBar callback. See
+`docs/PERFORMANCE.md`.
 
 ## Interaction Model
 
