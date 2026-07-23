@@ -176,10 +176,28 @@ struct WindowLayoutMemoryServiceTests {
             maxAge: 60,
             allowsSameDisplaySetReplacement: true
         ))
-        #expect(WindowLayoutMemoryService.shouldReplaceSnapshot(
+        #expect(!WindowLayoutMemoryService.shouldReplaceSnapshot(
             existingTopology: twoDisplayTopology,
             existingCapturedAt: 100,
             newTopology: differentTwoDisplayTopology,
+            now: 120,
+            maxAge: 60,
+            allowsSameDisplaySetReplacement: true
+        ))
+        #expect(!WindowLayoutMemoryService.shouldReplaceSnapshot(
+            existingTopology: twoDisplayTopology,
+            existingCapturedAt: 100,
+            existingRecoveryPending: true,
+            newTopology: twoDisplayTopology,
+            now: 120,
+            maxAge: 60,
+            allowsSameDisplaySetReplacement: true
+        ))
+        #expect(!WindowLayoutMemoryService.shouldReplaceSnapshot(
+            existingTopology: twoDisplayTopology,
+            existingCapturedAt: 100,
+            existingRecoveryPending: true,
+            newTopology: threeDisplayTopology,
             now: 120,
             maxAge: 60,
             allowsSameDisplaySetReplacement: true
@@ -212,6 +230,50 @@ struct WindowLayoutMemoryServiceTests {
             now: 120,
             maxAge: 60
         ))
+    }
+
+    @Test func restoreEligibilityDistinguishesMissingDisplaysFromExpiredSnapshots() {
+        let displayA = WindowLayoutMemoryService.DisplaySignature(
+            uuid: "display-a",
+            frame: WindowLayoutMemoryService.RoundedRect(CGRect(x: 0, y: 0, width: 1440, height: 900))
+        )
+        let displayB = WindowLayoutMemoryService.DisplaySignature(
+            uuid: "display-b",
+            frame: WindowLayoutMemoryService.RoundedRect(CGRect(x: 1440, y: 0, width: 2560, height: 1440))
+        )
+        let multiDisplay = WindowLayoutMemoryService.DisplayTopology(displays: [displayA, displayB])
+        let builtInOnly = WindowLayoutMemoryService.DisplayTopology(displays: [displayA])
+
+        #expect(WindowLayoutMemoryService.restoreEligibility(
+            snapshotTopology: multiDisplay,
+            currentTopology: builtInOnly,
+            capturedAt: 100,
+            now: 120,
+            maxAge: 60
+        ) == .missingDisplays)
+        #expect(WindowLayoutMemoryService.restoreEligibility(
+            snapshotTopology: multiDisplay,
+            currentTopology: multiDisplay,
+            capturedAt: 100,
+            now: 200,
+            maxAge: 60
+        ) == .staleSnapshot)
+        #expect(!WindowLayoutMemoryService.shouldDiscardSnapshotAfterFinalAttempt(
+            reason: WindowLayoutMemoryService.RestoreEligibility.missingDisplays.rawValue
+        ))
+        #expect(WindowLayoutMemoryService.shouldDiscardSnapshotAfterFinalAttempt(
+            reason: WindowLayoutMemoryService.RestoreEligibility.staleSnapshot.rawValue
+        ))
+    }
+
+    @Test func restoreOutcomeTelemetryIsDeterministicAndPrivacySafe() {
+        let summary = WindowLayoutMemoryService.restoreOutcomeSummary([
+            .verificationFailed: 2,
+            .restored: 3,
+            .alreadyAtTarget: 5,
+        ])
+
+        #expect(summary == "already_at_target:5,restored:3,verification_failed:2")
     }
 
     @Test func partialRestoreKeepsUncompletedSnapshotsPending() {

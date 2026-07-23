@@ -31,16 +31,29 @@ final class WindowLayoutMemoryService {
 
     struct RestoreSummary: Equatable, Sendable {
         let reason: String
+        let snapshotID: UInt64?
+        let snapshotAgeMilliseconds: Int
         let capturedWindowCount: Int
         let completedWindowCount: Int
         let restoredWindowCount: Int
         let remainingWindowCount: Int
+        let outcomeCounts: [AccessibilityService.WindowFrameRestoreOutcome: Int]
     }
 
     struct CaptureSummary: Equatable, Sendable {
         let reason: String
+        let snapshotID: UInt64?
         let capturedWindowCount: Int
         let replacedExistingSnapshot: Bool
+        let recoveryPending: Bool
+    }
+
+    enum RestoreEligibility: String, Equatable, Sendable {
+        case eligible
+        case staleSnapshot = "stale_snapshot"
+        case emptySnapshotTopology = "empty_snapshot_topology"
+        case missingDisplays = "missing_displays"
+        case incompatibleDisplayGeometry = "incompatible_display_geometry"
     }
 
     private struct DisplayContext {
@@ -50,19 +63,29 @@ final class WindowLayoutMemoryService {
     }
 
     private struct SnapshotBatch {
+        let id: UInt64
         let topology: DisplayTopology
         let totalWindowCount: Int
         var pendingWindows: [AccessibilityService.RestorableWindowSnapshot]
         let capturedAt: CFAbsoluteTime
+        var recoveryPending: Bool
     }
 
     private enum CaptureMode {
         case displayChange
         case stableRefresh
+
+        var diagnosticName: String {
+            switch self {
+            case .displayChange: "display_change"
+            case .stableRefresh: "stable_refresh"
+            }
+        }
     }
 
     private var snapshotBatch: SnapshotBatch?
     private let snapshotMaxAge: CFTimeInterval
+    private var nextSnapshotID: UInt64 = 0
     private var lastRestoreTopology: DisplayTopology?
     private var lastRestoreTopologyObservedAt: CFAbsoluteTime = 0
 
@@ -72,7 +95,15 @@ final class WindowLayoutMemoryService {
 
     @discardableResult
     func captureBeforeDisplayChange() -> CaptureSummary {
-        captureCurrentLayout(mode: .displayChange)
+        let summary = captureCurrentLayout(mode: .displayChange)
+        noteDisplayChangeStarted()
+        return CaptureSummary(
+            reason: summary.reason,
+            snapshotID: summary.snapshotID,
+            capturedWindowCount: summary.capturedWindowCount,
+            replacedExistingSnapshot: summary.replacedExistingSnapshot,
+            recoveryPending: snapshotBatch?.recoveryPending ?? summary.recoveryPending
+        )
     }
 
     @discardableResult
@@ -83,14 +114,37 @@ final class WindowLayoutMemoryService {
     func noteDisplayChangeStarted() {
         lastRestoreTopology = nil
         lastRestoreTopologyObservedAt = 0
+        snapshotBatch?.recoveryPending = true
     }
 
     private func captureCurrentLayout(mode: CaptureMode) -> CaptureSummary {
+        let now = CFAbsoluteTimeGetCurrent()
+        if case .stableRefresh = mode,
+           let batch = snapshotBatch,
+           batch.recoveryPending,
+           now - batch.capturedAt <= snapshotMaxAge {
+            // Keep the pre-change baseline intact and avoid another WindowServer
+            // enumeration while a disconnected topology is waiting to return.
+            return CaptureSummary(
+                reason: "recovery_pending",
+                snapshotID: batch.id,
+                capturedWindowCount: 0,
+                replacedExistingSnapshot: false,
+                recoveryPending: true
+            )
+        }
+
         let context = Self.currentDisplayContext()
         guard context.topology.displayCount > 1 else {
             // Preserve a useful multi-display snapshot across reconnect. A reconnect
             // begin event is often emitted while only the built-in display is active.
-            return CaptureSummary(reason: "single_display", capturedWindowCount: 0, replacedExistingSnapshot: false)
+            return CaptureSummary(
+                reason: "single_display",
+                snapshotID: snapshotBatch?.id,
+                capturedWindowCount: 0,
+                replacedExistingSnapshot: false,
+                recoveryPending: snapshotBatch?.recoveryPending ?? false
+            )
         }
 
         let windows = AccessibilityService.captureRestorableWindowSnapshots(
@@ -98,40 +152,59 @@ final class WindowLayoutMemoryService {
             displayBoundsByUUID: context.boundsByUUID
         )
         guard !windows.isEmpty else {
-            return CaptureSummary(reason: "no_windows", capturedWindowCount: 0, replacedExistingSnapshot: false)
+            return CaptureSummary(
+                reason: "no_windows",
+                snapshotID: snapshotBatch?.id,
+                capturedWindowCount: 0,
+                replacedExistingSnapshot: false,
+                recoveryPending: snapshotBatch?.recoveryPending ?? false
+            )
         }
 
-        let now = CFAbsoluteTimeGetCurrent()
         let replacesExisting = snapshotBatch != nil
         guard Self.shouldReplaceSnapshot(
             existingTopology: snapshotBatch?.topology,
             existingCapturedAt: snapshotBatch?.capturedAt,
+            existingRecoveryPending: snapshotBatch?.recoveryPending ?? false,
             newTopology: context.topology,
             now: now,
             maxAge: snapshotMaxAge,
-            allowsSameDisplaySetReplacement: mode == .stableRefresh
+            allowsSameDisplaySetReplacement: true
         ) else {
-            Log.event.debug("Window layout memory kept existing snapshot; new capture ignored windows=\(windows.count) displays=\(context.topology.displayCount)")
-            return CaptureSummary(reason: "kept_existing", capturedWindowCount: windows.count, replacedExistingSnapshot: false)
+            Log.event.debug("Window layout memory kept existing snapshot id=\(self.snapshotBatch?.id ?? 0) recovery_pending=\(self.snapshotBatch?.recoveryPending ?? false) new_windows=\(windows.count) displays=\(context.topology.displayCount)")
+            return CaptureSummary(
+                reason: "kept_existing",
+                snapshotID: snapshotBatch?.id,
+                capturedWindowCount: windows.count,
+                replacedExistingSnapshot: false,
+                recoveryPending: snapshotBatch?.recoveryPending ?? false
+            )
         }
 
+        nextSnapshotID &+= 1
+        let snapshotID = nextSnapshotID
+        let recoveryPending = mode == .displayChange
         snapshotBatch = SnapshotBatch(
+            id: snapshotID,
             topology: context.topology,
             totalWindowCount: windows.count,
             pendingWindows: windows,
-            capturedAt: now
+            capturedAt: now,
+            recoveryPending: recoveryPending
         )
-        Log.event.info("Window layout memory captured windows=\(windows.count) displays=\(context.topology.displayCount)")
+        Log.event.info("Window layout memory captured id=\(snapshotID) mode=\(mode.diagnosticName) recovery_pending=\(recoveryPending) windows=\(windows.count) displays=\(context.topology.displayCount)")
         PerformanceMonitor.shared.recordDiagnosticSnapshot(
             "window_layout_memory_capture",
             minIntervalSeconds: 1.0
         ) {
-            "windows=\(windows.count) displays=\(context.topology.displayCount)"
+            "id=\(snapshotID) mode=\(mode.diagnosticName) recovery_pending=\(recoveryPending) windows=\(windows.count) topology=\(Self.topologyGeometrySummary(context.topology))"
         }
         return CaptureSummary(
             reason: "captured",
+            snapshotID: snapshotID,
             capturedWindowCount: windows.count,
-            replacedExistingSnapshot: replacesExisting
+            replacedExistingSnapshot: replacesExisting,
+            recoveryPending: recoveryPending
         )
     }
 
@@ -142,10 +215,13 @@ final class WindowLayoutMemoryService {
         guard let batch = snapshotBatch else {
             return RestoreSummary(
                 reason: "no_snapshot",
+                snapshotID: nil,
+                snapshotAgeMilliseconds: 0,
                 capturedWindowCount: 0,
                 completedWindowCount: 0,
                 restoredWindowCount: 0,
-                remainingWindowCount: 0
+                remainingWindowCount: 0,
+                outcomeCounts: [:]
             )
         }
 
@@ -164,41 +240,55 @@ final class WindowLayoutMemoryService {
             guard stability.isStable else {
                 return RestoreSummary(
                     reason: "topology_unstable",
+                    snapshotID: batch.id,
+                    snapshotAgeMilliseconds: Self.ageMilliseconds(capturedAt: batch.capturedAt, now: now),
                     capturedWindowCount: batch.totalWindowCount,
                     completedWindowCount: 0,
                     restoredWindowCount: 0,
-                    remainingWindowCount: batch.pendingWindows.count
+                    remainingWindowCount: batch.pendingWindows.count,
+                    outcomeCounts: [:]
                 )
             }
         }
 
-        guard Self.shouldAttemptRestore(
+        let eligibility = Self.restoreEligibility(
             snapshotTopology: batch.topology,
             currentTopology: context.topology,
             capturedAt: batch.capturedAt,
             now: now,
             maxAge: snapshotMaxAge
-        ) else {
+        )
+        guard eligibility == .eligible else {
             return RestoreSummary(
-                reason: "topology_mismatch_or_stale",
+                reason: eligibility.rawValue,
+                snapshotID: batch.id,
+                snapshotAgeMilliseconds: Self.ageMilliseconds(capturedAt: batch.capturedAt, now: now),
                 capturedWindowCount: batch.totalWindowCount,
                 completedWindowCount: 0,
                 restoredWindowCount: 0,
-                remainingWindowCount: batch.pendingWindows.count
+                remainingWindowCount: batch.pendingWindows.count,
+                outcomeCounts: [:]
             )
         }
 
         guard AXIsProcessTrusted() else {
             return RestoreSummary(
                 reason: "accessibility_not_trusted",
+                snapshotID: batch.id,
+                snapshotAgeMilliseconds: Self.ageMilliseconds(capturedAt: batch.capturedAt, now: now),
                 capturedWindowCount: batch.totalWindowCount,
                 completedWindowCount: 0,
                 restoredWindowCount: 0,
-                remainingWindowCount: batch.pendingWindows.count
+                remainingWindowCount: batch.pendingWindows.count,
+                outcomeCounts: [:]
             )
         }
 
-        var result = AccessibilityService.RestorableWindowRestoreBatchResult(completedSnapshots: [], restoredWindowCount: 0)
+        var result = AccessibilityService.RestorableWindowRestoreBatchResult(
+            completedSnapshots: [],
+            restoredWindowCount: 0,
+            outcomeCounts: [:]
+        )
         PerformanceMonitor.shared.measureSegment("window_layout_memory_restore", thresholdMs: 120.0) {
             result = AccessibilityService.restoreWindowFrames(
                 batch.pendingWindows,
@@ -215,20 +305,23 @@ final class WindowLayoutMemoryService {
             snapshotBatch = nil
         } else if result.completedWindowCount > 0 {
             snapshotBatch = SnapshotBatch(
+                id: batch.id,
                 topology: batch.topology,
                 totalWindowCount: batch.totalWindowCount,
                 pendingWindows: remaining,
-                capturedAt: batch.capturedAt
+                capturedAt: batch.capturedAt,
+                recoveryPending: true
             )
         }
 
+        let outcomeSummary = Self.restoreOutcomeSummary(result.outcomeCounts)
         if result.completedWindowCount > 0 {
-            Log.event.info("Window layout memory restore pass completed=\(result.completedWindowCount) restored=\(result.restoredWindowCount) remaining=\(remaining.count) captured=\(batch.totalWindowCount)")
+            Log.event.info("Window layout memory restore pass id=\(batch.id) completed=\(result.completedWindowCount) restored=\(result.restoredWindowCount) remaining=\(remaining.count) captured=\(batch.totalWindowCount) outcomes=\(outcomeSummary)")
             PerformanceMonitor.shared.recordDiagnosticSnapshot(
                 "window_layout_memory_restore",
                 minIntervalSeconds: 1.0
             ) {
-                "completed=\(result.completedWindowCount) restored=\(result.restoredWindowCount) remaining=\(remaining.count) captured=\(batch.totalWindowCount)"
+                "id=\(batch.id) age_ms=\(Self.ageMilliseconds(capturedAt: batch.capturedAt, now: now)) completed=\(result.completedWindowCount) restored=\(result.restoredWindowCount) remaining=\(remaining.count) captured=\(batch.totalWindowCount) outcomes=\(outcomeSummary)"
             }
         }
         let reason: String
@@ -244,16 +337,19 @@ final class WindowLayoutMemoryService {
                 "window_layout_memory_restore",
                 minIntervalSeconds: 1.0
             ) {
-                "reason=\(reason) completed=0 restored=0 remaining=\(remaining.count) captured=\(batch.totalWindowCount)"
+                "id=\(batch.id) age_ms=\(Self.ageMilliseconds(capturedAt: batch.capturedAt, now: now)) reason=\(reason) completed=0 restored=0 remaining=\(remaining.count) captured=\(batch.totalWindowCount) outcomes=\(outcomeSummary)"
             }
-            Log.event.debug("Window layout memory restore pass reason=\(reason) remaining=\(remaining.count) captured=\(batch.totalWindowCount)")
+            Log.event.debug("Window layout memory restore pass id=\(batch.id) reason=\(reason) remaining=\(remaining.count) captured=\(batch.totalWindowCount) outcomes=\(outcomeSummary)")
         }
         return RestoreSummary(
             reason: reason,
+            snapshotID: batch.id,
+            snapshotAgeMilliseconds: Self.ageMilliseconds(capturedAt: batch.capturedAt, now: now),
             capturedWindowCount: batch.totalWindowCount,
             completedWindowCount: result.completedWindowCount,
             restoredWindowCount: result.restoredWindowCount,
-            remainingWindowCount: remaining.count
+            remainingWindowCount: remaining.count,
+            outcomeCounts: result.outcomeCounts
         )
     }
 
@@ -269,10 +365,26 @@ final class WindowLayoutMemoryService {
         now: CFAbsoluteTime,
         maxAge: CFTimeInterval
     ) -> Bool {
-        guard now - capturedAt <= maxAge else { return false }
+        restoreEligibility(
+            snapshotTopology: snapshotTopology,
+            currentTopology: currentTopology,
+            capturedAt: capturedAt,
+            now: now,
+            maxAge: maxAge
+        ) == .eligible
+    }
+
+    nonisolated static func restoreEligibility(
+        snapshotTopology: DisplayTopology,
+        currentTopology: DisplayTopology,
+        capturedAt: CFAbsoluteTime,
+        now: CFAbsoluteTime,
+        maxAge: CFTimeInterval
+    ) -> RestoreEligibility {
+        guard now - capturedAt <= maxAge else { return .staleSnapshot }
         let snapshotDisplayUUIDs = snapshotTopology.displayUUIDs
-        guard !snapshotDisplayUUIDs.isEmpty else { return false }
-        guard snapshotDisplayUUIDs.isSubset(of: currentTopology.displayUUIDs) else { return false }
+        guard !snapshotDisplayUUIDs.isEmpty else { return .emptySnapshotTopology }
+        guard snapshotDisplayUUIDs.isSubset(of: currentTopology.displayUUIDs) else { return .missingDisplays }
 
         let currentDisplaysByUUID = Dictionary(
             currentTopology.displays.map { ($0.uuid, $0.frame) },
@@ -281,10 +393,10 @@ final class WindowLayoutMemoryService {
         for snapshotDisplay in snapshotTopology.displays {
             guard let currentFrame = currentDisplaysByUUID[snapshotDisplay.uuid],
                   displayFramesAreCompatible(snapshotDisplay.frame, currentFrame) else {
-                return false
+                return .incompatibleDisplayGeometry
             }
         }
-        return true
+        return .eligible
     }
 
     nonisolated static func displayFramesAreCompatible(
@@ -320,6 +432,7 @@ final class WindowLayoutMemoryService {
     nonisolated static func shouldReplaceSnapshot(
         existingTopology: DisplayTopology?,
         existingCapturedAt: CFAbsoluteTime?,
+        existingRecoveryPending: Bool = false,
         newTopology: DisplayTopology,
         now: CFAbsoluteTime,
         maxAge: CFTimeInterval,
@@ -327,9 +440,43 @@ final class WindowLayoutMemoryService {
     ) -> Bool {
         guard let existingTopology, let existingCapturedAt else { return true }
         if now - existingCapturedAt > maxAge { return true }
+        if existingRecoveryPending { return false }
         if newTopology.displayCount > existingTopology.displayCount { return true }
-        if allowsSameDisplaySetReplacement, newTopology.displayCount > 1 { return true }
+        if allowsSameDisplaySetReplacement,
+           newTopology.displayCount > 1,
+           newTopology.displayUUIDs == existingTopology.displayUUIDs {
+            return true
+        }
         return false
+    }
+
+    nonisolated static func shouldDiscardSnapshotAfterFinalAttempt(reason: String) -> Bool {
+        reason == RestoreEligibility.staleSnapshot.rawValue
+            || reason == RestoreEligibility.emptySnapshotTopology.rawValue
+    }
+
+    private nonisolated static func ageMilliseconds(
+        capturedAt: CFAbsoluteTime,
+        now: CFAbsoluteTime
+    ) -> Int {
+        Int(max(0, (now - capturedAt) * 1000).rounded())
+    }
+
+    nonisolated static func restoreOutcomeSummary(
+        _ counts: [AccessibilityService.WindowFrameRestoreOutcome: Int]
+    ) -> String {
+        let values = AccessibilityService.WindowFrameRestoreOutcome.allCases.compactMap { outcome -> String? in
+            guard let count = counts[outcome], count > 0 else { return nil }
+            return "\(outcome.rawValue):\(count)"
+        }
+        return values.isEmpty ? "none" : values.joined(separator: ",")
+    }
+
+    private nonisolated static func topologyGeometrySummary(_ topology: DisplayTopology) -> String {
+        topology.displays.map { display in
+            let frame = display.frame
+            return "\(frame.x),\(frame.y),\(frame.width)x\(frame.height)"
+        }.joined(separator: "|")
     }
 
     nonisolated static func topologyStability(

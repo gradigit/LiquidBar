@@ -310,6 +310,19 @@ final class AccessibilityService {
         let displayFrame: CGRect
     }
 
+    enum WindowFrameRestoreOutcome: String, CaseIterable, Equatable, Hashable, Sendable {
+        case alreadyAtTarget = "already_at_target"
+        case restored
+        case dragInProgress = "drag_in_progress"
+        case targetDisplayUnavailable = "target_display_unavailable"
+        case liveWindowUnavailable = "live_window_unavailable"
+        case accessibilityWindowsUnavailable = "accessibility_windows_unavailable"
+        case accessibilityWindowUnmatched = "accessibility_window_unmatched"
+        case mutationRejected = "mutation_rejected"
+        case verificationUnavailable = "verification_unavailable"
+        case verificationFailed = "verification_failed"
+    }
+
     struct RestorableLiveWindow: Equatable, Sendable {
         let pid: pid_t
         let bundleId: String
@@ -321,6 +334,7 @@ final class AccessibilityService {
     struct RestorableWindowRestoreBatchResult: Equatable, Sendable {
         let completedSnapshots: [RestorableWindowSnapshot]
         let restoredWindowCount: Int
+        let outcomeCounts: [WindowFrameRestoreOutcome: Int]
 
         var completedWindowCount: Int {
             completedSnapshots.count
@@ -690,7 +704,11 @@ final class AccessibilityService {
         activeDisplayBoundsByUUID: [String: CGRect]
     ) -> RestorableWindowRestoreBatchResult {
         guard !snapshots.isEmpty else {
-            return RestorableWindowRestoreBatchResult(completedSnapshots: [], restoredWindowCount: 0)
+            return RestorableWindowRestoreBatchResult(
+                completedSnapshots: [],
+                restoredWindowCount: 0,
+                outcomeCounts: [:]
+            )
         }
 
         let catalog = makeRestorableWindowCatalog()
@@ -698,6 +716,7 @@ final class AccessibilityService {
         var completed: [RestorableWindowSnapshot] = []
         completed.reserveCapacity(snapshots.count)
         var restored = 0
+        var outcomeCounts: [WindowFrameRestoreOutcome: Int] = [:]
 
         for snapshot in snapshots {
             let result = restoreWindowFrameResult(
@@ -712,17 +731,26 @@ final class AccessibilityService {
             if result.restored {
                 restored += 1
             }
+            outcomeCounts[result.outcome, default: 0] += 1
         }
 
         return RestorableWindowRestoreBatchResult(
             completedSnapshots: completed,
-            restoredWindowCount: restored
+            restoredWindowCount: restored,
+            outcomeCounts: outcomeCounts
         )
     }
 
     private struct WindowFrameRestoreResult {
-        let completed: Bool
-        let restored: Bool
+        let outcome: WindowFrameRestoreOutcome
+
+        var completed: Bool {
+            outcome == .alreadyAtTarget || outcome == .restored
+        }
+
+        var restored: Bool {
+            outcome == .restored
+        }
     }
 
     private static func restoreWindowFrameResult(
@@ -732,24 +760,24 @@ final class AccessibilityService {
         axWindowsByPID: inout [pid_t: CFArray]
     ) -> WindowFrameRestoreResult {
         guard !MouseTracker.isDragging else {
-            return WindowFrameRestoreResult(completed: false, restored: false)
+            return WindowFrameRestoreResult(outcome: .dragInProgress)
         }
         guard let targetFrame = windowLayoutRestoreTargetFrame(
             for: snapshot,
             activeDisplayBoundsByUUID: activeDisplayBoundsByUUID
         ) else {
-            return WindowFrameRestoreResult(completed: false, restored: false)
+            return WindowFrameRestoreResult(outcome: .targetDisplayUnavailable)
         }
         guard let liveWindow = findRestorableLiveWindow(for: snapshot, in: liveWindowCatalog) else {
-            return WindowFrameRestoreResult(completed: false, restored: false)
+            return WindowFrameRestoreResult(outcome: .liveWindowUnavailable)
         }
         guard !framesAreClose(liveWindow.frame, targetFrame, tolerance: 3.0) else {
-            return WindowFrameRestoreResult(completed: true, restored: false)
+            return WindowFrameRestoreResult(outcome: .alreadyAtTarget)
         }
 
         let appEl = AXUIElementCreateApplication(liveWindow.pid)
         guard let axWindows = copyAXWindows(for: liveWindow.pid, appElement: appEl, cache: &axWindowsByPID) else {
-            return WindowFrameRestoreResult(completed: false, restored: false)
+            return WindowFrameRestoreResult(outcome: .accessibilityWindowsUnavailable)
         }
 
         let targetTitle = liveWindow.title.isEmpty ? snapshot.title : liveWindow.title
@@ -761,18 +789,22 @@ final class AccessibilityService {
         ) {
             let resized = setAXSize(axWin, size: targetFrame.size)
             let moved = setAXPosition(axWin, point: targetFrame.origin)
-            guard resized || moved,
-                  let finalPosition = getAXPosition(axWin),
+            guard resized || moved else {
+                return WindowFrameRestoreResult(outcome: .mutationRejected)
+            }
+            guard let finalPosition = getAXPosition(axWin),
                   let finalSize = getAXSize(axWin) else {
-                return WindowFrameRestoreResult(completed: false, restored: false)
+                return WindowFrameRestoreResult(outcome: .verificationUnavailable)
             }
 
             let finalFrame = CGRect(origin: finalPosition, size: finalSize)
-            let completed = framesAreClose(finalFrame, targetFrame, tolerance: 4.0)
-            return WindowFrameRestoreResult(completed: completed, restored: completed)
+            let outcome: WindowFrameRestoreOutcome = framesAreClose(finalFrame, targetFrame, tolerance: 4.0)
+                ? .restored
+                : .verificationFailed
+            return WindowFrameRestoreResult(outcome: outcome)
         }
 
-        return WindowFrameRestoreResult(completed: false, restored: false)
+        return WindowFrameRestoreResult(outcome: .accessibilityWindowUnmatched)
     }
 
     nonisolated static func framesAreClose(_ lhs: CGRect, _ rhs: CGRect, tolerance: CGFloat) -> Bool {

@@ -4457,8 +4457,13 @@ final class EventLoop {
     private func handleDisplayReconfiguration(_ event: DisplayReconfigurationObserver.Event) {
         guard config.experimentalWindowLayoutMemoryEnabled else { return }
         guard event.isBeginConfiguration else { return }
-        windowLayoutMemoryService.noteDisplayChangeStarted()
-        windowLayoutMemoryService.captureBeforeDisplayChange()
+        let summary = windowLayoutMemoryService.captureBeforeDisplayChange()
+        PerformanceMonitor.shared.recordDiagnosticSnapshot(
+            "window_layout_memory_display_change_capture",
+            minIntervalSeconds: 0.25
+        ) {
+            "reason=\(summary.reason) id=\(summary.snapshotID ?? 0) recovery_pending=\(summary.recoveryPending) windows=\(summary.capturedWindowCount) replaced=\(summary.replacedExistingSnapshot)"
+        }
     }
 
     private func scheduleAXObserverRefresh(delay: TimeInterval) {
@@ -4711,13 +4716,25 @@ final class EventLoop {
                     "window_layout_memory_restore_pass",
                     minIntervalSeconds: 0.5
                 ) {
-                    "index=\(index) reason=\(summary.reason) restored=\(summary.restoredWindowCount) completed=\(summary.completedWindowCount) remaining=\(summary.remainingWindowCount) captured=\(summary.capturedWindowCount)"
+                    "index=\(index) id=\(summary.snapshotID ?? 0) age_ms=\(summary.snapshotAgeMilliseconds) reason=\(summary.reason) restored=\(summary.restoredWindowCount) completed=\(summary.completedWindowCount) remaining=\(summary.remainingWindowCount) captured=\(summary.capturedWindowCount) outcomes=\(WindowLayoutMemoryService.restoreOutcomeSummary(summary.outcomeCounts))"
                 }
-                if index == delays.count - 1, summary.remainingWindowCount > 0 {
-                    self.windowLayoutMemoryService.clear()
-                }
-                if summary.remainingWindowCount == 0 || index == delays.count - 1 {
+
+                let isFinalPass = index == delays.count - 1
+                if summary.remainingWindowCount == 0 {
+                    // Do not let already-queued passes consume the next stable baseline.
+                    self.cancelWindowLayoutMemoryRestoreWorkItems()
+                } else if isFinalPass {
+                    if WindowLayoutMemoryService.shouldDiscardSnapshotAfterFinalAttempt(reason: summary.reason) {
+                        self.windowLayoutMemoryService.clear()
+                    }
                     self.isWindowLayoutMemoryRestoreActive = false
+                    self.windowLayoutMemoryRestoreWorkItems.removeAll()
+                    PerformanceMonitor.shared.recordDiagnosticSnapshot(
+                        "window_layout_memory_restore_sequence",
+                        minIntervalSeconds: 0.25
+                    ) {
+                        "id=\(summary.snapshotID ?? 0) result=exhausted reason=\(summary.reason) remaining=\(summary.remainingWindowCount) snapshot_retained=\(!WindowLayoutMemoryService.shouldDiscardSnapshotAfterFinalAttempt(reason: summary.reason))"
+                    }
                 }
 
                 guard summary.restoredWindowCount > 0 else { return }
@@ -4764,7 +4781,7 @@ final class EventLoop {
                 "window_layout_memory_stable_capture",
                 minIntervalSeconds: 5.0
             ) {
-                "windows=\(summary.capturedWindowCount) replaced=\(summary.replacedExistingSnapshot)"
+                "id=\(summary.snapshotID ?? 0) recovery_pending=\(summary.recoveryPending) windows=\(summary.capturedWindowCount) replaced=\(summary.replacedExistingSnapshot)"
             }
         }
     }
