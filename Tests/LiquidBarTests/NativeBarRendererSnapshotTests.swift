@@ -79,13 +79,132 @@ struct NativeBarRendererSnapshotTests {
 
         let snapshot = try #require(renderer.snapshot(displayId: 1))
         let item = try #require(snapshot.items.first)
-        let textWidth = ("CPU 100%" as NSString).size(withAttributes: [
-            .font: NSFont.systemFont(ofSize: CGFloat(config.fontSize), weight: .medium)
-        ]).width
+        let textWidth = nativeSystemIndicatorTextFittingWidth("CPU 100%", fontSize: CGFloat(config.fontSize))
 
-        #expect(item.titleRect.width >= textWidth + 4)
+        #expect(item.titleRect.width >= textWidth)
         #expect(item.rect.width < 84)
         #expect(snapshot.decorations.contains { $0.kind == .systemMetricShell })
+        renderer.shutdown()
+    }
+
+    @Test func systemIndicatorToolTipsTrackLiveValuesWithoutRegistrationChurn() throws {
+        let renderer = NativeBarRenderer()
+        renderer.registerPanel(displayId: 1, barWidth: 300, barHeight: 32, scale: 2)
+        let items: [TaskbarItem] = [
+            .customText(id: "system.cpu", text: "", screenId: 1),
+            .customText(id: "ordinary", text: "Notes", screenId: 1),
+        ]
+        var visuals = [
+            "system.cpu": systemVisual(metric: .cpu, mode: .graph, valueText: "42%", value: 42, history: [30, 42])
+        ]
+        renderer.updateItems(
+            items,
+            config: Config(systemIndicatorChipPreset: .micro),
+            iconCache: IconCache(),
+            displayId: 1,
+            systemIndicatorVisuals: visuals
+        )
+        let snapshot = try #require(renderer.snapshot(displayId: 1))
+        let view = NativeBarView(frame: NSRect(x: 0, y: 0, width: 300, height: 32))
+        view.configure(scale: 2)
+        view.applySnapshot(
+            snapshot,
+            fontSize: 13,
+            barHeight: 32,
+            systemIndicatorVisuals: visuals
+        )
+
+        #expect(view.debugSystemIndicatorToolTipTexts == [
+            "system.cpu": L10n.tr("CPU Usage: %@", "42%")
+        ])
+        #expect(view.debugSystemIndicatorToolTipRegistrationCount == 1)
+        #expect(view.debugItemToolTipRegistrationCount == 2)
+        #expect(Set(view.debugItemToolTipTexts.values) == [
+            L10n.tr("CPU Usage: %@", "42%"),
+            "Notes",
+        ])
+        view.setTestHoverIndex(0)
+        #expect(view.debugPendingToolTipIndex == 0)
+        view.setTestHoverIndex(nil)
+        #expect(view.debugPendingToolTipIndex == nil)
+        let accessibilityChildren = view.accessibilityChildren() as? [NSAccessibilityElement]
+        #expect(accessibilityChildren?.first?.accessibilityLabel() == L10n.tr("CPU Usage: %@", "42%"))
+
+        visuals["system.cpu"] = systemVisual(
+            metric: .cpu,
+            mode: .graph,
+            valueText: "55%",
+            value: 55,
+            history: [42, 55]
+        )
+        view.applySnapshot(
+            snapshot,
+            fontSize: 13,
+            barHeight: 32,
+            systemIndicatorVisuals: visuals
+        )
+
+        #expect(view.debugSystemIndicatorToolTipTexts == [
+            "system.cpu": L10n.tr("CPU Usage: %@", "55%")
+        ])
+        #expect(view.debugSystemIndicatorToolTipRegistrationCount == 1)
+        #expect(view.debugItemToolTipRegistrationCount == 2)
+        #expect(Set(view.debugItemToolTipTexts.values) == [
+            L10n.tr("CPU Usage: %@", "55%"),
+            "Notes",
+        ])
+        renderer.shutdown()
+    }
+
+    @Test func systemIndicatorLayoutAndTypographyStayStableAcrossValueChanges() throws {
+        let renderer = NativeBarRenderer()
+        renderer.registerPanel(displayId: 1, barWidth: 600, barHeight: 32, scale: 2)
+        var config = Config(itemSizing: .auto)
+        config.systemIndicatorPlacement = .rightCorner
+        config.systemIndicatorChipPreset = .compact
+
+        renderer.updateItems(
+            [.customText(id: "system.cpu", text: "CPU 9%", screenId: 1)],
+            config: config,
+            iconCache: IconCache(),
+            displayId: 1,
+            systemIndicatorVisuals: [
+                "system.cpu": systemVisual(metric: .cpu, mode: .percentage, valueText: "9%", value: 9, history: [])
+            ]
+        )
+        let lowSnapshot = try #require(renderer.snapshot(displayId: 1))
+        let lowItem = try #require(lowSnapshot.items.first)
+        let lowText = try #require(lowSnapshot.nativeTextItems.first)
+
+        renderer.updateItems(
+            [.customText(id: "system.cpu", text: "CPU 100%", screenId: 1)],
+            config: config,
+            iconCache: IconCache(),
+            displayId: 1,
+            systemIndicatorVisuals: [
+                "system.cpu": systemVisual(metric: .cpu, mode: .percentage, valueText: "100%", value: 100, history: [])
+            ]
+        )
+        let highSnapshot = try #require(renderer.snapshot(displayId: 1))
+        let highItem = try #require(highSnapshot.items.first)
+        let highText = try #require(highSnapshot.nativeTextItems.first)
+
+        #expect(lowItem.rect == highItem.rect)
+        #expect(lowItem.titleRect == highItem.titleRect)
+        #expect(lowText.usesTabularDigits)
+        #expect(highText.usesTabularDigits)
+
+        let view = NativeBarView(frame: NSRect(x: 0, y: 0, width: 600, height: 32))
+        view.configure(scale: 2)
+        view.applySnapshot(
+            highSnapshot,
+            fontSize: CGFloat(config.fontSize),
+            barHeight: 32,
+            systemIndicatorVisuals: [
+                "system.cpu": systemVisual(metric: .cpu, mode: .percentage, valueText: "100%", value: 100, history: [])
+            ]
+        )
+        #expect(view.debugNativeTextAlignments == [.center])
         renderer.shutdown()
     }
 
@@ -109,12 +228,10 @@ struct NativeBarRendererSnapshotTests {
 
         let snapshot = try #require(renderer.snapshot(displayId: 1))
         let item = try #require(snapshot.items.first)
-        let textWidth = (title as NSString).size(withAttributes: [
-            .font: NSFont.systemFont(ofSize: CGFloat(config.fontSize), weight: .medium)
-        ]).width
+        let textWidth = nativeSystemIndicatorTextFittingWidth(title, fontSize: CGFloat(config.fontSize))
 
         #expect(item.title == title)
-        #expect(item.titleRect.width >= textWidth + 4)
+        #expect(item.titleRect.width >= textWidth + 2)
         renderer.shutdown()
     }
 
@@ -155,7 +272,7 @@ struct NativeBarRendererSnapshotTests {
         renderer.shutdown()
     }
 
-    @Test func compactSystemIndicatorsUseContentSizedUniformTiles() throws {
+    @Test func compactSystemIndicatorsUseStableCapacitySizedUniformTiles() throws {
         let renderer = NativeBarRenderer()
         renderer.registerPanel(displayId: 1, barWidth: 520, barHeight: 32, scale: 2)
         let items: [TaskbarItem] = [
@@ -181,12 +298,10 @@ struct NativeBarRendererSnapshotTests {
 
         let snapshot = try #require(renderer.snapshot(displayId: 1))
         let widths = snapshot.items.map { $0.rect.width }
-        let widestText = ["CPU 100%", "GPU --", "RAM 74%", "TEMP 35°C"].map { title in
-            (title as NSString).size(withAttributes: [
-                .font: NSFont.systemFont(ofSize: CGFloat(config.fontSize), weight: .medium)
-            ]).width
+        let widestText = ["CPU 100%", "GPU 100%", "RAM 100%", "TEMP 100°C"].map { title in
+            nativeSystemIndicatorTextFittingWidth(title, fontSize: CGFloat(config.fontSize))
         }.max() ?? 0
-        let expectedWidth = ceil(widestText + 16)
+        let expectedWidth = ceil(widestText + 12)
         #expect(widths.allSatisfy { abs($0 - expectedWidth) < 0.5 })
         #expect(expectedWidth < 92)
 
@@ -201,10 +316,8 @@ struct NativeBarRendererSnapshotTests {
 
         for title in ["CPU 100%", "RAM 74%", "TEMP 35°C"] {
             let item = try #require(snapshot.items.first { $0.title == title })
-            let textWidth = (title as NSString).size(withAttributes: [
-                .font: NSFont.systemFont(ofSize: CGFloat(config.fontSize), weight: .medium)
-            ]).width
-            #expect(item.titleRect.width >= textWidth + 4)
+            let textWidth = nativeSystemIndicatorTextFittingWidth(title, fontSize: CGFloat(config.fontSize))
+            #expect(item.titleRect.width >= textWidth + 2)
         }
         renderer.shutdown()
     }
@@ -253,10 +366,13 @@ struct NativeBarRendererSnapshotTests {
         let flatWidth = try denseSystemIndicatorClusterWidth(appearance: .flat)
         let underlineWidth = try denseSystemIndicatorClusterWidth(appearance: .underline)
         let minimalWidth = try denseSystemIndicatorClusterWidth(appearance: .minimal)
+        let fittedValueWidth = nativeSystemIndicatorTextFittingWidth("100%", fontSize: CGFloat(Config().fontSize))
+        let minimumFourItemClusterWidth = ceil(fittedValueWidth) * 4
 
         #expect(flatWidth <= glassWidth - 5)
-        #expect(underlineWidth <= flatWidth - 40)
-        #expect(minimalWidth <= flatWidth - 40)
+        #expect(underlineWidth <= flatWidth - 30)
+        #expect(minimalWidth <= flatWidth - 30)
+        #expect(abs(underlineWidth - minimumFourItemClusterWidth) < 0.5)
         #expect(abs(underlineWidth - minimalWidth) < 1)
     }
 
@@ -322,13 +438,12 @@ struct NativeBarRendererSnapshotTests {
         let cpu = try #require(snapshot.items.dropFirst().first?.rect)
         let ram = try #require(snapshot.items.dropFirst(2).first?.rect)
         let cpuItem = try #require(snapshot.items.dropFirst().first)
-        let cpuTextWidth = ("100%" as NSString).size(withAttributes: [
-            .font: NSFont.systemFont(ofSize: CGFloat(config.fontSize), weight: .medium)
-        ]).width
+        let cpuTextWidth = nativeSystemIndicatorTextFittingWidth("100%", fontSize: CGFloat(config.fontSize))
 
         #expect(abs(cpu.minX - app.maxX - 4) < 0.5)
-        #expect(abs(ram.minX - cpu.maxX - 1) < 0.5)
+        #expect(abs(ram.minX - cpu.maxX) < 0.5)
         #expect(cpuItem.titleRect.width >= cpuTextWidth)
+        #expect(cpu.width < cpuTextWidth + 1)
         renderer.shutdown()
     }
 
@@ -498,6 +613,81 @@ struct NativeBarRendererSnapshotTests {
         #expect(snapshot.items.allSatisfy { $0.title.isEmpty })
         #expect(snapshot.nativeTextItems.isEmpty)
         #expect(snapshot.items.allSatisfy { abs($0.iconRect.midX - $0.rect.midX) < 0.5 })
+        renderer.shutdown()
+    }
+
+    @Test func overflowPlanPreservesFocusAndRightCornerIndicators() throws {
+        let renderer = NativeBarRenderer()
+        let displayId: CGDirectDisplayID = 1
+        let barWidth: Float = 820
+        renderer.registerPanel(displayId: displayId, barWidth: barWidth, barHeight: 36, scale: 2)
+
+        var items: [TaskbarItem] = (1...30).map { id in
+            .window(
+                id: WindowId(UInt32(id)),
+                bundleId: "com.example.window\(id)",
+                title: "Window \(id) with a readable title",
+                appName: "App \(id)",
+                isHidden: false,
+                isMinimized: false,
+                screenId: displayId
+            )
+        }
+        items.append(contentsOf: [
+            .customText(id: "system.cpu", text: "CPU 70%", screenId: nil),
+            .customText(id: "system.gpu", text: "GPU 24%", screenId: nil),
+            .customText(id: "system.ram", text: "RAM 77%", screenId: nil),
+            .customText(id: "system.thermal", text: "TEMP 34°C", screenId: nil),
+        ])
+
+        var config = Config(taskbarHeight: 36, iconSize: 22, itemSizing: .auto)
+        config.systemIndicatorPlacement = .rightCorner
+        let visuals = [
+            "system.cpu": systemVisual(metric: .cpu, mode: .bar, valueText: "70%", value: 70, history: [40, 55, 70]),
+            "system.gpu": systemVisual(metric: .gpu, mode: .bar, valueText: "24%", value: 24, history: [15, 20, 24]),
+            "system.ram": systemVisual(metric: .ram, mode: .bar, valueText: "77%", value: 77, history: [65, 70, 77]),
+            "system.thermal": systemVisual(metric: .thermal, mode: .percentage, valueText: "34°C", value: 34, history: []),
+        ]
+        let focus = FocusInfo(windowId: 30, bundleId: "com.example.window30", tabGroupId: nil)
+
+        let plan = renderer.overflowPlan(
+            for: items,
+            config: config,
+            primaryLength: barWidth,
+            displayId: displayId,
+            focus: focus,
+            systemIndicatorVisuals: visuals
+        )
+
+        #expect(!plan.overflowWindowIds.isEmpty)
+        #expect(plan.items.contains { item in
+            if case .window(let id, _, _, _, _, _, _) = item { return id.raw == 30 }
+            return false
+        })
+        #expect(plan.items.filter { if case .windowOverflow = $0 { return true }; return false }.count == 1)
+
+        renderer.updateItems(
+            plan.items,
+            config: config,
+            iconCache: IconCache(),
+            displayId: displayId,
+            focus: focus,
+            systemIndicatorVisuals: visuals
+        )
+        let snapshot = try #require(renderer.snapshot(displayId: displayId))
+        let indicatorStart = try #require(plan.items.firstIndex { item in
+            if case .customText(let id, _, _) = item { return id.hasPrefix("system.") }
+            return false
+        })
+        let overflowIndex = try #require(plan.items.firstIndex { item in
+            if case .windowOverflow = item { return true }
+            return false
+        })
+
+        #expect(snapshot.visualRects.last?.maxX ?? 0 <= CGFloat(barWidth) + 0.5)
+        #expect(snapshot.visualRects[overflowIndex].maxX <= snapshot.visualRects[indicatorStart].minX - 3.5)
+        #expect(snapshot.items[overflowIndex].title.isEmpty)
+        #expect(snapshot.nativeTextItems.contains { $0.title == "\(plan.overflowWindowIds.count)" })
         renderer.shutdown()
     }
 
@@ -1280,5 +1470,19 @@ struct NativeBarRendererSnapshotTests {
             isMinimized: false,
             screenId: 1
         )
+    }
+
+    private func nativeSystemIndicatorTextFittingWidth(_ text: String, fontSize: CGFloat) -> CGFloat {
+        let label = NSTextField(labelWithString: text)
+        label.font = NSFont.monospacedDigitSystemFont(ofSize: fontSize, weight: .medium)
+        label.alignment = .center
+        label.cell?.alignment = .center
+        label.usesSingleLineMode = true
+        label.maximumNumberOfLines = 1
+        label.lineBreakMode = .byTruncatingTail
+        label.cell?.usesSingleLineMode = true
+        label.cell?.lineBreakMode = .byTruncatingTail
+        label.frame = NSRect(x: 0, y: 0, width: 1, height: 18)
+        return ceil(label.cell?.cellSize.width ?? label.fittingSize.width)
     }
 }

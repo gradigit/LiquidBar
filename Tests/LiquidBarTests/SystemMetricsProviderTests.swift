@@ -15,6 +15,21 @@ struct SystemMetricsProviderTests {
         #expect(items.map { $0.displayTitle(iconsOnly: false) } == ["CPU 42%", "GPU 7%", "RAM 63%"])
     }
 
+    @Test func indicatorVisualsProvideDescriptiveToolTips() {
+        let provider = SystemMetricsProvider {
+            SystemMetricsSnapshot(cpuPercent: 42, gpuPercent: 7, ramPercent: 63, temperatureCelsius: 34)
+        }
+        let payload = provider.payload(
+            config: Config(systemIndicatorThermalEnabled: true),
+            now: 10
+        )
+
+        #expect(payload.visuals["system.cpu"]?.toolTipText == L10n.tr("CPU Usage: %@", "42%"))
+        #expect(payload.visuals["system.gpu"]?.toolTipText == L10n.tr("GPU Usage: %@", "7%"))
+        #expect(payload.visuals["system.ram"]?.toolTipText == L10n.tr("Memory Usage: %@", "63%"))
+        #expect(payload.visuals["system.thermal"]?.toolTipText == L10n.tr("Temperature: %@", "34°C"))
+    }
+
     @Test func taskbarItemsCanBeDisabled() {
         let provider = SystemMetricsProvider {
             SystemMetricsSnapshot(cpuPercent: 42, gpuPercent: 7, ramPercent: 63)

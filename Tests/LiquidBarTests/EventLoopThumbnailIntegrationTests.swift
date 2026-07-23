@@ -17,6 +17,7 @@ struct EventLoopThumbnailIntegrationTests {
         #expect(EventLoop.ThumbnailCaptureContext.hoveredPreview.producer == .interactive)
         #expect(EventLoop.ThumbnailCaptureContext.switcher.producer == .switcher)
         #expect(EventLoop.ThumbnailCaptureContext.groupPreview.producer == .groupPreview)
+        #expect(EventLoop.ThumbnailCaptureContext.overflowShelf.producer == .overflowShelf)
         #expect(EventLoop.ThumbnailCaptureContext.prewarm.producer == .prewarm)
     }
 
@@ -124,9 +125,10 @@ struct EventLoopThumbnailIntegrationTests {
         _ = loop.debugEnqueueThumbnailRequest(windowId: 21, targetSizePoints: CGSize(width: 160, height: 92), producer: .switcher)
         _ = loop.debugEnqueueThumbnailRequest(windowId: 22, targetSizePoints: CGSize(width: 160, height: 92), producer: .interactive)
         _ = loop.debugEnqueueThumbnailRequest(windowId: 23, targetSizePoints: CGSize(width: 160, height: 92), producer: .groupPreview)
+        _ = loop.debugEnqueueThumbnailRequest(windowId: 24, targetSizePoints: CGSize(width: 280, height: 190), producer: .overflowShelf)
 
         let queuedProducers = loop.debugQueuedThumbnailRequests().map(\.producer)
-        #expect(queuedProducers == [.interactive, .groupPreview] || queuedProducers == [.groupPreview, .interactive])
+        #expect(Set(queuedProducers) == Set([.interactive, .groupPreview, .overflowShelf]))
 
         loop.debugHideAllPreviews()
 

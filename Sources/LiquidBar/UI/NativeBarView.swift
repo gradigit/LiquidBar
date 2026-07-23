@@ -92,6 +92,17 @@ final class NativeBarView: NSView {
     private var scrollAccumulator: CGFloat = 0
     private var nativeTextOverlayView: PassthroughOverlayView?
     private var nativeTextLabels: [NSTextField] = []
+    private var itemToolTipKeyByIndex: [Int: String] = [:]
+    private var itemToolTipTextByKey: [String: String] = [:]
+    private var systemIndicatorToolTipKeys: Set<String> = []
+    private var systemIndicatorToolTipTextByMetricId: [String: String] = [:]
+    private var hoverToolTipPanel: TaskbarToolTipPanel?
+    private var hoverToolTipWorkItem: DispatchWorkItem?
+    private var pendingToolTipIndex: Int?
+    private var visibleToolTipIndex: Int?
+    private var visibleToolTipKey: String?
+    private var toolTipTheme: Theme = .system
+    private var toolTipGlassStyle: GlassStyle = .publicRegular
 
     // Callbacks (caller sets these with [weak self])
     var onItemClicked: ((Int, MouseButton) -> Void)?
@@ -156,6 +167,13 @@ final class NativeBarView: NSView {
         updateTrackingArea()
     }
 
+    func configureToolTipAppearance(theme: Theme, glassStyle: GlassStyle) {
+        hideHoverToolTip()
+        hoverToolTipPanel = nil
+        toolTipTheme = theme
+        toolTipGlassStyle = glassStyle
+    }
+
     override func updateTrackingAreas() {
         super.updateTrackingAreas()
         updateTrackingArea()
@@ -192,7 +210,8 @@ final class NativeBarView: NSView {
     func applySnapshot(
         _ snapshot: NativeBarSnapshot,
         fontSize: CGFloat,
-        barHeight: CGFloat
+        barHeight: CGFloat,
+        systemIndicatorVisuals: [String: SystemIndicatorVisual] = [:]
     ) {
         let backingScale = currentBackingScale()
         synchronizeLayerScale(backingScale)
@@ -200,6 +219,10 @@ final class NativeBarView: NSView {
         itemRects = snapshot.hitRects
         visualItemRects = snapshot.visualRects
         items = snapshot.items.map(\.item)
+        updateItemToolTips(
+            snapshot: snapshot,
+            visuals: systemIndicatorVisuals
+        )
 
         CATransaction.begin()
         CATransaction.setDisableActions(true)
@@ -254,6 +277,116 @@ final class NativeBarView: NSView {
 
         updateNativeTextItems(snapshot.nativeTextItems, fontSize: fontSize, barHeight: barHeight)
         refreshRetainedLayers()
+    }
+
+    private func updateItemToolTips(
+        snapshot: NativeBarSnapshot,
+        visuals: [String: SystemIndicatorVisual]
+    ) {
+        var textByMetricId: [String: String] = [:]
+        var textByKey: [String: String] = [:]
+        var systemKeys: Set<String> = []
+        var keyByIndex: [Int: String] = [:]
+
+        for (index, presentation) in snapshot.items.enumerated() {
+            let key = presentation.identity
+            let text: String
+            if case .customText(let id, _, _) = presentation.item,
+               let visual = visuals[id] {
+                text = visual.toolTipText
+                textByMetricId[id] = text
+                systemKeys.insert(key)
+            } else {
+                text = presentation.item.displayTitle(iconsOnly: false)
+            }
+
+            guard !text.isEmpty else { continue }
+            textByKey[key] = text
+            keyByIndex[index] = key
+        }
+
+        systemIndicatorToolTipTextByMetricId = textByMetricId
+        itemToolTipTextByKey = textByKey
+        systemIndicatorToolTipKeys = systemKeys
+        itemToolTipKeyByIndex = keyByIndex
+        refreshVisibleHoverToolTip()
+    }
+
+    private func setHoveredIndex(_ index: Int?) {
+        guard hoveredIndex != index else { return }
+        hoveredIndex = index
+        onHoverChanged?(index)
+        scheduleHoverToolTip(for: index)
+    }
+
+    private func scheduleHoverToolTip(for index: Int?) {
+        hoverToolTipWorkItem?.cancel()
+        hoverToolTipWorkItem = nil
+        pendingToolTipIndex = nil
+        hoverToolTipPanel?.hide()
+        visibleToolTipIndex = nil
+        visibleToolTipKey = nil
+
+        guard let index,
+              itemToolTipKeyByIndex[index] != nil else { return }
+
+        pendingToolTipIndex = index
+        let workItem = DispatchWorkItem { [weak self] in
+            MainActor.assumeIsolated {
+                self?.showHoverToolTip(for: index)
+            }
+        }
+        hoverToolTipWorkItem = workItem
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.35, execute: workItem)
+    }
+
+    private func showHoverToolTip(for index: Int) {
+        hoverToolTipWorkItem = nil
+        pendingToolTipIndex = nil
+        guard hoveredIndex == index,
+              let key = itemToolTipKeyByIndex[index],
+              let text = itemToolTipTextByKey[key],
+              let anchorRect = screenRectForVisualItem(at: index),
+              let parentWindow = window,
+              let screen = parentWindow.screen else { return }
+
+        let panel: TaskbarToolTipPanel
+        if let existing = hoverToolTipPanel {
+            panel = existing
+        } else {
+            panel = TaskbarToolTipPanel(theme: toolTipTheme, glassStyle: toolTipGlassStyle)
+            hoverToolTipPanel = panel
+        }
+        panel.show(
+            text: text,
+            anchorRect: anchorRect,
+            on: screen,
+            position: orientation,
+            parentWindow: parentWindow
+        )
+        visibleToolTipIndex = index
+        visibleToolTipKey = key
+    }
+
+    private func refreshVisibleHoverToolTip() {
+        guard let index = visibleToolTipIndex,
+              let key = itemToolTipKeyByIndex[index],
+              itemToolTipTextByKey[key] != nil else {
+            if visibleToolTipIndex != nil { hideHoverToolTip() }
+            return
+        }
+        if visibleToolTipKey != key {
+            scheduleHoverToolTip(for: index)
+        }
+    }
+
+    private func hideHoverToolTip() {
+        hoverToolTipWorkItem?.cancel()
+        hoverToolTipWorkItem = nil
+        pendingToolTipIndex = nil
+        visibleToolTipIndex = nil
+        visibleToolTipKey = nil
+        hoverToolTipPanel?.hide()
     }
 
     private func makeItemContainerLayer(key: String) -> CALayer {
@@ -622,13 +755,16 @@ final class NativeBarView: NSView {
         }
 
         let font = NSFont.systemFont(ofSize: fontSize, weight: .medium)
+        let tabularDigitFont = NSFont.monospacedDigitSystemFont(ofSize: fontSize, weight: .medium)
         let backingScale = currentBackingScale()
 
         for (idx, item) in items.enumerated() {
             let label = nativeTextLabels[idx]
             configureTextLabelQuality(label, scale: backingScale)
             label.isHidden = false
-            label.font = font
+            label.font = item.usesTabularDigits ? tabularDigitFont : font
+            label.alignment = item.usesTabularDigits ? .center : .natural
+            label.cell?.alignment = label.alignment
             label.textColor = NSColor.white.withAlphaComponent(item.isDimmed ? 0.45 : 0.9)
             label.stringValue = item.title
             let measuredHeight = ceil(label.intrinsicContentSize.height)
@@ -794,6 +930,7 @@ final class NativeBarView: NSView {
     // MARK: - Mouse Events
 
     override func mouseDown(with event: NSEvent) {
+        hideHoverToolTip()
         let point = convert(event.locationInWindow, from: nil)
         guard let index = dragIndexForPoint(point) else { return }
 
@@ -813,6 +950,7 @@ final class NativeBarView: NSView {
 
     override func mouseDragged(with event: NSEvent) {
         guard var state = dragState else { return }
+        guard items.indices.contains(state.sourceIndex), items[state.sourceIndex].supportsTaskbarDrag else { return }
         let point = convert(event.locationInWindow, from: nil)
         let flippedY = bounds.height - point.y
 
@@ -902,8 +1040,7 @@ final class NativeBarView: NSView {
         guard let index = indexForPoint(point) else { return }
         onItemClicked?(index, .middle)
         // Clear hover immediately — closed window shouldn't stay highlighted
-        hoveredIndex = nil
-        onHoverChanged?(nil)
+        setHoveredIndex(nil)
     }
 
     override func scrollWheel(with event: NSEvent) {
@@ -936,43 +1073,24 @@ final class NativeBarView: NSView {
 
         let index = indexForPoint(point)
 
-        if index != hoveredIndex {
-            hoveredIndex = index
-            onHoverChanged?(index)
-        }
-
-        if let idx = hoveredIndex, idx < items.count {
-            self.toolTip = items[idx].displayTitle(iconsOnly: false)
-        } else {
-            self.toolTip = nil
-        }
+        setHoveredIndex(index)
     }
 
     override func mouseExited(with event: NSEvent) {
         lastCursorPosition = nil
-        self.toolTip = nil
         onCursorMoved?(nil)
-        if hoveredIndex != nil {
-            hoveredIndex = nil
-            onHoverChanged?(nil)
-        }
+        setHoveredIndex(nil)
     }
 
     /// Re-evaluate hover state using the last known cursor position.
     /// Call after item rects change (window close, reorder, etc.) to clear stale hover.
     func invalidateHover() {
         guard let point = lastCursorPosition else {
-            if hoveredIndex != nil {
-                hoveredIndex = nil
-                onHoverChanged?(nil)
-            }
+            setHoveredIndex(nil)
             return
         }
         let newIndex = indexForPoint(point)
-        if newIndex != hoveredIndex {
-            hoveredIndex = newIndex
-            onHoverChanged?(newIndex)
-        }
+        setHoveredIndex(newIndex)
     }
 
     /// Screen-space rect for the given visual item index (matches what we draw, not hit rects).
@@ -990,6 +1108,7 @@ final class NativeBarView: NSView {
     // MARK: - Context Menu
 
     override func menu(for event: NSEvent) -> NSMenu? {
+        hideHoverToolTip()
         let point = convert(event.locationInWindow, from: nil)
         guard let index = indexForPoint(point) else { return makeAppContextMenu() }
 
@@ -1126,6 +1245,9 @@ final class NativeBarView: NSView {
             return menu
 
         case .launcher:
+            return makeAppContextMenu()
+
+        case .windowOverflow:
             return makeAppContextMenu()
 
         case .pluginTile:
@@ -1404,7 +1526,14 @@ final class NativeBarView: NSView {
         items.enumerated().map { (i, item) in
             let element = NSAccessibilityElement()
             element.setAccessibilityRole(.button)
-            element.setAccessibilityLabel(item.displayTitle(iconsOnly: false))
+            let accessibilityLabel: String = {
+                guard case .customText(let id, _, _) = item,
+                      let toolTip = systemIndicatorToolTipTextByMetricId[id] else {
+                    return item.displayTitle(iconsOnly: false)
+                }
+                return toolTip
+            }()
+            element.setAccessibilityLabel(accessibilityLabel)
             element.setAccessibilityParent(self)
             element.setAccessibilityIdentifier(accessibilityIdentifierForItem(item, index: i))
 
@@ -1434,6 +1563,8 @@ final class NativeBarView: NSView {
             return "liquidbar.item.window.\(id.raw)"
         case .appGroup(let bundleId, _, _, _, _, _, _):
             return "liquidbar.item.group.\(bundleId)"
+        case .windowOverflow:
+            return "liquidbar.item.window-overflow"
         case .pinnedApp(let bundleId, _):
             return "liquidbar.item.pinned.\(bundleId)"
         case .launcher:
@@ -1454,12 +1585,33 @@ final class NativeBarView: NSView {
     }
 
     #if DEBUG
+    var debugSystemIndicatorToolTipTexts: [String: String] {
+        systemIndicatorToolTipTextByMetricId
+    }
+
+    var debugSystemIndicatorToolTipRegistrationCount: Int {
+        itemToolTipKeyByIndex.values.filter { systemIndicatorToolTipKeys.contains($0) }.count
+    }
+
+    var debugItemToolTipTexts: [String: String] {
+        itemToolTipTextByKey
+    }
+
+    var debugItemToolTipRegistrationCount: Int {
+        itemToolTipKeyByIndex.count
+    }
+
+    var debugPendingToolTipIndex: Int? {
+        pendingToolTipIndex
+    }
+
+    var debugNativeTextAlignments: [NSTextAlignment] {
+        nativeTextLabels.filter { !$0.isHidden }.map(\.alignment)
+    }
+
     /// UI-test hook: force hover state deterministically (without mouse motion).
     func setTestHoverIndex(_ index: Int?) {
-        if hoveredIndex != index {
-            hoveredIndex = index
-            onHoverChanged?(index)
-        }
+        setHoveredIndex(index)
     }
     #endif
 }

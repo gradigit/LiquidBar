@@ -3,9 +3,52 @@ import QuartzCore
 
 @MainActor
 final class WindowGroupPreviewPanel: NSPanel {
+    enum PresentationMode: Equatable {
+        case groupPreview
+        case overflowShelf
+
+        var thumbnailHeight: CGFloat {
+            switch self {
+            case .groupPreview: 124
+            case .overflowShelf: 190
+            }
+        }
+
+        var minThumbnailWidth: CGFloat {
+            switch self {
+            case .groupPreview: 140
+            case .overflowShelf: 190
+            }
+        }
+
+        var maxThumbnailWidth: CGFloat {
+            switch self {
+            case .groupPreview: 240
+            case .overflowShelf: 360
+            }
+        }
+
+        var tileHeight: CGFloat {
+            switch self {
+            case .groupPreview: 168
+            case .overflowShelf: 238
+            }
+        }
+
+        var panelHeight: CGFloat {
+            switch self {
+            case .groupPreview: 188
+            case .overflowShelf: 258
+            }
+        }
+
+        var allowsReordering: Bool { self == .groupPreview }
+    }
+
     private final class WindowThumbnailTileView: NSView {
         let windowId: UInt32
         private let imageView = NSImageView()
+        private let appIconView = NSImageView()
         private let titleLabel = NSTextField(labelWithString: "")
 
         var onClicked: ((UInt32) -> Void)?
@@ -14,6 +57,7 @@ final class WindowGroupPreviewPanel: NSPanel {
         var onDragEnded: ((UInt32, NSPoint) -> Void)?
         private(set) var currentTitle: String = ""
         private(set) var currentIsDimmed: Bool = false
+        private(set) var isSelected: Bool = false
 
         private var tracking: NSTrackingArea?
         private var isHovering: Bool = false {
@@ -22,7 +66,7 @@ final class WindowGroupPreviewPanel: NSPanel {
         private var mouseDownLocationInWindow: NSPoint?
         private var didStartDrag = false
 
-        init(windowId: UInt32) {
+        init(windowId: UInt32, thumbnailHeight: CGFloat) {
             self.windowId = windowId
             super.init(frame: .zero)
 
@@ -43,6 +87,11 @@ final class WindowGroupPreviewPanel: NSPanel {
             imageView.wantsLayer = true
             imageView.layer?.cornerRadius = 8
             imageView.layer?.masksToBounds = true
+            imageView.layer?.backgroundColor = NSColor.black.withAlphaComponent(0.20).cgColor
+
+            appIconView.translatesAutoresizingMaskIntoConstraints = false
+            appIconView.imageScaling = .scaleProportionallyUpOrDown
+            appIconView.imageAlignment = .alignCenter
 
             titleLabel.translatesAutoresizingMaskIntoConstraints = false
             titleLabel.font = NSFont.systemFont(ofSize: 11, weight: .medium)
@@ -56,15 +105,21 @@ final class WindowGroupPreviewPanel: NSPanel {
             titleLabel.cell?.truncatesLastVisibleLine = true
 
             addSubview(imageView)
+            addSubview(appIconView)
             addSubview(titleLabel)
 
             NSLayoutConstraint.activate([
                 imageView.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 8),
                 imageView.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -8),
                 imageView.topAnchor.constraint(equalTo: topAnchor, constant: 8),
-                imageView.heightAnchor.constraint(equalToConstant: 124),
+                imageView.heightAnchor.constraint(equalToConstant: thumbnailHeight),
 
-                titleLabel.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 10),
+                appIconView.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 10),
+                appIconView.centerYAnchor.constraint(equalTo: titleLabel.centerYAnchor),
+                appIconView.widthAnchor.constraint(equalToConstant: 17),
+                appIconView.heightAnchor.constraint(equalToConstant: 17),
+
+                titleLabel.leadingAnchor.constraint(equalTo: appIconView.trailingAnchor, constant: 7),
                 titleLabel.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -10),
                 titleLabel.topAnchor.constraint(equalTo: imageView.bottomAnchor, constant: 8),
                 titleLabel.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -8),
@@ -135,15 +190,20 @@ final class WindowGroupPreviewPanel: NSPanel {
             didStartDrag = false
         }
 
-        func update(title: String, image: NSImage?, isDimmed: Bool) {
+        func update(title: String, image: NSImage?, appIcon: NSImage? = nil, isDimmed: Bool, isSelected: Bool? = nil) {
             let trimmed = title.trimmingCharacters(in: .whitespacesAndNewlines)
             currentTitle = trimmed
             currentIsDimmed = isDimmed
+            if let isSelected { self.isSelected = isSelected }
             titleLabel.stringValue = trimmed
             if let image {
                 imageView.image = image
             }
+            if let appIcon {
+                appIconView.image = appIcon
+            }
             alphaValue = isDimmed ? 0.60 : 1.0
+            updateHoverAppearance()
         }
 
         func clearRetainedImage() {
@@ -152,11 +212,17 @@ final class WindowGroupPreviewPanel: NSPanel {
 
         private func updateHoverAppearance() {
             guard let layer else { return }
-            if isHovering {
+            if isSelected {
+                layer.backgroundColor = NSColor.controlAccentColor.withAlphaComponent(isHovering ? 0.28 : 0.22).cgColor
+                layer.borderWidth = 1.5
+                layer.borderColor = NSColor.controlAccentColor.withAlphaComponent(0.82).cgColor
+            } else if isHovering {
                 layer.backgroundColor = NSColor.white.withAlphaComponent(0.10).cgColor
+                layer.borderWidth = 1
                 layer.borderColor = NSColor.white.withAlphaComponent(0.18).cgColor
             } else {
                 layer.backgroundColor = NSColor.white.withAlphaComponent(0.06).cgColor
+                layer.borderWidth = 0.75
                 layer.borderColor = NSColor.white.withAlphaComponent(0.12).cgColor
             }
         }
@@ -166,20 +232,17 @@ final class WindowGroupPreviewPanel: NSPanel {
     private let effectContainer = HoverTrackingView()
     private let scrollView = NSScrollView()
     private let stackView = NSStackView()
+    private let documentView = NSView()
+    private var documentHeightConstraint: NSLayoutConstraint?
+    private nonisolated(unsafe) var clipBoundsObserver: NSObjectProtocol?
 
     private var tilesByWindowId: [UInt32: WindowThumbnailTileView] = [:]
     private var tileWidthsByWindowId: [UInt32: CGFloat] = [:]
     private var orderedWindowIds: [UInt32] = []
     private var dragSourceWindowId: UInt32?
     private var didReorderInCurrentDrag: Bool = false
-
-    private static let thumbnailHeight: CGFloat = 124
-    // For very tall/portrait windows, a strict aspect-matched thumbnail would be extremely
-    // narrow (and the panel would look mostly empty). Keep a higher minimum so the chooser
-    // reads like a deliberate UI, closer to Windows/Dock behavior (image can letterbox).
-    private static let minThumbnailWidth: CGFloat = 140
-    private static let maxThumbnailWidth: CGFloat = 240
     private static let tileChromeWidth: CGFloat = 16 // 8pt padding on each side of image view
+    private var presentationMode: PresentationMode = .groupPreview
 
     // Titlebar chrome stripping (same rationale as other overlay panels).
     private var chromeReapTimer: Timer?
@@ -191,6 +254,7 @@ final class WindowGroupPreviewPanel: NSPanel {
     var onWindowClicked: ((UInt32) -> Void)?
     var onHoverChanged: ((Bool) -> Void)?
     var onWindowsReordered: (([UInt32]) -> Void)?
+    var onVisibleWindowIdsChanged: (([UInt32]) -> Void)?
 
     init(theme: Theme, glassStyle: GlassStyle) {
         self.glassStyle = glassStyle
@@ -223,6 +287,12 @@ final class WindowGroupPreviewPanel: NSPanel {
         }
 
         setupUI()
+    }
+
+    deinit {
+        if let clipBoundsObserver {
+            NotificationCenter.default.removeObserver(clipBoundsObserver)
+        }
     }
 
     func setAnimationProfile(_ profile: AnimationProfile) {
@@ -258,6 +328,7 @@ final class WindowGroupPreviewPanel: NSPanel {
         scrollView.horizontalScrollElasticity = .allowed
         scrollView.verticalScrollElasticity = .none
         scrollView.translatesAutoresizingMaskIntoConstraints = false
+        scrollView.contentView.postsBoundsChangedNotifications = true
 
         stackView.orientation = .horizontal
         stackView.alignment = .top
@@ -265,20 +336,19 @@ final class WindowGroupPreviewPanel: NSPanel {
         stackView.edgeInsets = NSEdgeInsets(top: 10, left: 12, bottom: 10, right: 12)
         stackView.translatesAutoresizingMaskIntoConstraints = false
 
-        let doc = NSView()
-        doc.translatesAutoresizingMaskIntoConstraints = false
-        doc.addSubview(stackView)
+        documentView.translatesAutoresizingMaskIntoConstraints = false
+        documentView.addSubview(stackView)
         NSLayoutConstraint.activate([
-            stackView.leadingAnchor.constraint(equalTo: doc.leadingAnchor),
-            stackView.trailingAnchor.constraint(equalTo: doc.trailingAnchor),
-            stackView.topAnchor.constraint(equalTo: doc.topAnchor),
-            stackView.bottomAnchor.constraint(equalTo: doc.bottomAnchor),
-            // Keep the document view height equal to the panel height so tiles
-            // never clip vertically (scrolling is horizontal only).
-            doc.heightAnchor.constraint(equalToConstant: 188),
+            stackView.leadingAnchor.constraint(equalTo: documentView.leadingAnchor),
+            stackView.trailingAnchor.constraint(equalTo: documentView.trailingAnchor),
+            stackView.topAnchor.constraint(equalTo: documentView.topAnchor),
+            stackView.bottomAnchor.constraint(equalTo: documentView.bottomAnchor),
         ])
+        let documentHeightConstraint = documentView.heightAnchor.constraint(equalToConstant: presentationMode.panelHeight)
+        documentHeightConstraint.isActive = true
+        self.documentHeightConstraint = documentHeightConstraint
 
-        scrollView.documentView = doc
+        scrollView.documentView = documentView
         effectContainer.addSubview(scrollView)
 
         NSLayoutConstraint.activate([
@@ -287,6 +357,16 @@ final class WindowGroupPreviewPanel: NSPanel {
             scrollView.topAnchor.constraint(equalTo: effectContainer.topAnchor),
             scrollView.bottomAnchor.constraint(equalTo: effectContainer.bottomAnchor),
         ])
+
+        clipBoundsObserver = NotificationCenter.default.addObserver(
+            forName: NSView.boundsDidChangeNotification,
+            object: scrollView.contentView,
+            queue: .main
+        ) { [weak self] _ in
+            MainActor.assumeIsolated {
+                self?.notifyVisibleWindowIds()
+            }
+        }
 
         rebuildGlassBackground()
     }
@@ -323,7 +403,22 @@ final class WindowGroupPreviewPanel: NSPanel {
         ])
     }
 
-    func updateWindows(_ windows: [WindowInfo]) {
+    func updateWindows(
+        _ windows: [WindowInfo],
+        mode: PresentationMode = .groupPreview,
+        selectedWindowId: UInt32? = nil,
+        iconProvider: ((String) -> NSImage?)? = nil
+    ) {
+        presentationMode = mode
+        documentHeightConstraint?.constant = mode.panelHeight
+        scrollView.hasHorizontalScroller = mode == .groupPreview
+        scrollView.autohidesScrollers = true
+        effectContainer.setAccessibilityIdentifier(
+            mode == .overflowShelf
+                ? "liquidbar.overlay.window_overflow"
+                : "liquidbar.overlay.group_preview"
+        )
+
         // Clear existing.
         stackView.arrangedSubviews.forEach { v in
             stackView.removeArrangedSubview(v)
@@ -351,11 +446,12 @@ final class WindowGroupPreviewPanel: NSPanel {
             deduped.append(w)
         }
 
-        // Cap to avoid hammering SCK captures on huge apps.
-        let visible = deduped.prefix(12)
+        // Group previews remain bounded. Overflow shelves create lightweight
+        // tile views for every hidden window, but capture only the visible range.
+        let visible = mode == .groupPreview ? Array(deduped.prefix(12)) : deduped
         for w in visible {
             let title = w.title.isEmpty ? w.appName : w.title
-            let tile = WindowThumbnailTileView(windowId: w.id.raw)
+            let tile = WindowThumbnailTileView(windowId: w.id.raw, thumbnailHeight: mode.thumbnailHeight)
             tile.translatesAutoresizingMaskIntoConstraints = false
 
             let aspect: CGFloat = {
@@ -366,40 +462,49 @@ final class WindowGroupPreviewPanel: NSPanel {
                 if !a.isFinite || a <= 0 { return 16.0 / 9.0 }
                 return a
             }()
-            let thumbW = max(Self.minThumbnailWidth, min(Self.maxThumbnailWidth, Self.thumbnailHeight * aspect))
+            let thumbW = max(mode.minThumbnailWidth, min(mode.maxThumbnailWidth, mode.thumbnailHeight * aspect))
             let tileW = thumbW + Self.tileChromeWidth
             tileWidthsByWindowId[w.id.raw] = tileW
             orderedWindowIds.append(w.id.raw)
 
             NSLayoutConstraint.activate([
                 tile.widthAnchor.constraint(equalToConstant: tileW),
-                tile.heightAnchor.constraint(equalToConstant: 168),
+                tile.heightAnchor.constraint(equalToConstant: mode.tileHeight),
             ])
             tile.onClicked = { [weak self] wid in
                 MainActor.assumeIsolated {
                     self?.onWindowClicked?(wid)
                 }
             }
-            tile.onDragBegan = { [weak self] wid, p in
-                MainActor.assumeIsolated {
-                    self?.beginDragReorder(windowId: wid, locationInWindow: p)
+            if mode.allowsReordering {
+                tile.onDragBegan = { [weak self] wid, p in
+                    MainActor.assumeIsolated {
+                        self?.beginDragReorder(windowId: wid, locationInWindow: p)
+                    }
+                }
+                tile.onDragMoved = { [weak self] wid, p in
+                    MainActor.assumeIsolated {
+                        self?.updateDragReorder(windowId: wid, locationInWindow: p)
+                    }
+                }
+                tile.onDragEnded = { [weak self] wid, p in
+                    MainActor.assumeIsolated {
+                        self?.endDragReorder(windowId: wid, locationInWindow: p)
+                    }
                 }
             }
-            tile.onDragMoved = { [weak self] wid, p in
-                MainActor.assumeIsolated {
-                    self?.updateDragReorder(windowId: wid, locationInWindow: p)
-                }
-            }
-            tile.onDragEnded = { [weak self] wid, p in
-                MainActor.assumeIsolated {
-                    self?.endDragReorder(windowId: wid, locationInWindow: p)
-                }
-            }
-            tile.update(title: title, image: nil, isDimmed: w.isHidden || w.isMinimized)
+            tile.update(
+                title: title,
+                image: nil,
+                appIcon: iconProvider?(w.bundleId.raw),
+                isDimmed: w.isHidden || w.isMinimized,
+                isSelected: w.id.raw == selectedWindowId
+            )
             tilesByWindowId[w.id.raw] = tile
         }
 
         applyTileOrder()
+        documentView.layoutSubtreeIfNeeded()
     }
 
     func updateThumbnail(windowId: UInt32, image: NSImage?) {
@@ -412,10 +517,18 @@ final class WindowGroupPreviewPanel: NSPanel {
         tilesByWindowId[windowId]?.update(title: title, image: image, isDimmed: isDimmed)
     }
 
+    func thumbnailTargetSize(windowId: UInt32) -> CGSize? {
+        guard let tileWidth = tileWidthsByWindowId[windowId] else { return nil }
+        return CGSize(
+            width: max(1, tileWidth - Self.tileChromeWidth),
+            height: presentationMode.thumbnailHeight
+        )
+    }
+
     func show(anchorRect: NSRect, on screen: NSScreen, position: Position) {
         visibilityToken &+= 1
 
-        // Size panel to the number of tiles (capped) with a reasonable maximum.
+        // Size to content until the shelf reaches its screen-relative maximum.
         let tileCount = orderedWindowIds.count
         let spacing: CGFloat = stackView.spacing
         let padding: CGFloat = stackView.edgeInsets.left + stackView.edgeInsets.right
@@ -423,12 +536,32 @@ final class WindowGroupPreviewPanel: NSPanel {
             partial + (tileWidthsByWindowId[wid] ?? 0)
         }
         let naturalW = padding + max(1, sumTileW) + CGFloat(max(0, tileCount - 1)) * spacing
-        let maxW = min(screen.visibleFrame.width - 40, 900)
-        let minW: CGFloat = (tileCount <= 1) ? 200 : 260
+        let maxW: CGFloat = {
+            switch presentationMode {
+            case .groupPreview:
+                return min(screen.visibleFrame.width - 40, 900)
+            case .overflowShelf:
+                return screen.visibleFrame.width - 48
+            }
+        }()
+        let minW: CGFloat = {
+            switch presentationMode {
+            case .groupPreview:
+                return tileCount <= 1 ? 200 : 260
+            case .overflowShelf:
+                return min(420, maxW)
+            }
+        }()
         let width = max(minW, min(naturalW, maxW))
-        let height: CGFloat = 188
+        let height = presentationMode.panelHeight
 
         setFrame(NSRect(origin: frame.origin, size: CGSize(width: ceil(width), height: height)), display: false)
+        documentView.setFrameSize(NSSize(width: ceil(max(naturalW, width)), height: height))
+        effectContainer.layoutSubtreeIfNeeded()
+        scrollView.layoutSubtreeIfNeeded()
+        documentView.layoutSubtreeIfNeeded()
+        scrollView.contentView.scroll(to: .zero)
+        scrollView.reflectScrolledClipView(scrollView.contentView)
 
         let size = frame.size
         let margin: CGFloat = 10
@@ -468,6 +601,8 @@ final class WindowGroupPreviewPanel: NSPanel {
             effectContainer.layer?.removeAllAnimations()
             effectContainer.layer?.transform = CATransform3DIdentity
             orderFrontRegardless()
+            notifyVisibleWindowIds()
+            notifyVisibleWindowIdsSoon()
             return
         }
 
@@ -504,6 +639,8 @@ final class WindowGroupPreviewPanel: NSPanel {
             effectContainer.layer?.transform = CATransform3DIdentity
             orderFrontRegardless()
         }
+        notifyVisibleWindowIds()
+        notifyVisibleWindowIdsSoon()
     }
 
     func hide(immediate: Bool = false) {
@@ -513,6 +650,7 @@ final class WindowGroupPreviewPanel: NSPanel {
 
         guard isVisible else {
             releaseRetainedImages()
+            discardOverflowTiles()
             return
         }
         if immediate || SystemAccessibilityPreferences.reduceMotion {
@@ -522,6 +660,7 @@ final class WindowGroupPreviewPanel: NSPanel {
             alphaValue = 0
             effectContainer.layer?.transform = CATransform3DIdentity
             releaseRetainedImages()
+            discardOverflowTiles()
             return
         }
 
@@ -550,6 +689,7 @@ final class WindowGroupPreviewPanel: NSPanel {
                 self.alphaValue = 0
                 self.effectContainer.layer?.transform = CATransform3DIdentity
                 self.releaseRetainedImages()
+                self.discardOverflowTiles()
             }
         }
     }
@@ -559,6 +699,72 @@ final class WindowGroupPreviewPanel: NSPanel {
             tile.clearRetainedImage()
         }
     }
+
+    private func discardOverflowTiles() {
+        guard presentationMode == .overflowShelf else { return }
+        stackView.arrangedSubviews.forEach { view in
+            stackView.removeArrangedSubview(view)
+            view.removeFromSuperview()
+        }
+        tilesByWindowId.removeAll(keepingCapacity: false)
+        tileWidthsByWindowId.removeAll(keepingCapacity: false)
+        orderedWindowIds.removeAll(keepingCapacity: false)
+        documentView.setFrameSize(NSSize(width: 1, height: presentationMode.panelHeight))
+    }
+
+    private func notifyVisibleWindowIdsSoon() {
+        DispatchQueue.main.async { [weak self] in
+            guard let self else { return }
+            self.effectContainer.layoutSubtreeIfNeeded()
+            self.scrollView.layoutSubtreeIfNeeded()
+            self.documentView.layoutSubtreeIfNeeded()
+            self.notifyVisibleWindowIds()
+        }
+    }
+
+    private func notifyVisibleWindowIds() {
+        guard presentationMode == .overflowShelf,
+              !orderedWindowIds.isEmpty else { return }
+
+        // Prefetch one viewport on either side. This keeps trackpad scrolling
+        // fluid while bounding ScreenCaptureKit work independently of window count.
+        let viewport = scrollView.documentVisibleRect
+        guard viewport.width > 1 else {
+            onVisibleWindowIdsChanged?(Array(orderedWindowIds.prefix(8)))
+            return
+        }
+        let captureRect = viewport.insetBy(dx: -viewport.width, dy: 0)
+        let candidates = orderedWindowIds.compactMap { windowId -> (UInt32, CGFloat)? in
+            guard let tile = tilesByWindowId[windowId] else { return nil }
+            let tileRect = tile.convert(tile.bounds, to: documentView)
+            guard tileRect.intersects(captureRect) else { return nil }
+            return (windowId, abs(tileRect.midX - viewport.midX))
+        }
+        let visibleIds = candidates.isEmpty
+            ? Array(orderedWindowIds.prefix(8))
+            : candidates.sorted { $0.1 < $1.1 }.prefix(12).map(\.0)
+        onVisibleWindowIdsChanged?(visibleIds)
+    }
+
+    #if DEBUG
+    var debugOrderedWindowIds: [UInt32] { orderedWindowIds }
+    var debugPresentationMode: PresentationMode { presentationMode }
+
+    func debugVisibleWindowIds() -> [UInt32] {
+        let viewport = scrollView.documentVisibleRect
+        guard viewport.width > 1 else { return Array(orderedWindowIds.prefix(8)) }
+        let captureRect = viewport.insetBy(dx: -viewport.width, dy: 0)
+        return orderedWindowIds.compactMap { windowId -> (UInt32, CGFloat)? in
+            guard let tile = tilesByWindowId[windowId] else { return nil }
+            let tileRect = tile.convert(tile.bounds, to: documentView)
+            guard tileRect.intersects(captureRect) else { return nil }
+            return (windowId, abs(tileRect.midX - viewport.midX))
+        }
+        .sorted { $0.1 < $1.1 }
+        .prefix(12)
+        .map(\.0)
+    }
+    #endif
 
     // MARK: - Chrome stripping
 

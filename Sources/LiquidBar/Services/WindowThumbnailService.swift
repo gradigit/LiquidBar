@@ -7,6 +7,7 @@ final class WindowThumbnailService {
         case interactive
         case switcher
         case groupPreview
+        case overflowShelf
         case prewarm
     }
 
@@ -381,7 +382,7 @@ final class WindowThumbnailService {
             switch producer {
             case .interactive:
                 return 0
-            case .switcher, .groupPreview:
+            case .switcher, .groupPreview, .overflowShelf:
                 return 1
             case .prewarm:
                 return 2
@@ -874,7 +875,7 @@ final class WindowThumbnailService {
         switch producer {
         case .switcher, .prewarm:
             return 8.0
-        case .interactive, .groupPreview:
+        case .interactive, .groupPreview, .overflowShelf:
             return 0.75
         }
     }

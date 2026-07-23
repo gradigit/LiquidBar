@@ -35,6 +35,7 @@
 "Blue" = "Blue";
 "Bottom" = "Bottom";
 "CPU" = "CPU";
+"CPU Usage: %@" = "CPU Usage: %@";
 "Cancel" = "Cancel";
 "Celsius" = "Celsius";
 "Center icons-only bottom bar" = "Center icons-only bottom bar";
@@ -104,6 +105,7 @@
 "Focused display" = "Focused display";
 "Free" = "Free";
 "GPU" = "GPU";
+"GPU Usage: %@" = "GPU Usage: %@";
 "General" = "General";
 "GitHub" = "GitHub";
 "Glass Style:" = "Glass Style:";
@@ -137,6 +139,7 @@
 "Later" = "Later";
 "Language:" = "Language:";
 "Launch at Login" = "Launch at Login";
+"Memory Usage: %@" = "Memory Usage: %@";
 "Launch at login" = "Launch at login";
 "Launcher Action:" = "Launcher Action:";
 "Layout" = "Layout";
@@ -157,6 +160,7 @@
 "Micro" = "Micro";
 "Minimal" = "Minimal";
 "Minimize window" = "Minimize window";
+"%@ more windows" = "%@ more windows";
 "Minimized Mode:" = "Minimized Mode:";
 "Motion & Depth" = "Motion & Depth";
 "Needs Access" = "Needs Access";
@@ -267,6 +271,7 @@
 "Teal" = "Teal";
 "Temperature:" = "Temperature:";
 "Temperature" = "Temperature";
+"Temperature: %@" = "Temperature: %@";
 "Theme:" = "Theme:";
 "This restores default preferences and keeps the current app installed." = "This restores default preferences and keeps the current app installed.";
 "Tile highlight" = "Tile highlight";

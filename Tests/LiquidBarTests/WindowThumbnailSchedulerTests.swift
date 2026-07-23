@@ -96,6 +96,25 @@ struct WindowThumbnailSchedulerTests {
         #expect(scheduler.finish(active.key).isEmpty)
     }
 
+    @Test func overflowShelfInvalidationDropsViewportWorkBeforeDispatch() {
+        var scheduler = WindowThumbnailService.ThumbnailRequestScheduler(
+            maxConcurrentCaptures: 1,
+            maxQueuedRequests: 8
+        )
+
+        let active = makeRequest(windowId: 1, producer: .interactive, generation: scheduler.currentGeneration(for: .interactive))
+        let overflowA = makeRequest(windowId: 2, producer: .overflowShelf, generation: scheduler.currentGeneration(for: .overflowShelf))
+        let overflowB = makeRequest(windowId: 3, producer: .overflowShelf, generation: scheduler.currentGeneration(for: .overflowShelf))
+
+        _ = scheduler.enqueue(active)
+        _ = scheduler.enqueue(overflowA)
+        _ = scheduler.enqueue(overflowB)
+
+        let invalidation = scheduler.invalidate(producer: .overflowShelf)
+        #expect(Set(invalidation.droppedQueued.map(\.windowId)) == Set([overflowA.windowId, overflowB.windowId]))
+        #expect(scheduler.finish(active.key).isEmpty)
+    }
+
     @Test func backgroundQueueCapDropsOldestPrewarmWork() {
         var scheduler = WindowThumbnailService.ThumbnailRequestScheduler(
             maxConcurrentCaptures: 1,

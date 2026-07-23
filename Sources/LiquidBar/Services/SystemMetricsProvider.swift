@@ -93,6 +93,19 @@ struct SystemIndicatorVisual: Equatable, Sendable {
     var history: [Float]
     /// 0...1 urgency tint used for thermal-aware accents.
     var severity: Float
+
+    var toolTipText: String {
+        switch metric {
+        case .cpu:
+            L10n.tr("CPU Usage: %@", valueText)
+        case .gpu:
+            L10n.tr("GPU Usage: %@", valueText)
+        case .ram:
+            L10n.tr("Memory Usage: %@", valueText)
+        case .thermal:
+            L10n.tr("Temperature: %@", valueText)
+        }
+    }
 }
 
 struct SystemIndicatorPayload: Sendable {

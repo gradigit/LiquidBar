@@ -46,6 +46,7 @@ struct NativeTextOverlayItem: Sendable {
     var x: Float
     var maxWidth: Float
     var isDimmed: Bool
+    var usesTabularDigits: Bool = false
     /// Top-left y-origin of the item slot for vertical sidebars.
     var nativeY: Float?
     /// Slot height used to vertically center text in vertical sidebars.
@@ -404,6 +405,37 @@ final class NativeBarRenderer {
         }
     }
 
+    func overflowPlan(
+        for items: [TaskbarItem],
+        config: Config,
+        primaryLength: Float,
+        displayId: CGDirectDisplayID,
+        focus: FocusInfo = .none,
+        systemIndicatorVisuals: [String: SystemIndicatorVisual] = [:]
+    ) -> TaskbarOverflowPlan {
+        guard config.taskbarPosition.isHorizontal else {
+            return TaskbarOverflowPlan(
+                items: items,
+                sourceIndices: items.indices.map(Optional.some),
+                overflowWindowIds: []
+            )
+        }
+
+        return TaskbarOverflowPlanner.plan(
+            items: items,
+            displayId: UInt32(displayId),
+            focusedWindowId: focus.windowId
+        ) { [self] candidateItems in
+            horizontalLayoutsFit(
+                items: candidateItems,
+                config: config,
+                primaryLength: primaryLength,
+                focus: focus,
+                systemIndicatorVisuals: systemIndicatorVisuals
+            )
+        }
+    }
+
     func forceRedraw(displayId: CGDirectDisplayID) {
         if panelStates[displayId] != nil {
             panelStates[displayId]?.needsLayerSync = true
@@ -707,6 +739,7 @@ final class NativeBarRenderer {
                     x: Float(titleRect.minX),
                     maxWidth: Float(titleRect.width),
                     isDimmed: item.isDimmed,
+                    usesTabularDigits: metricVisual != nil,
                     nativeY: position.isVertical ? Float(rect.minY) : nil,
                     slotHeight: position.isVertical ? Float(rect.height) : nil
                 ))
@@ -924,6 +957,44 @@ final class NativeBarRenderer {
                     ))
                 }
             }
+        }
+
+        if !config.taskbarPosition.isVertical,
+           title.isEmpty,
+           case .windowOverflow(let windows, _) = item,
+           !windows.isEmpty {
+            let metrics = appGroupBadgeMetrics(
+                windowCount: windows.count,
+                titleIsEmpty: true,
+                style: .minimal,
+                alpha: alpha
+            )
+            let badgeRect = NSRect(
+                x: min(
+                    iconRect.maxX + CGFloat(LayoutConstants.groupBadgeIconGap),
+                    rect.maxX - metrics.width - CGFloat(LayoutConstants.groupBadgeRightInset)
+                ),
+                y: rect.minY + (rect.height - metrics.height) / 2,
+                width: metrics.width,
+                height: metrics.height
+            )
+            decorations.append(NativeDecoration(
+                kind: .badge,
+                rect: badgeRect,
+                cornerRadius: metrics.cornerRadius,
+                color: .white,
+                alpha: metrics.alpha,
+                visualDepth: config.visualDepth
+            ))
+            textItems.append(NativeTextOverlayItem(
+                itemIndex: index,
+                title: metrics.text,
+                x: Float(badgeRect.minX + max(2, (badgeRect.width - metrics.textWidth) / 2)),
+                maxWidth: Float(max(4, metrics.textWidth + 1)),
+                isDimmed: false,
+                nativeY: nil,
+                slotHeight: nil
+            ))
         }
 
         if !config.taskbarPosition.isVertical,
@@ -1683,7 +1754,7 @@ final class NativeBarRenderer {
         guard usesTightDenseSystemIndicatorSpacing(config: config) else {
             return LayoutConstants.itemSpacing
         }
-        return config.systemIndicatorAppearance == .flat ? 2 : 1
+        return config.systemIndicatorAppearance == .flat ? 2 : 0
     }
 
     private func spacingBetweenItems(
@@ -1865,6 +1936,58 @@ final class NativeBarRenderer {
         return (output, separator)
     }
 
+    private func horizontalLayoutsFit(
+        items: [TaskbarItem],
+        config: Config,
+        primaryLength: Float,
+        focus: FocusInfo,
+        systemIndicatorVisuals: [String: SystemIndicatorVisual]
+    ) -> Bool {
+        let layouts = computeItemLayouts(
+            items: items,
+            config: config,
+            primaryLength: primaryLength,
+            focus: focus,
+            systemIndicatorVisuals: systemIndicatorVisuals
+        )
+        guard layouts.count == items.count else { return false }
+
+        let left = layoutLeftMargin(config: config)
+        let right = primaryLength - left
+        let tolerance: Float = 0.5
+        guard layouts.allSatisfy({ layout in
+            layout.x >= left - tolerance && layout.x + layout.width <= right + tolerance
+        }) else {
+            return false
+        }
+
+        let cornerAffixed = config.systemIndicatorPlacement == .leftCorner ||
+            config.systemIndicatorPlacement == .rightCorner
+        guard cornerAffixed else { return true }
+
+        let indicatorIndices = items.indices.filter {
+            isSystemIndicatorItem(items[$0], visuals: systemIndicatorVisuals)
+        }
+        let indicatorSet = Set(indicatorIndices)
+        let regularIndices = items.indices.filter { !indicatorSet.contains($0) }
+        guard !indicatorIndices.isEmpty, !regularIndices.isEmpty else { return true }
+
+        let indicatorMin = indicatorIndices.map { layouts[$0].x }.min() ?? right
+        let indicatorMax = indicatorIndices.map { layouts[$0].x + layouts[$0].width }.max() ?? left
+        let regularMin = regularIndices.map { layouts[$0].x }.min() ?? right
+        let regularMax = regularIndices.map { layouts[$0].x + layouts[$0].width }.max() ?? left
+        let gap = LayoutConstants.itemSpacing - tolerance
+
+        switch config.systemIndicatorPlacement {
+        case .leftCorner:
+            return regularMin >= indicatorMax + gap
+        case .rightCorner:
+            return regularMax <= indicatorMin - gap
+        default:
+            return true
+        }
+    }
+
     private func shrinkWidthsToFit(
         widths: inout [Float],
         indices: [Int],
@@ -1916,12 +2039,26 @@ final class NativeBarRenderer {
     }
 
     private func shouldAlwaysUseIconOnlyLayout(_ item: TaskbarItem) -> Bool {
-        if case .launcher = item { return true }
-        return false
+        switch item {
+        case .launcher, .windowOverflow:
+            return true
+        default:
+            return false
+        }
     }
 
     private func iconOnlyWidth(item: TaskbarItem, config: Config, iconSize: Float) -> Float {
         let base = max(LayoutConstants.minItemWidth, iconSize + 20)
+        if case .windowOverflow(let windows, _) = item {
+            let metrics = appGroupBadgeMetrics(
+                windowCount: windows.count,
+                titleIsEmpty: true,
+                style: .minimal,
+                alpha: 1
+            )
+            let clusterWidth = iconSize + LayoutConstants.groupBadgeIconGap + Float(metrics.width)
+            return max(base, clusterWidth + LayoutConstants.groupCompoundHorizontalPadding * 2)
+        }
         guard config.groupByApp,
               case .appGroup(_, _, let windowCount, _, _, _, _) = item,
               windowCount > 1 else {
@@ -1957,6 +2094,19 @@ final class NativeBarRenderer {
             y = rect.minY + (rect.height - size) / 2
         } else {
             if title.isEmpty,
+               case .windowOverflow(let windows, _) = item {
+                let metrics = appGroupBadgeMetrics(
+                    windowCount: windows.count,
+                    titleIsEmpty: true,
+                    style: .minimal,
+                    alpha: 1
+                )
+                let clusterWidth = size + CGFloat(LayoutConstants.groupBadgeIconGap) + metrics.width
+                x = rect.minX + max(
+                    CGFloat(LayoutConstants.groupCompoundHorizontalPadding),
+                    (rect.width - clusterWidth) / 2
+                )
+            } else if title.isEmpty,
                config.groupByApp,
                config.appGroupCountBadgeInIconsOnly,
                case .appGroup(_, _, let windowCount, _, _, _, _) = item,
@@ -2152,7 +2302,10 @@ final class NativeBarRenderer {
 
     private func systemIndicatorTitleInsets(config: Config) -> (left: CGFloat, right: CGFloat) {
         if usesCondensedDenseSystemIndicatorTiles(config: config) {
-            return (2, 2)
+            return (0, 0)
+        }
+        if config.systemIndicatorChipPreset == .dense {
+            return (4, 4)
         }
         if config.systemIndicatorChipPreset == .compact {
             return (6, 6)
@@ -2160,8 +2313,13 @@ final class NativeBarRenderer {
         return (CGFloat(LayoutConstants.iconLeftMargin), CGFloat(LayoutConstants.textRightPadding))
     }
 
-    private func systemIndicatorTextFitSlack(config: Config) -> Float {
-        config.systemIndicatorChipPreset == .micro ? 0 : 4
+    private func systemIndicatorTextFittingWidth(_ text: String, font: NSFont) -> Float {
+        let cell = NSTextFieldCell(textCell: text)
+        cell.font = font
+        cell.alignment = .center
+        cell.usesSingleLineMode = true
+        cell.lineBreakMode = .byTruncatingTail
+        return Float(ceil(cell.cellSize.width))
     }
 
     private func metricClusterTileWidth(
@@ -2176,21 +2334,26 @@ final class NativeBarRenderer {
             return fallback
         }
 
-        let font = NSFont.systemFont(ofSize: CGFloat(config.fontSize), weight: .medium)
+        let font = NSFont.monospacedDigitSystemFont(ofSize: CGFloat(config.fontSize), weight: .medium)
         let textWidth = items.compactMap { item -> Float? in
-            guard systemIndicatorVisual(for: item, visuals: systemIndicatorVisuals) != nil else {
+            guard let visual = systemIndicatorVisual(for: item, visuals: systemIndicatorVisuals) else {
                 return nil
             }
             let title = item.displayTitle(iconsOnly: false)
             guard !title.isEmpty else { return nil }
-            let size = (title as NSString).size(withAttributes: [.font: font])
-            return min(Float(size.width), Float(config.maxTitleWidth))
+            let referenceTitle = systemIndicatorWidthReferenceTitle(
+                metric: visual.metric,
+                config: config
+            )
+            let titleWidth = systemIndicatorTextFittingWidth(title, font: font)
+            let referenceWidth = systemIndicatorTextFittingWidth(referenceTitle, font: font)
+            return min(max(titleWidth, referenceWidth), Float(config.maxTitleWidth))
         }.max() ?? 0
 
         guard textWidth > 0 else { return fallback }
 
         let insets = systemIndicatorTitleInsets(config: config)
-        let contentWidth = ceil(textWidth + Float(insets.left + insets.right) + systemIndicatorTextFitSlack(config: config))
+        let contentWidth = ceil(textWidth + Float(insets.left + insets.right))
         let minimumWidth: Float = {
             if usesCondensedDenseSystemIndicatorTiles(config: config) {
                 return 20
@@ -2201,6 +2364,27 @@ final class NativeBarRenderer {
             return LayoutConstants.minItemWidth
         }()
         return min(Float(config.maxItemWidth), max(minimumWidth, contentWidth))
+    }
+
+    private func systemIndicatorWidthReferenceTitle(
+        metric: SystemIndicatorMetric,
+        config: Config
+    ) -> String {
+        switch config.systemIndicatorChipPreset {
+        case .full, .compact:
+            if metric == .thermal {
+                let value = config.systemIndicatorTemperatureUnit == .fahrenheit ? "212°F" : "100°C"
+                return "\(metric.label) \(value)"
+            }
+            return "\(metric.label) 100%"
+        case .dense:
+            if metric == .thermal {
+                return config.systemIndicatorTemperatureUnit == .fahrenheit ? "212F" : "100C"
+            }
+            return "100%"
+        case .micro:
+            return ""
+        }
     }
 
     private func effectiveDisplayIconsOnly(config: Config, position: Position, sidebarExpanded: Bool) -> Bool {
@@ -2271,6 +2455,12 @@ final class NativeBarRenderer {
                 }
                 return false
             }) { return idx }
+            if let idx = items.firstIndex(where: {
+                if case .windowOverflow(let windows, _) = $0 {
+                    return windows.contains(where: { $0.raw == wid })
+                }
+                return false
+            }) { return idx }
         }
         if let bid = focus.bundleId, !bid.isEmpty {
             let matches = items.enumerated().compactMap { index, item -> Int? in
@@ -2308,6 +2498,7 @@ final class NativeBarRenderer {
         switch item {
         case .window(let id, _, _, _, _, _, _): return "window-\(id.raw)"
         case .appGroup(let bundleId, _, _, _, _, _, let screenId): return "group-\(bundleId)-\(screenId)"
+        case .windowOverflow(_, let screenId): return "overflow-\(screenId)"
         case .pinnedApp(let bundleId, let screenId): return "pin-\(bundleId)-\(screenId)"
         case .launcher(let screenId): return "launcher-\(screenId)"
         case .pluginTile(let id, _, _, _, _, _): return "plugin-\(id)"
@@ -2341,6 +2532,10 @@ final class NativeBarRenderer {
                 for window in windows { hasher.combine(window.raw) }
                 hasher.combine(isHidden)
                 hasher.combine(isMinimized)
+                hasher.combine(screenId)
+            case .windowOverflow(let windows, let screenId):
+                hasher.combine(10)
+                for window in windows { hasher.combine(window.raw) }
                 hasher.combine(screenId)
             case .pinnedApp(let bundleId, let screenId):
                 hasher.combine(2)

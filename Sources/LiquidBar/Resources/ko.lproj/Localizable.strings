@@ -35,6 +35,7 @@
 "Blue" = "파란색";
 "Bottom" = "하단";
 "CPU" = "CPU";
+"CPU Usage: %@" = "CPU 사용량: %@";
 "Cancel" = "취소";
 "Celsius" = "섭씨";
 "Center icons-only bottom bar" = "아이콘만 표시하는 하단 막대 가운데 정렬";
@@ -104,6 +105,7 @@
 "Focused display" = "포커스된 디스플레이";
 "Free" = "자유";
 "GPU" = "GPU";
+"GPU Usage: %@" = "GPU 사용량: %@";
 "General" = "일반";
 "GitHub" = "GitHub";
 "Glass Style:" = "글래스 스타일:";
@@ -137,6 +139,7 @@
 "Later" = "나중에";
 "Language:" = "언어:";
 "Launch at Login" = "로그인 시 실행";
+"Memory Usage: %@" = "메모리 사용량: %@";
 "Launch at login" = "로그인 시 실행";
 "Launcher Action:" = "런처 동작:";
 "Layout" = "레이아웃";
@@ -157,6 +160,7 @@
 "Micro" = "마이크로";
 "Minimal" = "최소";
 "Minimize window" = "윈도우 최소화";
+"%@ more windows" = "윈도우 %@개 더 보기";
 "Minimized Mode:" = "최소화 모드:";
 "Motion & Depth" = "움직임 및 깊이";
 "Needs Access" = "권한 필요";
@@ -267,6 +271,7 @@
 "Teal" = "청록색";
 "Temperature:" = "온도:";
 "Temperature" = "온도";
+"Temperature: %@" = "온도: %@";
 "Theme:" = "테마:";
 "This restores default preferences and keeps the current app installed." = "기본 환경설정으로 되돌리며 현재 앱 설치는 유지됩니다.";
 "Tile highlight" = "타일 강조";

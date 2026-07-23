@@ -5,6 +5,87 @@ import Testing
 @Suite("WindowGroupPreviewPanel", .serialized)
 @MainActor
 struct WindowGroupPreviewPanelTests {
+    @Test func overflowShelfKeepsAllMetadataTilesButBoundsCaptureViewport() throws {
+        guard let screen = NSScreen.screens.first else { return }
+        let windows = Self.manyWindows(count: 30)
+        let panel = WindowGroupPreviewPanel(theme: .dark, glassStyle: .publicRegular)
+        defer {
+            panel.hide(immediate: true)
+            panel.close()
+        }
+
+        var requestedIds: [UInt32] = []
+        panel.onVisibleWindowIdsChanged = { requestedIds = $0 }
+        panel.updateWindows(
+            windows,
+            mode: .overflowShelf,
+            selectedWindowId: 1,
+            iconProvider: { _ in NSImage(systemSymbolName: "macwindow", accessibilityDescription: nil) }
+        )
+        panel.show(
+            anchorRect: NSRect(x: screen.visibleFrame.midX, y: screen.visibleFrame.minY, width: 1, height: 1),
+            on: screen,
+            position: .bottom
+        )
+        RunLoop.current.run(until: Date(timeIntervalSinceNow: 0.08))
+
+        #expect(panel.debugPresentationMode == .overflowShelf)
+        #expect(panel.debugOrderedWindowIds.count == 30)
+        #expect(!requestedIds.isEmpty)
+        #expect(requestedIds.count <= 12)
+        #expect(Set(requestedIds).count == requestedIds.count)
+
+        panel.hide(immediate: true)
+        #expect(panel.debugOrderedWindowIds.isEmpty)
+
+        panel.updateWindows(windows, mode: .groupPreview)
+        #expect(panel.debugOrderedWindowIds.count == 12)
+    }
+
+    @Test func overflowShelfVisualSnapshotCanBeExported() throws {
+        guard let outputPath = ProcessInfo.processInfo.environment["LIQUIDBAR_OVERFLOW_SHELF_QA_PATH"],
+              !outputPath.isEmpty,
+              let screen = NSScreen.screens.first else { return }
+
+        let windows = Self.manyWindows(count: 18)
+        let panel = WindowGroupPreviewPanel(theme: .dark, glassStyle: .publicRegular)
+        defer {
+            panel.hide(immediate: true)
+            panel.close()
+        }
+
+        panel.updateWindows(
+            windows,
+            mode: .overflowShelf,
+            selectedWindowId: 3,
+            iconProvider: { _ in NSImage(systemSymbolName: "macwindow", accessibilityDescription: nil) }
+        )
+        panel.show(
+            anchorRect: NSRect(x: screen.visibleFrame.midX, y: screen.visibleFrame.minY, width: 1, height: 1),
+            on: screen,
+            position: .bottom
+        )
+        RunLoop.current.run(until: Date(timeIntervalSinceNow: 0.05))
+
+        for windowId in panel.debugVisibleWindowIds() {
+            let hue = CGFloat(windowId % 10) / 10
+            panel.updateThumbnail(
+                windowId: windowId,
+                image: Self.thumbnail(
+                    color: NSColor(calibratedHue: hue, saturation: 0.58, brightness: 0.72, alpha: 1),
+                    label: "Window \(windowId)",
+                    size: NSSize(width: 360, height: 210)
+                ),
+                title: "Window \(windowId)",
+                isDimmed: false
+            )
+        }
+
+        let content = try #require(panel.contentView)
+        content.displayIfNeeded()
+        try writeViewSnapshot(content, to: URL(fileURLWithPath: outputPath))
+    }
+
     @Test func groupPreviewReadmeShowcaseCanBeExported() throws {
         guard let outputPath = ProcessInfo.processInfo.environment["LIQUIDBAR_GROUP_PREVIEW_README_PATH"],
               !outputPath.isEmpty else { return }
@@ -114,6 +195,29 @@ struct WindowGroupPreviewPanelTests {
             bounds: WindowBounds(x: 0, y: 0, width: 720, height: 980)
         ),
     ]
+
+    private static func manyWindows(count: Int) -> [WindowInfo] {
+        let sizes: [(Double, Double)] = [
+            (1440, 900),
+            (1280, 960),
+            (900, 1200),
+            (1680, 720),
+            (1100, 900),
+        ]
+        return (1...count).map { index in
+            let size = sizes[(index - 1) % sizes.count]
+            return WindowInfo(
+                id: WindowId(UInt32(index)),
+                bundleId: BundleId("com.example.app\((index - 1) % 6)"),
+                appName: "App \((index - 1) % 6)",
+                title: "Window \(index)",
+                isHidden: false,
+                isMinimized: false,
+                monitorId: MonitorId(1),
+                bounds: WindowBounds(x: Double(index * 8), y: 0, width: size.0, height: size.1)
+            )
+        }
+    }
 
     private static func thumbnail(color: NSColor, label: String, size: NSSize) -> NSImage {
         let image = NSImage(size: size)

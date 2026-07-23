@@ -27,6 +27,7 @@ final class EventLoop {
         case hoveredPreview
         case switcher
         case groupPreview
+        case overflowShelf
         case prewarm
 
         var producer: WindowThumbnailService.ThumbnailProducer {
@@ -37,6 +38,8 @@ final class EventLoop {
                 return .switcher
             case .groupPreview:
                 return .groupPreview
+            case .overflowShelf:
+                return .overflowShelf
             case .prewarm:
                 return .prewarm
             }
@@ -69,6 +72,7 @@ final class EventLoop {
 
     // Render state
     private var currentItems: [TaskbarItem] = []
+    private var renderedItemsByDisplay: [CGDirectDisplayID: [TaskbarItem]] = [:]
     private var lastWindowIdentityDiagnosticSignature = ""
     private var lastTaskbarItemIdentityDiagnosticSignature = ""
     private var lastTaskbarItemSnapshotDiagnosticSignatureByDisplay: [CGDirectDisplayID: String] = [:]
@@ -105,6 +109,10 @@ final class EventLoop {
     private var groupPreviewOrderByKey: [String: [UInt32]] = [:]
     private var groupPreviewPointerInsideByDisplay: [CGDirectDisplayID: Bool] = [:]
     private var groupPreviewAnchorRectByDisplay: [CGDirectDisplayID: CGRect] = [:]
+    private var overflowShelfCaptureWorkItemByDisplay: [CGDirectDisplayID: DispatchWorkItem] = [:]
+    private var overflowShelfWindowIdsByDisplay: [CGDirectDisplayID: [UInt32]] = [:]
+    private var overflowShelfRequestedWindowIdsByDisplay: [CGDirectDisplayID: Set<UInt32>] = [:]
+    private var overflowShelfRetriedWindowIdsByDisplay: [CGDirectDisplayID: Set<UInt32>] = [:]
     private var isBarHidden: Bool = false
     private var sidebarRevealUntilByDisplay: [CGDirectDisplayID: CFAbsoluteTime] = [:]
     private var sidebarPresentationByDisplay: [CGDirectDisplayID: SidebarPresentation] = [:]
@@ -1508,7 +1516,7 @@ final class EventLoop {
             return []
         }()
 
-        panelManager.updateItems(
+        renderedItemsByDisplay = panelManager.updateItems(
             currentItems,
             config: config,
             iconCache: iconCache,
@@ -1518,6 +1526,17 @@ final class EventLoop {
             systemIndicatorVisuals: systemIndicatorPayload.visuals,
             itemBackgroundColorsByDisplay: itemBackgroundColorsByDisplay
         )
+        let staleOverflowDisplays = groupPreviewActiveKeyByDisplay.compactMap { displayId, key -> CGDirectDisplayID? in
+            guard key.hasPrefix("overflow:") else { return nil }
+            let renderedWindowIds = renderedItemsByDisplay[displayId]?.compactMap { item -> [UInt32]? in
+                guard case .windowOverflow(let windows, _) = item else { return nil }
+                return windows.map(\.raw)
+            }.first
+            return renderedWindowIds == overflowShelfWindowIdsByDisplay[displayId] ? nil : displayId
+        }
+        for displayId in staleOverflowDisplays {
+            hideGroupPreview(displayId: displayId)
+        }
         recordTaskbarItemIdentityDiagnostics(displayIds: displayIds)
         recordTaskbarItemSnapshotDiagnostics(displayIds: displayIds)
 
@@ -1530,6 +1549,7 @@ final class EventLoop {
         let activeDisplayIds = Set(panelManager.allPanels.map(\.displayId))
         lastBarViewDataSnapshotByDisplay = lastBarViewDataSnapshotByDisplay.filter { activeDisplayIds.contains($0.key) }
         lastBarViewIdentityByDisplay = lastBarViewIdentityByDisplay.filter { activeDisplayIds.contains($0.key) }
+        renderedItemsByDisplay = renderedItemsByDisplay.filter { activeDisplayIds.contains($0.key) }
 
         // Wire up callbacks for each panel
         for panel in panelManager.allPanels {
@@ -1726,9 +1746,13 @@ final class EventLoop {
         guard index >= 0 && index < items.count else { return }
         let item = items[index]
 
-        // Clicking any taskbar item should dismiss hover previews across displays.
-        // This avoids stale preview overlays when focus jumps between monitors.
-        hideAllPreviews()
+        // The overflow item toggles its own shelf. Other taskbar actions dismiss
+        // hover previews so stale overlays cannot survive a focus change.
+        if case .windowOverflow = item {
+            // Keep the active shelf long enough for toggle semantics below.
+        } else {
+            hideAllPreviews()
+        }
         if case .pluginTile = item {
             // keep card toggled by the tile click itself
         } else {
@@ -1779,8 +1803,8 @@ final class EventLoop {
                         let isFrontmost = (NSWorkspace.shared.frontmostApplication?.bundleIdentifier == bundleId)
                         guard isFrontmost else { return false }
 
-                        let sameBundleWindowCount = items.reduce(into: 0) { acc, it in
-                            if case .window(_, let bid, _, _, _, _, _) = it, bid == bundleId { acc += 1 }
+                        let sameBundleWindowCount = windowStateStore.getWindows().reduce(into: 0) { acc, window in
+                            if window.bundleId.raw == bundleId { acc += 1 }
                         }
                         return sameBundleWindowCount <= 1
                     }()
@@ -1836,6 +1860,12 @@ final class EventLoop {
                         AccessibilityService.focusWindow(windowId: first.raw)
                     }
                 }
+            case .windowOverflow(let windows, _):
+                toggleWindowOverflowShelf(
+                    displayId: displayId,
+                    itemIndex: index,
+                    windowIds: windows.map(\.raw)
+                )
             case .pinnedApp(let bundleId, _):
                 AccessibilityService.launchApp(bundleId: bundleId)
             case .launcher:
@@ -1878,6 +1908,16 @@ final class EventLoop {
         // Cancel any in-flight drag animation before rebuilding state
         renderer.cancelDrag(displayId: displayId)
         let panelItems = itemsForDisplay(displayId)
+        if panelItems.contains(where: { item in
+            if case .windowOverflow = item { return true }
+            return false
+        }) {
+            // The overflow item is a transient projection, not persisted order.
+            // Disable reordering while it is present rather than moving hidden
+            // windows as an implicit block.
+            renderUI()
+            return
+        }
         let systemIndicatorOrder = Self.systemIndicatorMetricOrderAfterReorder(
             items: panelItems,
             from: from,
@@ -1953,6 +1993,8 @@ final class EventLoop {
             return windows.map(\.raw)
         case .tabGroup(let id, _, _, _, _, _, _, _):
             return tabGroupsById[id] ?? []
+        case .windowOverflow(let windows, _):
+            return windows.map(\.raw)
         case .pinnedApp, .launcher, .pluginTile, .customSpacer, .customText, .customLink, .customFolder:
             return []
         }
@@ -1965,7 +2007,7 @@ final class EventLoop {
              .pinnedApp(let bundleId, _),
              .tabGroup(_, let bundleId, _, _, _, _, _, _):
             return bundleId
-        case .launcher, .pluginTile, .customSpacer, .customText, .customLink, .customFolder:
+        case .windowOverflow, .launcher, .pluginTile, .customSpacer, .customText, .customLink, .customFolder:
             return nil
         }
     }
@@ -1984,6 +2026,8 @@ final class EventLoop {
             return "plugin:\(screenId):\(id)"
         case .tabGroup(let id, _, _, _, _, _, _, let screenId):
             return "tab-group:\(screenId):\(id)"
+        case .windowOverflow:
+            return nil
         case .customSpacer(let id, _, let screenId):
             return "custom-spacer:\(screenId.map(String.init) ?? "all"):\(id)"
         case .customText(let id, _, let screenId):
@@ -3663,6 +3707,42 @@ final class EventLoop {
             DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: work)
             return
 
+        case .windowOverflow(let windows, _):
+            previewHoveredWindowIdByDisplay.removeValue(forKey: displayId)
+            let key = "overflow:\(displayId)"
+            groupPreviewHoveredKeyByDisplay[displayId] = key
+
+            let baseDelay = TimeInterval(config.previewHoverDelayMs) / 1000.0
+            let delay = groupPreviewPanelByDisplay[displayId]?.isVisible == true ? 0 : baseDelay
+            guard let anchorRect = panel.barView.screenRectForVisualItem(at: hoverIndex) else {
+                groupPreviewHoveredKeyByDisplay.removeValue(forKey: displayId)
+                scheduleHideGroupPreview(displayId: displayId)
+                return
+            }
+            let panelPosition = panel.position
+            let theme = panel.theme
+            let screen = panel.screen ?? NSScreen.main ?? NSScreen.screens.first
+            let windowIds = windows.map(\.raw)
+
+            let work = DispatchWorkItem { [weak self] in
+                guard let self else { return }
+                guard self.groupPreviewHoveredKeyByDisplay[displayId] == key else { return }
+                guard let screen else { return }
+                self.showGroupPreview(
+                    displayId: displayId,
+                    key: key,
+                    windowIds: windowIds,
+                    theme: theme,
+                    anchorRect: anchorRect,
+                    screen: screen,
+                    position: panelPosition
+                )
+            }
+
+            groupPreviewShowWorkItemByDisplay[displayId] = work
+            DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: work)
+            return
+
         default:
             break
         }
@@ -3806,6 +3886,62 @@ final class EventLoop {
         previewPanelByDisplay[displayId]?.hide()
     }
 
+    private func toggleWindowOverflowShelf(
+        displayId: CGDirectDisplayID,
+        itemIndex: Int,
+        windowIds: [UInt32]
+    ) {
+        let key = "overflow:\(displayId)"
+        if groupPreviewActiveKeyByDisplay[displayId] == key,
+           groupPreviewPanelByDisplay[displayId]?.isVisible == true {
+            hideGroupPreview(displayId: displayId)
+            return
+        }
+
+        // A click-opened shelf is the exclusive window chooser. Cancel delayed
+        // hover previews first so another display cannot reopen a competing
+        // overlay while this shelf is active.
+        for work in previewWorkItemByDisplay.values {
+            work.cancel()
+        }
+        previewWorkItemByDisplay.removeAll()
+        previewHoveredWindowIdByDisplay.removeAll()
+        invalidateThumbnailRequests(for: ThumbnailCaptureContext.hoveredPreview.producer)
+        for panel in previewPanelByDisplay.values {
+            panel.hide()
+        }
+
+        for (otherDisplayId, work) in Array(groupPreviewShowWorkItemByDisplay)
+        where otherDisplayId != displayId {
+            work.cancel()
+            groupPreviewShowWorkItemByDisplay.removeValue(forKey: otherDisplayId)
+        }
+        for (otherDisplayId, work) in Array(groupPreviewHideWorkItemByDisplay)
+        where otherDisplayId != displayId {
+            work.cancel()
+            groupPreviewHideWorkItemByDisplay.removeValue(forKey: otherDisplayId)
+        }
+        for otherDisplayId in Array(groupPreviewPanelByDisplay.keys)
+        where otherDisplayId != displayId {
+            groupPreviewHoveredKeyByDisplay.removeValue(forKey: otherDisplayId)
+            hideGroupPreview(displayId: otherDisplayId, immediate: true)
+        }
+
+        guard let barPanel = panelManager.panel(for: displayId),
+              let anchorRect = barPanel.barView.screenRectForVisualItem(at: itemIndex),
+              let screen = barPanel.screen ?? NSScreen.main ?? NSScreen.screens.first else { return }
+
+        showGroupPreview(
+            displayId: displayId,
+            key: key,
+            windowIds: windowIds,
+            theme: barPanel.theme,
+            anchorRect: anchorRect,
+            screen: screen,
+            position: barPanel.position
+        )
+    }
+
     private func showGroupPreview(
         displayId: CGDirectDisplayID,
         key: String,
@@ -3818,7 +3954,10 @@ final class EventLoop {
         groupPreviewHideWorkItemByDisplay[displayId]?.cancel()
         groupPreviewHideWorkItemByDisplay.removeValue(forKey: displayId)
 
-        let requestedWindowIds = reorderedWindowIdsForGroupPreview(key: key, baseWindowIds: windowIds)
+        let isOverflowShelf = key.hasPrefix("overflow:")
+        let requestedWindowIds = isOverflowShelf
+            ? windowIds
+            : reorderedWindowIdsForGroupPreview(key: key, baseWindowIds: windowIds)
 
         guard !requestedWindowIds.isEmpty else {
             groupPreviewActiveKeyByDisplay.removeValue(forKey: displayId)
@@ -3890,7 +4029,7 @@ final class EventLoop {
             return
         }
 
-        let shown = Array(ordered.prefix(12))
+        let shown = isOverflowShelf ? ordered : Array(ordered.prefix(12))
 
         let panel: WindowGroupPreviewPanel
         if let existing = groupPreviewPanelByDisplay[displayId] {
@@ -3936,14 +4075,38 @@ final class EventLoop {
                 guard let activeKey = self.groupPreviewActiveKeyByDisplay[displayId] else { return }
                 self.applyGroupPreviewReorder(key: activeKey, orderedWindowIds: orderedIds)
             }
+            panel.onVisibleWindowIdsChanged = { [weak self] visibleWindowIds in
+                guard let self else { return }
+                self.scheduleOverflowShelfCaptures(
+                    displayId: displayId,
+                    windowIds: visibleWindowIds
+                )
+            }
             groupPreviewPanelByDisplay[displayId] = panel
         }
         panel.setAnimationProfile(config.animationProfile)
 
         groupPreviewActiveKeyByDisplay[displayId] = key
         groupPreviewAnchorRectByDisplay[displayId] = anchorRect
-        panel.updateWindows(shown)
+        if isOverflowShelf {
+            overflowShelfWindowIdsByDisplay[displayId] = shown.map(\.id.raw)
+            overflowShelfRequestedWindowIdsByDisplay[displayId] = []
+            overflowShelfRetriedWindowIdsByDisplay[displayId] = []
+        }
+        panel.updateWindows(
+            shown,
+            mode: isOverflowShelf ? .overflowShelf : .groupPreview,
+            selectedWindowId: cachedFocusInfo.windowId,
+            iconProvider: { [iconCache] bundleId in
+                iconCache.getIcon(bundleId: bundleId)
+            }
+        )
         panel.show(anchorRect: anchorRect, on: screen, position: position)
+
+        // Group previews are capped at 12 and capture as a single batch. Overflow
+        // shelves use the panel's viewport callback to avoid work proportional
+        // to the total number of hidden windows.
+        guard !isOverflowShelf else { return }
 
         // Kick thumbnail captures (async). Keep running while the panel is visible.
         let scale = screen.backingScaleFactor
@@ -3951,21 +4114,7 @@ final class EventLoop {
             let windowId = w.id.raw
             let title = w.title.isEmpty ? w.appName : w.title
             let isDimmed = w.isHidden || w.isMinimized
-            let targetSizePoints: CGSize = {
-                let h: CGFloat = 124
-                let minW: CGFloat = 96
-                let maxW: CGFloat = 240
-                let bw = CGFloat(w.bounds.width)
-                let bh = CGFloat(w.bounds.height)
-                let aspect: CGFloat
-                if bw > 20, bh > 20, (bw / bh).isFinite, (bw / bh) > 0 {
-                    aspect = bw / bh
-                } else {
-                    aspect = 16.0 / 9.0
-                }
-                let w = max(minW, min(maxW, h * aspect))
-                return CGSize(width: w, height: h)
-            }()
+            guard let targetSizePoints = panel.thumbnailTargetSize(windowId: windowId) else { continue }
             let cachedImage = thumbnailService.cachedThumbnail(
                 windowId: CGWindowID(windowId),
                 targetSizePoints: targetSizePoints,
@@ -3989,6 +4138,89 @@ final class EventLoop {
                     title: title,
                     isDimmed: isDimmed
                 )
+            }
+        }
+    }
+
+    private func scheduleOverflowShelfCaptures(
+        displayId: CGDirectDisplayID,
+        windowIds: [UInt32]
+    ) {
+        guard groupPreviewActiveKeyByDisplay[displayId]?.hasPrefix("overflow:") == true else { return }
+
+        overflowShelfCaptureWorkItemByDisplay[displayId]?.cancel()
+        let work = DispatchWorkItem { [weak self] in
+            guard let self else { return }
+            self.captureOverflowShelfThumbnails(displayId: displayId, windowIds: windowIds)
+        }
+        overflowShelfCaptureWorkItemByDisplay[displayId] = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.04, execute: work)
+    }
+
+    private func captureOverflowShelfThumbnails(
+        displayId: CGDirectDisplayID,
+        windowIds: [UInt32]
+    ) {
+        guard let key = groupPreviewActiveKeyByDisplay[displayId],
+              key.hasPrefix("overflow:"),
+              let panel = groupPreviewPanelByDisplay[displayId],
+              panel.isVisible else { return }
+
+        let alreadyRequested = overflowShelfRequestedWindowIdsByDisplay[displayId] ?? []
+        let newWindowIds = windowIds.filter { !alreadyRequested.contains($0) }
+        guard !newWindowIds.isEmpty else { return }
+        overflowShelfRequestedWindowIdsByDisplay[displayId, default: []].formUnion(newWindowIds)
+
+        let idSet = Set(newWindowIds)
+        let windowsById = Dictionary(uniqueKeysWithValues: windowStateStore.getWindows().compactMap { window in
+            idSet.contains(window.id.raw) ? (window.id.raw, window) : nil
+        })
+        let scale = panel.screen?.backingScaleFactor ?? NSScreen.main?.backingScaleFactor ?? 2
+
+        for windowId in newWindowIds {
+            guard let window = windowsById[windowId],
+                  let targetSizePoints = panel.thumbnailTargetSize(windowId: windowId) else { continue }
+            let title = window.title.isEmpty ? window.appName : window.title
+            let isDimmed = window.isHidden || window.isMinimized
+            let cachedImage = thumbnailService.cachedThumbnail(
+                windowId: CGWindowID(windowId),
+                targetSizePoints: targetSizePoints,
+                includeLastGood: true
+            )
+            if let cachedImage {
+                panel.updateThumbnail(
+                    windowId: windowId,
+                    image: cachedImage,
+                    title: title,
+                    isDimmed: isDimmed
+                )
+            }
+
+            thumbnailService.captureWindowThumbnail(
+                windowId: CGWindowID(windowId),
+                targetSizePoints: targetSizePoints,
+                screenScale: scale,
+                producer: ThumbnailCaptureContext.overflowShelf.producer,
+                preferCachedImage: isDimmed
+            ) { [weak self] image in
+                guard let self else { return }
+                guard self.groupPreviewActiveKeyByDisplay[displayId] == key else { return }
+                self.groupPreviewPanelByDisplay[displayId]?.updateThumbnail(
+                    windowId: windowId,
+                    image: image ?? cachedImage,
+                    title: title,
+                    isDimmed: isDimmed
+                )
+                guard image == nil, cachedImage == nil else { return }
+                let didScheduleRetry = self.overflowShelfRetriedWindowIdsByDisplay[displayId, default: []]
+                    .insert(windowId).inserted
+                guard didScheduleRetry else { return }
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.20) { [weak self] in
+                    guard let self else { return }
+                    guard self.groupPreviewActiveKeyByDisplay[displayId] == key else { return }
+                    self.overflowShelfRequestedWindowIdsByDisplay[displayId]?.remove(windowId)
+                    self.captureOverflowShelfThumbnails(displayId: displayId, windowIds: [windowId])
+                }
             }
         }
     }
@@ -4039,11 +4271,20 @@ final class EventLoop {
     }
 
     private func hideGroupPreview(displayId: CGDirectDisplayID, immediate: Bool = false) {
+        let activeKey = groupPreviewActiveKeyByDisplay[displayId]
+        overflowShelfCaptureWorkItemByDisplay.removeValue(forKey: displayId)?.cancel()
+        overflowShelfWindowIdsByDisplay.removeValue(forKey: displayId)
+        overflowShelfRequestedWindowIdsByDisplay.removeValue(forKey: displayId)
+        overflowShelfRetriedWindowIdsByDisplay.removeValue(forKey: displayId)
         groupPreviewPanelByDisplay[displayId]?.hide(immediate: immediate)
         groupPreviewActiveKeyByDisplay.removeValue(forKey: displayId)
         groupPreviewPointerInsideByDisplay.removeValue(forKey: displayId)
         groupPreviewAnchorRectByDisplay.removeValue(forKey: displayId)
-        invalidateThumbnailRequests(for: ThumbnailCaptureContext.groupPreview.producer)
+        invalidateThumbnailRequests(
+            for: activeKey?.hasPrefix("overflow:") == true
+                ? ThumbnailCaptureContext.overflowShelf.producer
+                : ThumbnailCaptureContext.groupPreview.producer
+        )
     }
 
     private func scheduleHideGroupPreview(displayId: CGDirectDisplayID, delay: TimeInterval? = nil) {
@@ -4105,7 +4346,15 @@ final class EventLoop {
         groupPreviewActiveKeyByDisplay.removeAll()
         groupPreviewPointerInsideByDisplay.removeAll()
         groupPreviewAnchorRectByDisplay.removeAll()
+        for work in overflowShelfCaptureWorkItemByDisplay.values {
+            work.cancel()
+        }
+        overflowShelfCaptureWorkItemByDisplay.removeAll()
+        overflowShelfWindowIdsByDisplay.removeAll()
+        overflowShelfRequestedWindowIdsByDisplay.removeAll()
+        overflowShelfRetriedWindowIdsByDisplay.removeAll()
         invalidateThumbnailRequests(for: ThumbnailCaptureContext.groupPreview.producer)
+        invalidateThumbnailRequests(for: ThumbnailCaptureContext.overflowShelf.producer)
 
         for (_, panel) in groupPreviewPanelByDisplay {
             panel.hide()
@@ -5214,6 +5463,9 @@ final class EventLoop {
                     title = t
                 case .appGroup:
                     kind = "app_group"
+                case .windowOverflow(let windows, _):
+                    kind = "window_overflow"
+                    title = "\(windows.count)"
                 case .pinnedApp:
                     kind = "pinned_app"
                 case .launcher:
@@ -5245,6 +5497,8 @@ final class EventLoop {
                     accessibilityId = "liquidbar.item.window.\(id.raw)"
                 case .appGroup(let bundleId, _, _, _, _, _, _):
                     accessibilityId = "liquidbar.item.group.\(bundleId)"
+                case .windowOverflow:
+                    accessibilityId = "liquidbar.item.window-overflow"
                 case .pinnedApp(let bundleId, _):
                     accessibilityId = "liquidbar.item.pinned.\(bundleId)"
                 case .launcher:
@@ -5349,6 +5603,9 @@ final class EventLoop {
     // MARK: - Helpers
 
     private func itemsForDisplay(_ displayId: CGDirectDisplayID) -> [TaskbarItem] {
+        if let rendered = renderedItemsByDisplay[displayId] {
+            return rendered
+        }
         switch config.windowDisplayMode {
         case .perDisplay:
             return currentItems.filter { item in

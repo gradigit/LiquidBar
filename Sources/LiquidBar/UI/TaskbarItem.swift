@@ -3,6 +3,9 @@
 enum TaskbarItem: Sendable {
     case window(id: WindowId, bundleId: String, title: String, appName: String, isHidden: Bool, isMinimized: Bool, screenId: UInt32)
     case appGroup(bundleId: String, appName: String, windowCount: Int, windows: [WindowId], isHidden: Bool, isMinimized: Bool, screenId: UInt32)
+    /// Windows hidden from the taskbar because the horizontal bar has reached
+    /// its minimum readable item widths. Selecting this item opens a thumbnail shelf.
+    case windowOverflow(windows: [WindowId], screenId: UInt32)
     case pinnedApp(bundleId: String, screenId: UInt32)
     /// Launcher / start button (per display).
     case launcher(screenId: UInt32)
@@ -23,6 +26,7 @@ enum TaskbarItem: Sendable {
         switch self {
         case .window(_, let bundleId, _, _, _, _, _): bundleId
         case .appGroup(let bundleId, _, _, _, _, _, _): bundleId
+        case .windowOverflow: "sf:rectangle.stack.fill"
         case .pinnedApp(let bundleId, _): bundleId
         case .launcher: "sf:magnifyingglass"
         case .pluginTile(_, let providerId, _, _, _, _): providerId ?? "sf:square.grid.2x2"
@@ -39,6 +43,7 @@ enum TaskbarItem: Sendable {
         switch self {
         case .window: return bundleId
         case .appGroup: return bundleId
+        case .windowOverflow: return "sf:rectangle.stack.fill"
         case .pinnedApp: return bundleId
         case .launcher: return "sf:magnifyingglass"
         case .pluginTile(_, _, _, let icon, _, _):
@@ -57,6 +62,7 @@ enum TaskbarItem: Sendable {
         switch self {
         case .window(_, _, _, _, _, _, let screenId): screenId
         case .appGroup(_, _, _, _, _, _, let screenId): screenId
+        case .windowOverflow(_, let screenId): screenId
         case .pinnedApp(_, let screenId): screenId
         case .launcher(let screenId): screenId
         case .pluginTile(_, _, _, _, _, let screenId): screenId
@@ -73,6 +79,7 @@ enum TaskbarItem: Sendable {
         switch self {
         case .window(_, _, _, _, let isHidden, let isMinimized, _): isHidden || isMinimized
         case .appGroup(_, _, _, _, let isHidden, let isMinimized, _): isHidden || isMinimized
+        case .windowOverflow: false
         case .pinnedApp: false
         case .launcher: false
         case .pluginTile: false
@@ -119,6 +126,9 @@ enum TaskbarItem: Sendable {
             // Window count is rendered as a dedicated badge, so keep the title clean.
             return appName
 
+        case .windowOverflow(let windows, _):
+            return L10n.tr("%@ more windows", "\(windows.count)")
+
         case .pinnedApp(let bundleId, _):
             return bundleId.split(separator: ".").last.map(String.init) ?? bundleId
 
@@ -153,6 +163,11 @@ enum TaskbarItem: Sendable {
             }
             return title
         }
+    }
+
+    var supportsTaskbarDrag: Bool {
+        if case .windowOverflow = self { return false }
+        return true
     }
 }
 

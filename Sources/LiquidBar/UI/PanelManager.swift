@@ -32,6 +32,7 @@ final class PanelManager {
     private var occlusionObservers: [CGDirectDisplayID: NSObjectProtocol] = [:]
     private weak var renderer: NativeBarRenderer?
     private var lastConfig: Config?
+    private var lastSystemIndicatorVisuals: [String: SystemIndicatorVisual] = [:]
     private var spaceSuppressedDisplayIds: Set<CGDirectDisplayID> = []
     private var fullscreenSuppressedDisplayIds: Set<CGDirectDisplayID> = []
     private var lastViewSyncSnapshotByDisplay: [CGDirectDisplayID: ViewSyncSnapshot] = [:]
@@ -276,6 +277,12 @@ final class PanelManager {
                 for wid in windows {
                     hasher.combine(wid.raw)
                 }
+            case .windowOverflow(let windows, let screenId):
+                hasher.combine(10)
+                for wid in windows {
+                    hasher.combine(wid.raw)
+                }
+                hasher.combine(screenId)
             case .pinnedApp(let bundleId, let screenId):
                 hasher.combine(2)
                 hasher.combine(bundleId)
@@ -734,6 +741,7 @@ final class PanelManager {
             bounds.height <= display.height + dimensionTolerance
     }
 
+    @discardableResult
     func updateItems(
         _ allItems: [TaskbarItem],
         config: Config,
@@ -743,20 +751,23 @@ final class PanelManager {
         expandedSidebarDisplays: Set<CGDirectDisplayID> = [],
         systemIndicatorVisuals: [String: SystemIndicatorVisual] = [:],
         itemBackgroundColorsByDisplay: [CGDirectDisplayID: [Int: String]] = [:]
-    ) {
+    ) -> [CGDirectDisplayID: [TaskbarItem]] {
         lastConfig = config
+        lastSystemIndicatorVisuals = systemIndicatorVisuals
+        var renderedItemsByDisplay: [CGDirectDisplayID: [TaskbarItem]] = [:]
+        renderedItemsByDisplay.reserveCapacity(panels.count)
         for (displayId, panel) in panels {
-            let items: [TaskbarItem]
+            let sourceItems: [TaskbarItem]
             switch config.windowDisplayMode {
             case .perDisplay:
-                items = allItems.filter { item in
+                sourceItems = allItems.filter { item in
                     if let sid = item.screenId {
                         return sid == displayId
                     }
                     return true
                 }
             case .allWindows:
-                items = allItems.filter { item in
+                sourceItems = allItems.filter { item in
                     // Always keep windows/groups. Filter pinned items to the panel's display
                     // so per-space pins can differ per display without duplicating.
                     if case .pinnedApp(_, let sid) = item {
@@ -777,7 +788,27 @@ final class PanelManager {
 
             let focus = focusByDisplay[displayId] ?? .none
             let sidebarExpanded = expandedSidebarDisplays.contains(displayId)
-            let itemBackgroundColors = itemBackgroundColorsByDisplay[displayId] ?? [:]
+            let primaryLength = config.taskbarPosition.isVertical
+                ? Float(panel.barView.bounds.height)
+                : Float(panel.barView.bounds.width)
+            let overflowPlan = renderer.overflowPlan(
+                for: sourceItems,
+                config: config,
+                primaryLength: primaryLength,
+                displayId: displayId,
+                focus: focus,
+                systemIndicatorVisuals: systemIndicatorVisuals
+            )
+            let items = overflowPlan.items
+            renderedItemsByDisplay[displayId] = items
+
+            let sourceBackgroundColors = itemBackgroundColorsByDisplay[displayId] ?? [:]
+            var itemBackgroundColors: [Int: String] = [:]
+            itemBackgroundColors.reserveCapacity(sourceBackgroundColors.count)
+            for (plannedIndex, sourceIndex) in overflowPlan.sourceIndices.enumerated() {
+                guard let sourceIndex, let color = sourceBackgroundColors[sourceIndex] else { continue }
+                itemBackgroundColors[plannedIndex] = color
+            }
             let rendererResult = renderer.updateItems(
                 items,
                 config: config,
@@ -813,7 +844,8 @@ final class PanelManager {
                 panel.barView.applySnapshot(
                     nativeSnapshot,
                     fontSize: CGFloat(config.fontSize),
-                    barHeight: min(panel.barView.bounds.width, panel.barView.bounds.height)
+                    barHeight: min(panel.barView.bounds.width, panel.barView.bounds.height),
+                    systemIndicatorVisuals: systemIndicatorVisuals
                 )
             }
             lastViewSyncSnapshotByDisplay[displayId] = snapshot
@@ -821,6 +853,7 @@ final class PanelManager {
             // Resume only long enough to tick transient native animations.
             resumeDisplayLink(for: displayId)
         }
+        return renderedItemsByDisplay
     }
 
     // MARK: - Occlusion Recovery
@@ -1139,7 +1172,8 @@ final class PanelManager {
             panel.barView.applySnapshot(
                 snapshot,
                 fontSize: CGFloat(cfg.fontSize),
-                barHeight: min(panel.barView.bounds.width, panel.barView.bounds.height)
+                barHeight: min(panel.barView.bounds.width, panel.barView.bounds.height),
+                systemIndicatorVisuals: lastSystemIndicatorVisuals
             )
         }
         let callbackEnd = CACurrentMediaTime()

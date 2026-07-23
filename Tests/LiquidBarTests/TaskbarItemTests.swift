@@ -30,6 +30,18 @@ struct TaskbarItemTests {
         #expect(TaskbarItem.launcher(screenId: 1).displayTitle(iconsOnly: true) == "")
     }
 
+    @Test func overflowItemIsLocalizedAndCannotBeDragged() {
+        let item = TaskbarItem.windowOverflow(
+            windows: [WindowId(10), WindowId(11), WindowId(12)],
+            screenId: 4
+        )
+
+        #expect(item.displayTitle(iconsOnly: false).contains("3"))
+        #expect(item.displayTitle(iconsOnly: true).isEmpty)
+        #expect(item.screenId == 4)
+        #expect(item.supportsTaskbarDrag == false)
+    }
+
     @Test @MainActor func testUngrouped() {
         let store = WindowStateStore()
         let config = Config(groupByApp: false)

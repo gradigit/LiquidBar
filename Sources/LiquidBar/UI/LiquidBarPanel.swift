@@ -85,6 +85,7 @@ final class LiquidBarPanel: NSPanel {
         self.barView = NativeBarView(frame: NSRect(origin: .zero, size: frame.size))
         self.barView.displayId = displayId
         self.barView.orientation = position
+        self.barView.configureToolTipAppearance(theme: theme, glassStyle: glassStyle)
 
         configurePanel()
         applyCornerRadius()
