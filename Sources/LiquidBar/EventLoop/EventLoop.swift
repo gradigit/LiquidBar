@@ -4716,7 +4716,7 @@ final class EventLoop {
                     "window_layout_memory_restore_pass",
                     minIntervalSeconds: 0.5
                 ) {
-                    "index=\(index) id=\(summary.snapshotID ?? 0) age_ms=\(summary.snapshotAgeMilliseconds) reason=\(summary.reason) restored=\(summary.restoredWindowCount) completed=\(summary.completedWindowCount) remaining=\(summary.remainingWindowCount) captured=\(summary.capturedWindowCount) outcomes=\(WindowLayoutMemoryService.restoreOutcomeSummary(summary.outcomeCounts))"
+                    "index=\(index) id=\(summary.snapshotID ?? 0) age_ms=\(summary.snapshotAgeMilliseconds) cross_process_fallback=\(summary.allowsCrossProcessFallback) reason=\(summary.reason) restored=\(summary.restoredWindowCount) completed=\(summary.completedWindowCount) remaining=\(summary.remainingWindowCount) captured=\(summary.capturedWindowCount) outcomes=\(WindowLayoutMemoryService.restoreOutcomeSummary(summary.outcomeCounts))"
                 }
 
                 let isFinalPass = index == delays.count - 1

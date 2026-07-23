@@ -39,7 +39,7 @@ struct WindowLayoutMemoryServiceTests {
             now: 120,
             maxAge: 60
         ))
-        #expect(!WindowLayoutMemoryService.shouldAttemptRestore(
+        #expect(WindowLayoutMemoryService.shouldAttemptRestore(
             snapshotTopology: snapshotTopology,
             currentTopology: snapshotTopology,
             capturedAt: 100,
@@ -189,7 +189,7 @@ struct WindowLayoutMemoryServiceTests {
             existingCapturedAt: 100,
             existingRecoveryPending: true,
             newTopology: twoDisplayTopology,
-            now: 120,
+            now: 200,
             maxAge: 60,
             allowsSameDisplaySetReplacement: true
         ))
@@ -232,7 +232,7 @@ struct WindowLayoutMemoryServiceTests {
         ))
     }
 
-    @Test func restoreEligibilityDistinguishesMissingDisplaysFromExpiredSnapshots() {
+    @Test func restoreEligibilityDoesNotExpireMatchingDisplayTopology() {
         let displayA = WindowLayoutMemoryService.DisplaySignature(
             uuid: "display-a",
             frame: WindowLayoutMemoryService.RoundedRect(CGRect(x: 0, y: 0, width: 1440, height: 900))
@@ -257,12 +257,25 @@ struct WindowLayoutMemoryServiceTests {
             capturedAt: 100,
             now: 200,
             maxAge: 60
-        ) == .staleSnapshot)
+        ) == .eligible)
         #expect(!WindowLayoutMemoryService.shouldDiscardSnapshotAfterFinalAttempt(
             reason: WindowLayoutMemoryService.RestoreEligibility.missingDisplays.rawValue
         ))
         #expect(WindowLayoutMemoryService.shouldDiscardSnapshotAfterFinalAttempt(
-            reason: WindowLayoutMemoryService.RestoreEligibility.staleSnapshot.rawValue
+            reason: WindowLayoutMemoryService.RestoreEligibility.emptySnapshotTopology.rawValue
+        ))
+    }
+
+    @Test func crossProcessWindowFallbackExpiresWithoutExpiringExactWindowRestore() {
+        #expect(WindowLayoutMemoryService.shouldAllowCrossProcessFallback(
+            capturedAt: 100,
+            now: 160,
+            maxAge: 60
+        ))
+        #expect(!WindowLayoutMemoryService.shouldAllowCrossProcessFallback(
+            capturedAt: 100,
+            now: 160.01,
+            maxAge: 60
         ))
     }
 

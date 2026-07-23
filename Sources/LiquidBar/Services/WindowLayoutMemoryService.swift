@@ -33,6 +33,7 @@ final class WindowLayoutMemoryService {
         let reason: String
         let snapshotID: UInt64?
         let snapshotAgeMilliseconds: Int
+        let allowsCrossProcessFallback: Bool
         let capturedWindowCount: Int
         let completedWindowCount: Int
         let restoredWindowCount: Int
@@ -50,7 +51,6 @@ final class WindowLayoutMemoryService {
 
     enum RestoreEligibility: String, Equatable, Sendable {
         case eligible
-        case staleSnapshot = "stale_snapshot"
         case emptySnapshotTopology = "empty_snapshot_topology"
         case missingDisplays = "missing_displays"
         case incompatibleDisplayGeometry = "incompatible_display_geometry"
@@ -84,13 +84,13 @@ final class WindowLayoutMemoryService {
     }
 
     private var snapshotBatch: SnapshotBatch?
-    private let snapshotMaxAge: CFTimeInterval
+    private let crossProcessFallbackMaxAge: CFTimeInterval
     private var nextSnapshotID: UInt64 = 0
     private var lastRestoreTopology: DisplayTopology?
     private var lastRestoreTopologyObservedAt: CFAbsoluteTime = 0
 
-    init(snapshotMaxAge: CFTimeInterval = 30 * 60) {
-        self.snapshotMaxAge = snapshotMaxAge
+    init(crossProcessFallbackMaxAge: CFTimeInterval = 30 * 60) {
+        self.crossProcessFallbackMaxAge = crossProcessFallbackMaxAge
     }
 
     @discardableResult
@@ -121,8 +121,7 @@ final class WindowLayoutMemoryService {
         let now = CFAbsoluteTimeGetCurrent()
         if case .stableRefresh = mode,
            let batch = snapshotBatch,
-           batch.recoveryPending,
-           now - batch.capturedAt <= snapshotMaxAge {
+           batch.recoveryPending {
             // Keep the pre-change baseline intact and avoid another WindowServer
             // enumeration while a disconnected topology is waiting to return.
             return CaptureSummary(
@@ -168,7 +167,7 @@ final class WindowLayoutMemoryService {
             existingRecoveryPending: snapshotBatch?.recoveryPending ?? false,
             newTopology: context.topology,
             now: now,
-            maxAge: snapshotMaxAge,
+            maxAge: crossProcessFallbackMaxAge,
             allowsSameDisplaySetReplacement: true
         ) else {
             Log.event.debug("Window layout memory kept existing snapshot id=\(self.snapshotBatch?.id ?? 0) recovery_pending=\(self.snapshotBatch?.recoveryPending ?? false) new_windows=\(windows.count) displays=\(context.topology.displayCount)")
@@ -217,6 +216,7 @@ final class WindowLayoutMemoryService {
                 reason: "no_snapshot",
                 snapshotID: nil,
                 snapshotAgeMilliseconds: 0,
+                allowsCrossProcessFallback: false,
                 capturedWindowCount: 0,
                 completedWindowCount: 0,
                 restoredWindowCount: 0,
@@ -227,6 +227,11 @@ final class WindowLayoutMemoryService {
 
         let context = Self.currentDisplayContext()
         let now = CFAbsoluteTimeGetCurrent()
+        let allowsCrossProcessFallback = Self.shouldAllowCrossProcessFallback(
+            capturedAt: batch.capturedAt,
+            now: now,
+            maxAge: crossProcessFallbackMaxAge
+        )
         if minStableDuration > 0 {
             let stability = Self.topologyStability(
                 currentTopology: context.topology,
@@ -242,6 +247,7 @@ final class WindowLayoutMemoryService {
                     reason: "topology_unstable",
                     snapshotID: batch.id,
                     snapshotAgeMilliseconds: Self.ageMilliseconds(capturedAt: batch.capturedAt, now: now),
+                    allowsCrossProcessFallback: allowsCrossProcessFallback,
                     capturedWindowCount: batch.totalWindowCount,
                     completedWindowCount: 0,
                     restoredWindowCount: 0,
@@ -256,13 +262,14 @@ final class WindowLayoutMemoryService {
             currentTopology: context.topology,
             capturedAt: batch.capturedAt,
             now: now,
-            maxAge: snapshotMaxAge
+            maxAge: crossProcessFallbackMaxAge
         )
         guard eligibility == .eligible else {
             return RestoreSummary(
                 reason: eligibility.rawValue,
                 snapshotID: batch.id,
                 snapshotAgeMilliseconds: Self.ageMilliseconds(capturedAt: batch.capturedAt, now: now),
+                allowsCrossProcessFallback: allowsCrossProcessFallback,
                 capturedWindowCount: batch.totalWindowCount,
                 completedWindowCount: 0,
                 restoredWindowCount: 0,
@@ -276,6 +283,7 @@ final class WindowLayoutMemoryService {
                 reason: "accessibility_not_trusted",
                 snapshotID: batch.id,
                 snapshotAgeMilliseconds: Self.ageMilliseconds(capturedAt: batch.capturedAt, now: now),
+                allowsCrossProcessFallback: allowsCrossProcessFallback,
                 capturedWindowCount: batch.totalWindowCount,
                 completedWindowCount: 0,
                 restoredWindowCount: 0,
@@ -292,7 +300,8 @@ final class WindowLayoutMemoryService {
         PerformanceMonitor.shared.measureSegment("window_layout_memory_restore", thresholdMs: 120.0) {
             result = AccessibilityService.restoreWindowFrames(
                 batch.pendingWindows,
-                activeDisplayBoundsByUUID: context.boundsByUUID
+                activeDisplayBoundsByUUID: context.boundsByUUID,
+                allowCrossProcessFallback: allowsCrossProcessFallback
             )
         }
 
@@ -321,7 +330,7 @@ final class WindowLayoutMemoryService {
                 "window_layout_memory_restore",
                 minIntervalSeconds: 1.0
             ) {
-                "id=\(batch.id) age_ms=\(Self.ageMilliseconds(capturedAt: batch.capturedAt, now: now)) completed=\(result.completedWindowCount) restored=\(result.restoredWindowCount) remaining=\(remaining.count) captured=\(batch.totalWindowCount) outcomes=\(outcomeSummary)"
+                "id=\(batch.id) age_ms=\(Self.ageMilliseconds(capturedAt: batch.capturedAt, now: now)) cross_process_fallback=\(allowsCrossProcessFallback) completed=\(result.completedWindowCount) restored=\(result.restoredWindowCount) remaining=\(remaining.count) captured=\(batch.totalWindowCount) outcomes=\(outcomeSummary)"
             }
         }
         let reason: String
@@ -337,7 +346,7 @@ final class WindowLayoutMemoryService {
                 "window_layout_memory_restore",
                 minIntervalSeconds: 1.0
             ) {
-                "id=\(batch.id) age_ms=\(Self.ageMilliseconds(capturedAt: batch.capturedAt, now: now)) reason=\(reason) completed=0 restored=0 remaining=\(remaining.count) captured=\(batch.totalWindowCount) outcomes=\(outcomeSummary)"
+                "id=\(batch.id) age_ms=\(Self.ageMilliseconds(capturedAt: batch.capturedAt, now: now)) cross_process_fallback=\(allowsCrossProcessFallback) reason=\(reason) completed=0 restored=0 remaining=\(remaining.count) captured=\(batch.totalWindowCount) outcomes=\(outcomeSummary)"
             }
             Log.event.debug("Window layout memory restore pass id=\(batch.id) reason=\(reason) remaining=\(remaining.count) captured=\(batch.totalWindowCount) outcomes=\(outcomeSummary)")
         }
@@ -345,6 +354,7 @@ final class WindowLayoutMemoryService {
             reason: reason,
             snapshotID: batch.id,
             snapshotAgeMilliseconds: Self.ageMilliseconds(capturedAt: batch.capturedAt, now: now),
+            allowsCrossProcessFallback: allowsCrossProcessFallback,
             capturedWindowCount: batch.totalWindowCount,
             completedWindowCount: result.completedWindowCount,
             restoredWindowCount: result.restoredWindowCount,
@@ -377,11 +387,10 @@ final class WindowLayoutMemoryService {
     nonisolated static func restoreEligibility(
         snapshotTopology: DisplayTopology,
         currentTopology: DisplayTopology,
-        capturedAt: CFAbsoluteTime,
-        now: CFAbsoluteTime,
-        maxAge: CFTimeInterval
+        capturedAt _: CFAbsoluteTime,
+        now _: CFAbsoluteTime,
+        maxAge _: CFTimeInterval
     ) -> RestoreEligibility {
-        guard now - capturedAt <= maxAge else { return .staleSnapshot }
         let snapshotDisplayUUIDs = snapshotTopology.displayUUIDs
         guard !snapshotDisplayUUIDs.isEmpty else { return .emptySnapshotTopology }
         guard snapshotDisplayUUIDs.isSubset(of: currentTopology.displayUUIDs) else { return .missingDisplays }
@@ -439,8 +448,8 @@ final class WindowLayoutMemoryService {
         allowsSameDisplaySetReplacement: Bool = false
     ) -> Bool {
         guard let existingTopology, let existingCapturedAt else { return true }
-        if now - existingCapturedAt > maxAge { return true }
         if existingRecoveryPending { return false }
+        if now - existingCapturedAt > maxAge { return true }
         if newTopology.displayCount > existingTopology.displayCount { return true }
         if allowsSameDisplaySetReplacement,
            newTopology.displayCount > 1,
@@ -451,8 +460,15 @@ final class WindowLayoutMemoryService {
     }
 
     nonisolated static func shouldDiscardSnapshotAfterFinalAttempt(reason: String) -> Bool {
-        reason == RestoreEligibility.staleSnapshot.rawValue
-            || reason == RestoreEligibility.emptySnapshotTopology.rawValue
+        reason == RestoreEligibility.emptySnapshotTopology.rawValue
+    }
+
+    nonisolated static func shouldAllowCrossProcessFallback(
+        capturedAt: CFAbsoluteTime,
+        now: CFAbsoluteTime,
+        maxAge: CFTimeInterval
+    ) -> Bool {
+        now - capturedAt <= maxAge
     }
 
     private nonisolated static func ageMilliseconds(

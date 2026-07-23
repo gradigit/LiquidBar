@@ -687,7 +687,8 @@ final class AccessibilityService {
     @discardableResult
     static func restoreWindowFrame(
         _ snapshot: RestorableWindowSnapshot,
-        activeDisplayBoundsByUUID: [String: CGRect]
+        activeDisplayBoundsByUUID: [String: CGRect],
+        allowCrossProcessFallback: Bool = true
     ) -> Bool {
         let catalog = makeRestorableWindowCatalog()
         var axWindowsByPID: [pid_t: CFArray] = [:]
@@ -695,13 +696,15 @@ final class AccessibilityService {
             snapshot,
             activeDisplayBoundsByUUID: activeDisplayBoundsByUUID,
             liveWindowCatalog: catalog,
-            axWindowsByPID: &axWindowsByPID
+            axWindowsByPID: &axWindowsByPID,
+            allowCrossProcessFallback: allowCrossProcessFallback
         ).restored
     }
 
     static func restoreWindowFrames(
         _ snapshots: [RestorableWindowSnapshot],
-        activeDisplayBoundsByUUID: [String: CGRect]
+        activeDisplayBoundsByUUID: [String: CGRect],
+        allowCrossProcessFallback: Bool = true
     ) -> RestorableWindowRestoreBatchResult {
         guard !snapshots.isEmpty else {
             return RestorableWindowRestoreBatchResult(
@@ -723,7 +726,8 @@ final class AccessibilityService {
                 snapshot,
                 activeDisplayBoundsByUUID: activeDisplayBoundsByUUID,
                 liveWindowCatalog: catalog,
-                axWindowsByPID: &axWindowsByPID
+                axWindowsByPID: &axWindowsByPID,
+                allowCrossProcessFallback: allowCrossProcessFallback
             )
             if result.completed {
                 completed.append(snapshot)
@@ -757,7 +761,8 @@ final class AccessibilityService {
         _ snapshot: RestorableWindowSnapshot,
         activeDisplayBoundsByUUID: [String: CGRect],
         liveWindowCatalog: RestorableWindowCatalog,
-        axWindowsByPID: inout [pid_t: CFArray]
+        axWindowsByPID: inout [pid_t: CFArray],
+        allowCrossProcessFallback: Bool
     ) -> WindowFrameRestoreResult {
         guard !MouseTracker.isDragging else {
             return WindowFrameRestoreResult(outcome: .dragInProgress)
@@ -768,7 +773,11 @@ final class AccessibilityService {
         ) else {
             return WindowFrameRestoreResult(outcome: .targetDisplayUnavailable)
         }
-        guard let liveWindow = findRestorableLiveWindow(for: snapshot, in: liveWindowCatalog) else {
+        guard let liveWindow = findRestorableLiveWindow(
+            for: snapshot,
+            in: liveWindowCatalog,
+            allowCrossProcessFallback: allowCrossProcessFallback
+        ) else {
             return WindowFrameRestoreResult(outcome: .liveWindowUnavailable)
         }
         guard !framesAreClose(liveWindow.frame, targetFrame, tolerance: 3.0) else {
@@ -988,7 +997,8 @@ final class AccessibilityService {
 
     private static func findRestorableLiveWindow(
         for snapshot: RestorableWindowSnapshot,
-        in catalog: RestorableWindowCatalog
+        in catalog: RestorableWindowCatalog,
+        allowCrossProcessFallback: Bool
     ) -> RestorableLiveWindow? {
         if let exact = catalog.byWindowKey[RestorableWindowKey(pid: snapshot.pid, windowId: snapshot.windowId)],
            snapshot.bundleId.isEmpty || exact.bundleId == snapshot.bundleId {
@@ -1000,7 +1010,7 @@ final class AccessibilityService {
            snapshot.bundleId.isEmpty || sameProcessTitle.bundleId == snapshot.bundleId {
             return sameProcessTitle
         }
-        if !snapshot.bundleId.isEmpty {
+        if allowCrossProcessFallback, !snapshot.bundleId.isEmpty {
             return catalog.uniqueByBundleTitleKey[
                 RestorableWindowBundleTitleKey(bundleId: snapshot.bundleId, title: snapshot.title)
             ]
